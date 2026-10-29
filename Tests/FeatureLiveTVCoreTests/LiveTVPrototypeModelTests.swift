@@ -900,6 +900,36 @@ final class LiveTVPrototypeModelTests: XCTestCase {
         XCTAssertNil(model.guideRowIndex(near: .init(channelID: first.id)))
     }
 
+    func testRecentOnlyNarrowsTheGuideToRecentsWithoutMovingCategoryCounts() {
+        let channels = hiddenChannelFixtures + [searchChannel("film", 3, "Film Channel", category: "Movies")]
+        let model = LiveTVPrototypeModel(channels: channels)
+        let categories = model.browsingCategories
+        let total = model.categoryChannelCount(nil)
+        for channel in channels.prefix(2) {
+            model.tune(channel.id)
+            XCTAssertTrue(model.recordWatched(channel.id))
+        }
+        model.showsRecentChannels = false
+        model.recentOnly = true
+        let recent = channels.prefix(2).reversed().map(\.id)
+        XCTAssertEqual(model.guideChannels.map(\.channel.id), recent)
+        XCTAssertTrue(model.guideChannels.allSatisfy { $0.section == .recent })
+        XCTAssertEqual(Set(model.visibleChannels.map(\.id)), Set(recent))
+        XCTAssertEqual(model.browsingCategories, categories)
+        XCTAssertEqual(model.categoryChannelCount(nil), total)
+
+        // A channel watched while narrowed joins the row at once.
+        let third = channels[2].id
+        model.tune(third)
+        XCTAssertTrue(model.recordWatched(third))
+        XCTAssertEqual(model.guideChannels.first?.channel.id, third)
+
+        model.resetFilters()
+        XCTAssertFalse(model.recentOnly)
+        XCTAssertEqual(model.visibleChannels.count, channels.count)
+        XCTAssertFalse(model.guideChannels.contains { $0.section == .recent })
+    }
+
     func testRemovedGuideSectionIndexUsesTheFirstRemainingOccurrence() {
         let model = LiveTVPrototypeModel(channels: hiddenChannelFixtures)
         let id = hiddenChannelFixtures[0].id
