@@ -43,21 +43,25 @@ enum HomeHeroArtwork {
         return (local + remote).filter { seen.insert($0).inserted }
     }
 
-    static func backdropFallback(for item: MediaItem) -> (@Sendable () async -> URL?)? {
+    static func backdropFallback(
+        for item: MediaItem, router: ArtworkRouter = .shared
+    ) -> (@Sendable () async -> URL?)? {
         switch item.kind {
         case .folder, .collection, .unknown: return nil
         default: break
         }
-        // art → TMDb hero → the item's own poster. Some titles (e.g. a Plex movie
-        // with a poster but no fanart/`art`) have no landscape backdrop anywhere;
-        // rather than leave the hero blank, fall back to the poster so the user
-        // still sees the artwork the server does have. Only reached when the
-        // primary backdrop URLs fail, so a title with real backdrop art is
-        // unaffected.
+        // Online-first heroes resolve this before the library ladder, so an
+        // online poster here would beat the server's own wide art: a portrait
+        // poster cropped to fill the screen, where Continue Watching shows the
+        // show's backdrop. Only a title with no wide library art at all (e.g. a
+        // Plex movie with a poster but no `art`) falls back to its poster, so the
+        // hero is never blank.
+        let allowsPosterFallback = backdropReferences(for: item).isEmpty
         return {
-            await ArtworkRouter.shared.heroArtworkURL(
+            await router.heroArtworkURL(
                 for: item,
-                placement: .homeHero
+                placement: .homeHero,
+                allowsPosterFallback: allowsPosterFallback
             )
         }
     }
