@@ -94,8 +94,10 @@ public enum NavigationStyle: String, CaseIterable, Identifiable, Codable, Sendab
         }
     }
 
-    /// Profiles without a saved choice start with Plozz's pinned sidebar.
-    public static let `default`: NavigationStyle = .rail
+    /// Profiles without a saved choice start with the native sidebar: the system
+    /// draws the collapsed "‹ Home" pill exactly like the Apple TV app, and no
+    /// custom glass stays mounted over the Home hero.
+    public static let `default`: NavigationStyle = .sidebar
 
     /// Persistence key base shared by `MainTabView` (reads the model to choose the
     /// tab style) and Settings (writes it). Per-profile: the default profile reuses

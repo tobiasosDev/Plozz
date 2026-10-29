@@ -16,9 +16,14 @@ import MetadataKit
 ///
 /// Comparing the inputs is sound because everything the card draws is derived
 /// from them: `presentation` is built from exactly this pair, and the body's
-/// remaining direct reads are all off `item`. Focus, the synopsis animation and
-/// environment values are separate graph dependencies, so they still invalidate
-/// the body normally — `.equatable()` only short-circuits the *value* check.
+/// remaining direct reads are all off `item`. Focus and environment values are
+/// separate graph dependencies, so they still invalidate the body normally —
+/// `.equatable()` only short-circuits the *value* check.
+///
+/// The synopsis is always visible, as on the Apple TV app's episode rail. It
+/// used to fade in 110 ms after focus, which cost a task, two state writes and
+/// two animations on every card a focus move touched; its space was already
+/// reserved, so showing it at rest changes no layout.
 public struct EpisodeColumnCard: View, Equatable {
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.item == rhs.item && lhs.spoilerSettings == rhs.spoilerSettings
@@ -37,8 +42,6 @@ public struct EpisodeColumnCard: View, Equatable {
     #if os(tvOS)
     @State private var nativeArtwork = ArtworkResolutionState()
     #endif
-    @State private var synopsisVisible = false
-    @State private var synopsisAtRest = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.plozzWatchStatusIndicator) private var watchStatusIndicator
     @Environment(\.plozzCardFocusStyle) private var focusStyle
@@ -89,20 +92,6 @@ public struct EpisodeColumnCard: View, Equatable {
         )
         .compositingGroup()
         .plozzCardFocusTransition(isFocused: isFocused, animates: !reduceMotion)
-        .task(id: synopsisTaskID) {
-            synopsisVisible = false
-            synopsisAtRest = false
-            guard isFocused, !captionsHidden else { return }
-            if reduceMotion {
-                synopsisVisible = true
-                synopsisAtRest = true
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(110))
-            guard !Task.isCancelled else { return }
-            synopsisVisible = true
-            synopsisAtRest = true
-        }
         .mediaItemContextMenu(for: item)
         .environment(\.plozzCardStyle, .borderless)
         .accessibilityElement(children: .ignore)
@@ -129,16 +118,6 @@ public struct EpisodeColumnCard: View, Equatable {
                 lineSpacing: PlozzTypography.episodeDescription.scaled(by: textScale).lineSpacing,
                 maxWidth: Self.artworkSize.width
             )
-            .opacity(synopsisVisible ? 1 : 0)
-            .animation(
-                reduceMotion ? nil : .easeOut(duration: 0.12),
-                value: synopsisVisible
-            )
-            .offset(y: reduceMotion || synopsisAtRest ? 0 : -metrics.focusCaptionPush)
-            .animation(
-                reduceMotion ? nil : .smooth(duration: 0.28),
-                value: synopsisAtRest
-            )
             .padding(.top, 10)
         }
         .offset(y: reduceMotion || isFocused ? 0 : -metrics.focusCaptionPush)
@@ -148,16 +127,6 @@ public struct EpisodeColumnCard: View, Equatable {
             ),
             value: isFocused
         )
-    }
-
-    private var synopsisTaskID: SynopsisTaskID {
-        SynopsisTaskID(isFocused: isFocused, reduceMotion: reduceMotion, captionsHidden: captionsHidden)
-    }
-
-    private struct SynopsisTaskID: Hashable {
-        let isFocused: Bool
-        let reduceMotion: Bool
-        let captionsHidden: Bool
     }
 
     @ViewBuilder

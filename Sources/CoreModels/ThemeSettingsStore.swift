@@ -27,7 +27,10 @@ public final class ThemeSettingsStore: ThemeSettingsStoring, @unchecked Sendable
     }
 
     public static let gradientStorageKey = "com.plozz.gradientBackgrounds"
-    public static let defaultGradientEnabled = true
+    /// Off: pages sit on the theme's flat background like the Apple TV app, which
+    /// also lets the Home hero fade into the page with a painted gradient instead
+    /// of an alpha mask over its video.
+    public static let defaultGradientEnabled = false
 
     public func loadGradientEnabled() -> Bool {
         defaults.object(forKey: gradientKey) as? Bool ?? Self.defaultGradientEnabled

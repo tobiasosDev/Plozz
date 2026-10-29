@@ -60,5 +60,7 @@ public enum WatchStatusIndicator: String, CaseIterable, Identifiable, Codable, S
         }
     }
 
-    public static let `default`: WatchStatusIndicator = .unwatched
+    /// Finished items get the check badge and everything else stays clean, as in
+    /// the Apple TV app; the corner flag remains a choice in Settings ▸ Cards.
+    public static let `default`: WatchStatusIndicator = .watched
 }

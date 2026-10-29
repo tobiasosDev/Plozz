@@ -111,11 +111,12 @@ final class HeroLogoPresentationHostedTests: XCTestCase {
     func testDescriptionColumnMeasuresTheLiveWrappingFactsRow() async throws {
         let fixture = try await makeFixture()
         defer { fixture.close() }
+        for factsFirst in [false, true] {
         for (count, availableWidth, expectedWidth): (Int, CGFloat, CGFloat) in [
             (2, 1400, 800), (5, 1400, 960), (8, 1400, 1200), (5, 900, 900), (2, 1400, 800)
         ] {
             fixture.window.rootViewController = UIHostingController(rootView:
-                HeroDescriptionFactsLayout {
+                HeroDescriptionFactsLayout(factsFirst: factsFirst) {
                     Color.red.frame(height: 80)
                     WrappingHStackLayout(spacing: 20, lineSpacing: 8) {
                         ForEach(0..<count, id: \.self) { _ in
@@ -134,7 +135,13 @@ final class HeroLogoPresentationHostedTests: XCTestCase {
             let facts = try XCTUnwrap(colorBounds(in: fixture.window, channel: 1))
             XCTAssertEqual(description.width, expectedWidth, accuracy: 1)
             XCTAssertLessThanOrEqual(facts.maxX, description.maxX + 1)
-            XCTAssertGreaterThan(facts.minY, description.maxY)
+            if factsFirst {
+                // Detail pages: the chip row leads and the description follows.
+                XCTAssertLessThan(facts.maxY, description.minY)
+            } else {
+                XCTAssertGreaterThan(facts.minY, description.maxY)
+            }
+        }
         }
     }
 

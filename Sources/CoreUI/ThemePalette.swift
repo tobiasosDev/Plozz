@@ -337,32 +337,31 @@ public extension ThemePalette {
         #endif
     }
 
-    /// Soft dark theme. Uses the exact two-stop background gradient from my
-    /// Strozz `ThemePalette.dark`, with the top glow recoloured to Plozz's brand
-    /// blue (Strozz uses purple). The stops stay close in value so the backdrop
-    /// gently shifts rather than banding.
+    /// Dark theme: the Apple TV app's flat near-black grey (`#15161A`). One flat
+    /// ground — no two-stop gradient and no top glow — so pages, the Home hero's
+    /// bottom fade and the native sidebar all meet the same colour.
     static let dark = ThemePalette(
-        backgroundBase: Color(red: 0.13, green: 0.13, blue: 0.14),
-        backgroundSecondary: Color(red: 0.09, green: 0.09, blue: 0.10),
-        settingsBackground: Color(red: 0.09, green: 0.09, blue: 0.10),
-        cardSurface: Color(red: 0.10, green: 0.10, blue: 0.12),
+        backgroundBase: ThemePalette.appleTVGround,
+        backgroundSecondary: ThemePalette.appleTVGround,
+        settingsBackground: ThemePalette.appleTVGround,
+        cardSurface: Color(red: 0.149, green: 0.153, blue: 0.173),
         cardBorder: Color.white.opacity(0.16),
         primaryText: .white,
-        secondaryText: Color.white.opacity(0.60),
-        tertiaryText: Color.white.opacity(0.36),
+        secondaryText: Color(red: 0.92, green: 0.92, blue: 0.96).opacity(0.62),
+        tertiaryText: Color(red: 0.92, green: 0.92, blue: 0.96).opacity(0.34),
         accent: ThemePalette.brandAccent(isLight: false),
         errorText: Color(red: 1.0, green: 0.42, blue: 0.40),
-        topGlow: ThemePalette.brandBlue.opacity(0.075),
+        topGlow: nil,
         focusedCardGlassTint: Color.white.opacity(0.13),
         liftSurface: .white,
-        cardOpaqueSurface: Color(red: 0.10, green: 0.10, blue: 0.12),
+        cardOpaqueSurface: Color(red: 0.149, green: 0.153, blue: 0.173),
         cardOpaqueBorder: Color.white.opacity(0.16),
         // Dark raises by going lighter than the page (shadows don't read on dark);
         // borderless. Overlays keep that lift but add a faint rim + shadow so a
         // modal separates from the dark UI beneath it.
-        raised: SurfaceStyle(fill: Color(red: 0.16, green: 0.16, blue: 0.175)),
+        raised: SurfaceStyle(fill: Color(red: 0.137, green: 0.141, blue: 0.161)),
         overlay: SurfaceStyle(
-            fill: Color(red: 0.18, green: 0.18, blue: 0.195),
+            fill: Color(red: 0.165, green: 0.169, blue: 0.192),
             border: ThemePalette.darkHairline.opacity(0.16),
             borderWidth: 1,
             shadow: SurfaceShadow(color: .black.opacity(0.5), radius: 26, y: 14)
@@ -372,6 +371,9 @@ public extension ThemePalette {
         fillSubtle: Color.white.opacity(0.06),
         isLight: false
     )
+
+    /// The Apple TV app's page colour on tvOS 26 (`#15161A`).
+    static let appleTVGround = Color(red: 21 / 255, green: 22 / 255, blue: 26 / 255)
 
     /// Near-black theme. It stays visibly darker than Dark while keeping pixels
     /// slightly active to reduce OLED off-to-on smearing during motion.

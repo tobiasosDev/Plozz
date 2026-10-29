@@ -57,9 +57,10 @@ final class MediaRowEpisodeEntryPolicyTests: XCTestCase {
                                     XCTAssertLessThan(bitmap.bytes[pixel + 1], 100)
                                     XCTAssertLessThan(bitmap.bytes[pixel + 2], 100)
                                 } else {
-                                    XCTAssertEqual(Int(bitmap.bytes[pixel]), 26, accuracy: 2)
-                                    XCTAssertEqual(Int(bitmap.bytes[pixel + 1]), 26, accuracy: 2)
-                                    XCTAssertEqual(Int(bitmap.bytes[pixel + 2]), 31, accuracy: 2)
+                                    // Dark's opaque card surface (#26272C).
+                                    XCTAssertEqual(Int(bitmap.bytes[pixel]), 38, accuracy: 2)
+                                    XCTAssertEqual(Int(bitmap.bytes[pixel + 1]), 39, accuracy: 2)
+                                    XCTAssertEqual(Int(bitmap.bytes[pixel + 2]), 44, accuracy: 2)
                                 }
                                 XCTAssertEqual(bitmap.bytes[pixel + 3], 255)
                             }
