@@ -14,7 +14,8 @@ final class PlayerVersionMenuTests: XCTestCase {
         ]
         XCTAssertEqual(controls.trackControlCategories, [.playback])
         controls.versions.options.append(.init(version: .init(id: "alternate"), isSelected: false))
-        XCTAssertEqual(controls.trackControlCategories, [.version, .playback])
+        // Last, after the per-title tracks, as the Apple TV app orders them.
+        XCTAssertEqual(controls.trackControlCategories, [.playback, .version])
     }
 
     func testSelectionForwardsQualifiedIdentityAndNeverRestartsTheSelectedFile() {

@@ -93,9 +93,15 @@ public struct PlayerClockTimeline<Content: View>: View {
 
 struct PlayerClockSchedule: TimelineSchedule {
     let paused: Bool
+    /// Tick on each minute boundary instead of every second — enough for a
+    /// label that only shows hours and minutes ("Ends at 21:04").
+    var everyMinute = false
 
     func entries(from startDate: Date, mode: Mode) -> AnySequence<Date> {
         if paused { return AnySequence([]) }
+        if everyMinute {
+            return AnySequence(EveryMinuteTimelineSchedule().entries(from: startDate, mode: mode))
+        }
         return AnySequence(PeriodicTimelineSchedule(from: startDate, by: 1).entries(from: startDate, mode: mode))
     }
 }

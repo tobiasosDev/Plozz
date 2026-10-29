@@ -522,11 +522,13 @@ respects the selected cushion rather than bypassing it.
 
 ## On-demand player clock
 
-The on-demand timeline normally shows elapsed and remaining playback time.
-On tvOS, stationary touchpad taps cycle through controls with playback times,
+The on-demand timeline normally shows the elapsed time under the playhead and,
+at the trailing edge, the estimated finish ("Ends at 21:04") beside the remaining
+time. On tvOS, stationary touchpad taps cycle through controls with playback times,
 current local time at the scrubber and estimated finish time on the right, then
-hidden controls. Clock values replace the two existing numbers in place without
-adding a label or row; the current time keeps following the scrubber.
+hidden controls. Clock values replace the elapsed and remaining numbers in place
+without adding a label or row, and "Ends at" steps aside rather than repeat the
+finish time; the current time keeps following the scrubber.
 Physical clicks retain their transport actions, and swipes begin seeking without waiting for tap
 recognition. Moving, held, cancelled, or clicked contacts cannot toggle the clock.
 iPhone and iPad use native buttons on the two time labels instead of changing
@@ -537,8 +539,10 @@ the outgoing clock labels through their fade and stops clock ticks; the next
 reveal resets to elapsed/remaining time. Mobile retains its reset-on-hide behavior.
 Finish estimates use the current position and selected playback speed, and update
 after seeking or pausing. Unknown duration or invalid timing omits the estimate.
-Clock formatting follows the device locale/time-zone conventions. The clock only
-ticks while requested, and mobile label slots retain their width during scrubbing.
+Clock formatting follows the device locale/time-zone conventions. The clock ticks
+each second only while requested; otherwise "Ends at" refreshes on the minute while
+the controls are visible, and nothing ticks while they are hidden. Mobile label
+slots retain their width during scrubbing.
 Live TV retains its existing guide-based program times.
 
 ## Mobile player orientation
@@ -1754,7 +1758,11 @@ path reduces first-visit and focus work while keeping the material. Both shells
 still honor the existing profile/OS transparency resolution, and older OS
 versions retain their non-glass fallback.
 
-tvOS transport badges use CoreUI's `PlayerControlButton`. Live TV multiview
+tvOS transport track controls — on demand and live — are the round
+`PlayerTrackControlButton` (`PlayerGlassCircleButtonStyle` over
+`PlayerGlassCircleSurface`): glass at rest, frosted under the transparency or
+player-glass reduction, solid white with page-colour ink when focused or while
+their menu is open. Live TV's Go Live raises its resting surface instead. Live TV multiview
 actions retain visible title-and-icon labels with the same `playerGlassButton`
 modifier, including native menus without replacing their behavior. Transport
 icons keep accessible titles. Do not set a blanket foreground on their containing screen:

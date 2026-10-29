@@ -667,21 +667,21 @@ struct LiveChannelOverlay: View {
             if showsZoom {
                 badge(
                     LiveChannelTrackMenuKind.playback.title, systemImage: LiveChannelTrackMenuKind.playback.icon,
-                    control: .playback, prominent: openMenu == .playback
+                    control: .playback, highlighted: openMenu == .playback
                 ) { toggleMenu(.playback) }
                     .accessibilityIdentifier("live-channel-playback")
             }
             if showsAudio {
                 badge(
                     LiveChannelTrackMenuKind.audio.title, systemImage: LiveChannelTrackMenuKind.audio.icon,
-                    control: .audio, prominent: openMenu == .audio
+                    control: .audio, highlighted: openMenu == .audio
                 ) { toggleMenu(.audio) }
                     .accessibilityIdentifier("live-channel-audio")
             }
             if showsSubtitles {
                 badge(
                     LiveChannelTrackMenuKind.subtitles.title, systemImage: LiveChannelTrackMenuKind.subtitles.icon,
-                    control: .subtitles, prominent: openMenu == .subtitles
+                    control: .subtitles, highlighted: openMenu == .subtitles
                 ) { toggleMenu(.subtitles) }
                     .accessibilityIdentifier("live-channel-subtitles")
             }
@@ -703,11 +703,15 @@ struct LiveChannelOverlay: View {
         }
     }
 
+    /// VOD's round track control. `highlighted` is the badge whose menu is
+    /// open; `prominent` the Go Live call to action.
     private func badge(
         _ title: LocalizedStringResource, systemImage: String, control: LiveChannelControl,
-        prominent: Bool = false, action: @escaping () -> Void
+        highlighted: Bool = false, prominent: Bool = false, action: @escaping () -> Void
     ) -> some View {
-        PlayerControlButton(title, systemImage: systemImage, prominent: prominent, action: action)
+        PlayerTrackControlButton(
+            title: title, systemImage: systemImage, highlighted: highlighted, prominent: prominent, action: action
+        )
         .focused($focus, equals: control)
         .disabled(openMenu != nil || cardOpen)
     }
