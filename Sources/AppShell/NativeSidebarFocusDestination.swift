@@ -1,5 +1,6 @@
 #if os(tvOS)
 import CoreModels
+import CoreUI
 import SwiftUI
 
 /// Native TabView owns the transition; only the presented page may accept focus.
@@ -11,6 +12,7 @@ struct NativeSidebarFocusDestination<Content: View>: View {
 
     var body: some View {
         content
+            .environment(\.plozzHiddenDestination, selection != destination)
             .disabled(selection != destination || handoff.isWaiting)
             .background {
                 NavigationDestinationPresentationAnchor(

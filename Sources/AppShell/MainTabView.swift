@@ -1551,6 +1551,7 @@ struct MainTabView: View {
         let showsLiveTV = activeLibraryNavigationDestination == .liveTV
         ZStack {
             railDestination
+                .environment(\.plozzHiddenDestination, showsLiveTV)
                 .opacity(showsLiveTV ? 0 : 1)
                 .disabled(showsLiveTV)
                 .allowsHitTesting(!showsLiveTV)
@@ -1572,6 +1573,7 @@ struct MainTabView: View {
                 )
             }
             .id(activeProfile.id)
+            .environment(\.plozzHiddenDestination, !showsLiveTV)
             .opacity(showsLiveTV ? 1 : 0)
             .disabled(!showsLiveTV)
             .allowsHitTesting(showsLiveTV)

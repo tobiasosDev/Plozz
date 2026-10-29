@@ -24,14 +24,25 @@ card's focus or selection treatment.
 `BrowseQueryControls`, `BrowseSortMenu`, and `BrowseFilterMenu` own the native
 query-control layout, sort choices/directions, and active-filter labels shared
 by Library and Watchlist on TV and mobile. Mobile controls wrap at narrow widths
-and keep their 44-point action targets; TV keeps the existing native menu style.
+and keep their 44-point action targets. On TV they are the TV app's query pills
+(`BrowseQueryPillButtonStyle`): frosted capsules — a translucent fill, never a
+blur — that turn white with dark ink under focus.
 `WatchlistBrowseControls` supplies Watchlist's supported choices, not a parallel
 menu design. Callers retain their query behavior and accessibility identifiers.
-Sort and filter buttons show their icon and current choice, without `Sort:` or
-`Filter:` prefixes. An unfiltered button shows `All`; compound filters keep their
-summary and fall back to the active count at narrow widths. Descriptive prefixes
-remain in accessibility labels. `BrowseFilterLabel` also supplies this presentation
+On mobile, sort and filter buttons show their icon and current choice, without
+`Sort:` or `Filter:` prefixes, and an unfiltered button shows `All`. On TV, Sort
+reads `Sort` dimmed before the current field, and an unfiltered button reads
+`Filter`. Compound filters keep their summary on both and fall back to the
+active count at narrow widths. Accessibility labels keep `Sort: Name` and
+`Filter: All`. `BrowseFilterLabel` also supplies this presentation
 to Recent Activity; native icon-only toolbars and titles inside menus remain intact.
+
+System poster captions centre by default. `plozzCardCaptionLeading` aligns them
+to the leading edge with a primary title over dimmed metadata, as the TV app's
+library and search posters do; the native library grid always uses that
+treatment. `plozzCardCaptionSourceNames` makes a poster caption name the server
+an item plays from in place of its runtime ("2010 · Wohnzimmer"); only Search,
+whose results mix servers, sets it.
 
 `ServerUserRow` keeps the user's name above its owner/PIN metadata. The metadata
 wraps independently, preserving the avatar, native focus treatment, and trailing
@@ -123,10 +134,15 @@ does not advance in inactive scenes, and fires immediately with Reduce Motion.
 The shell may retain the launch presentation for that intro without delaying
 startup work. Longer loading keeps the existing eight-second expression loop.
 
-Loading placeholders share `shimmering()`. Its static gradient band is rasterized
-before the animated translation, avoiding repeated gradient work without
-rasterizing the placeholder content or changing the sweep, masking, or intensity.
-Inactive placeholders remain unmodified; Reduce Motion retains the static dim.
+Loading placeholders share `shimmering()`: a translated gradient band that runs
+four passes (about nine seconds) and then rests off-screen. A placeholder that
+loads in time looks the same as with an endless sweep; one that never does stops
+costing frames. The band is a plain gradient. An additive blend over a drawing
+group made SwiftUI re-render every placeholder through Metal on the main thread,
+each frame, even on a page held at zero opacity. Placeholders on a mounted page
+that is not shown (`plozzHiddenDestination`: an unselected native sidebar tab,
+the page the rail keeps behind Live TV) do not sweep at all. Inactive
+placeholders remain unmodified; Reduce Motion retains the static dim.
 The simulator lab's `skeletons-idle` and `skeletons-static` scenarios isolate this
 cost from loaded cards and network/provider work.
 
@@ -409,7 +425,9 @@ Density, Dynamic Type, and the minimum height follow the same shared metric.
   iOS primary actions pair the palette's monochrome `accent` with `onAccent`:
   native prominent buttons otherwise retain white text on a white tint. This
   theme-color pairing does not replace native geometry, material or interaction.
-  Playback uses `PlayerControlButton` for icon-only transport actions. Multiview
+  Playback's tvOS track controls are FeaturePlayback's round
+  `PlayerTrackControlButton`; `PlayerControlButton` remains available as the
+  capsule icon-only glass button. Multiview
   keeps visible title-and-icon labels and uses the same `playerGlassButton`
   treatment, including native menus. Only the existing reduced-transparency
   playback path draws the shared frosted fallback.
