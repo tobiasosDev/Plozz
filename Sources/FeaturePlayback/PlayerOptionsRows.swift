@@ -23,8 +23,16 @@ struct PlayerOptionsRow: View {
     let palette: ThemePalette
     @FocusState.Binding var focus: PlayerControls.FocusSlot?
     var titleLineLimit = 1
+    /// Lead with the selection column (`PlayerMenuRowMark`) instead of a
+    /// trailing checkmark, for rows sharing a list with track rows.
+    var reservesMarkColumn = false
+    /// The focus slot this row binds, when it is not one of a screen's
+    /// numbered rows — the Subtitles track list's value rows, whose numbers
+    /// the tracks above them already use.
+    var focusSlot: PlayerControls.FocusSlot?
 
-    private var isFocused: Bool { focus == .row(row.slot) }
+    private var slot: PlayerControls.FocusSlot { focusSlot ?? .row(row.slot) }
+    private var isFocused: Bool { focus == slot }
 
     var body: some View {
         Button {
@@ -36,7 +44,10 @@ struct PlayerOptionsRow: View {
             case let .action(run): run()
             }
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: reservesMarkColumn ? PlayerMenuRowMark.spacing : 10) {
+                if reservesMarkColumn {
+                    PlayerMenuRowMark(isSelected: row.isSelected, accent: palette.accent)
+                }
                 Text(row.title)
                     .font(.body)
                     .lineLimit(titleLineLimit)
@@ -50,7 +61,7 @@ struct PlayerOptionsRow: View {
         }
         .buttonStyle(PlayerMenuRowButtonStyle())
         .focusEffectDisabled()
-        .focused($focus, equals: .row(row.slot))
+        .focused($focus, equals: slot)
         .accessibilityIdentifier("player-settings-row-\(row.slot)")
         .accessibilityAddTraits(row.isSelected ? .isSelected : [])
     }
@@ -71,7 +82,7 @@ struct PlayerOptionsRow: View {
             default:
                 EmptyView()
             }
-            if row.isSelected {
+            if row.isSelected, !reservesMarkColumn {
                 Image(systemName: "checkmark")
                     .font(.body.weight(.semibold))
                     .playerMenuRowMark(isSelected: true, accent: palette.accent)

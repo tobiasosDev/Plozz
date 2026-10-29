@@ -258,6 +258,11 @@ The OS may still process eligible content/routes; this is distinct from proving
 that a custom in-app menu can read or change its system setting.
 
 Native and tvOS track menus share `TrackLabeling` and `TrackMenuBuilder`.
+Native menus keep the composed label ("English (SDH)"). The tvOS Subtitles menu
+sets the qualifiers (SDH, Forced, format) beside the name in secondary type and
+marks the selection in a leading column, then lists Dual Subtitles, Subtitle Sync
+and Style as rows showing their current values, and Download Subtitles… last.
+Back from each of those screens returns focus to the row that opened it.
 Bare language titles no longer suppress known codec/channel facts, for example
 `English (Opus 5.1)`. Custom names and commentary are retained, existing format
 facts are not duplicated, and unknown formats are not invented.

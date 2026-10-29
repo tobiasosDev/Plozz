@@ -39,13 +39,23 @@ public struct PlayerTrackOption: Identifiable, Hashable, Sendable {
     /// `true` for an external (downloaded / sidecar) subtitle, so the menu can mark
     /// it apart from the media's embedded tracks.
     public var isExternal: Bool
+    /// `title` split for a menu that sets the qualifiers apart from the name —
+    /// "English" and "SDH · PGS" rather than "English (SDH, PGS)". `nil` when
+    /// the builder had nothing to split; `title` always holds the whole label.
+    public var baseTitle: Text?
+    public var qualifiers: Text?
 
-    public init(id: Int, title: Text, isSelected: Bool, isExternal: Bool = false, nativeTitle: String? = nil) {
+    public init(
+        id: Int, title: Text, isSelected: Bool, isExternal: Bool = false, nativeTitle: String? = nil,
+        baseTitle: Text? = nil, qualifiers: Text? = nil
+    ) {
         self.id = id
         self.title = title
         self.nativeTitle = nativeTitle ?? String(localized: "Track \(id)") // l10n:content - legacy UIKit fallback; track builders supply locale-refreshed titles.
         self.isSelected = isSelected
         self.isExternal = isExternal
+        self.baseTitle = baseTitle
+        self.qualifiers = qualifiers
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
@@ -54,6 +64,8 @@ public struct PlayerTrackOption: Identifiable, Hashable, Sendable {
             && lhs.nativeTitle == rhs.nativeTitle
             && lhs.isSelected == rhs.isSelected
             && lhs.isExternal == rhs.isExternal
+            && lhs.baseTitle == rhs.baseTitle
+            && lhs.qualifiers == rhs.qualifiers
     }
 
     public func hash(into hasher: inout Hasher) {

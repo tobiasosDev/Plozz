@@ -82,12 +82,15 @@ enum TrackMenuBuilder {
         guard !tracks.isEmpty else { return [] }
         var options = [subtitleOffOption(isSelected: selectedID == nil, locale: locale)]
         options.append(contentsOf: tracks.sortedByPreferredLanguage(preferred).map { track in
-            let label = subtitlePresentation(track, detectedLanguages: detectedLanguages, locale: locale)
+            let label = subtitleLabel(track, detectedLanguages: detectedLanguages, locale: locale)
+            let whole = presentation(for: label, locale: locale)
             return PlayerTrackOption(
                 id: track.id,
-                title: label.text,
+                title: whole.text,
                 isSelected: track.id == selectedID,
-                isExternal: track.isExternal, nativeTitle: label.nativeTitle
+                isExternal: track.isExternal, nativeTitle: whole.nativeTitle,
+                baseTitle: basePresentation(for: label, locale: locale).text,
+                qualifiers: qualifierList(for: label, locale: locale)?.text
             )
         })
         return options
@@ -188,7 +191,12 @@ enum TrackMenuBuilder {
 
     private static func subtitlePresentation(_ track: MediaTrack, detectedLanguages: [Int: String],
                                              locale: Locale) -> LabelPresentation {
-        presentation(for: TrackLabeling.subtitleLabel(
+        presentation(for: subtitleLabel(track, detectedLanguages: detectedLanguages, locale: locale), locale: locale)
+    }
+
+    private static func subtitleLabel(_ track: MediaTrack, detectedLanguages: [Int: String],
+                                      locale: Locale) -> TrackLabel {
+        TrackLabeling.subtitleLabel(
             displayTitle: track.displayTitle,
             language: track.language,
             codec: track.codec,
@@ -199,7 +207,7 @@ enum TrackMenuBuilder {
             detectedLanguage: detectedLanguages[track.id],
             trackID: track.id,
             locale: locale
-        ), locale: locale)
+        )
     }
 
     /// Composes a structured ``TrackLabel`` (base + qualifiers) into the final
@@ -210,22 +218,33 @@ enum TrackMenuBuilder {
     /// token). `base`/qualifiers are never joined into a plain `String` first,
     /// which is exactly what would hide the copy from the catalog.
     private static func presentation(for label: TrackLabel, locale: Locale) -> LabelPresentation {
-        let base: LabelPresentation
+        let base = basePresentation(for: label, locale: locale)
+        guard let joined = qualifierList(for: label, locale: locale, separator: ", ") else { return base }
+        return base + .init(content: " (") + joined + .init(content: ")")
+    }
+
+    private static func basePresentation(for label: TrackLabel, locale: Locale) -> LabelPresentation {
         switch label.base {
         case .content(let value):
-            base = .init(content: value)
+            return .init(content: value)
         case .trackNumber(let number):
-            base = .init(resource: LocalizedStringResource(
+            return .init(resource: LocalizedStringResource(
                 "Track \(number)",
                 comment: "Fallback label for an audio/subtitle track with no resolved language or meaningful provider title, showing its index."
             ), locale: locale)
         }
-        guard !label.qualifiers.isEmpty else { return base }
+    }
+
+    /// The qualifiers alone, joined — `", "` inside the composed label's
+    /// parentheses, `" · "` where a menu sets them apart from the name.
+    private static func qualifierList(
+        for label: TrackLabel, locale: Locale, separator: String = " · "
+    ) -> LabelPresentation? {
+        guard !label.qualifiers.isEmpty else { return nil }
         let qualifiers = label.qualifiers.map { qualifierPresentation($0, locale: locale) }
-        let joined = qualifiers.dropFirst().reduce(qualifiers[0]) { accumulated, next in
-            accumulated + .init(content: ", ") + next
+        return qualifiers.dropFirst().reduce(qualifiers[0]) { accumulated, next in
+            accumulated + .init(content: separator) + next
         }
-        return base + .init(content: " (") + joined + .init(content: ")")
     }
 
     private static func qualifierPresentation(_ qualifier: TrackLabel.Qualifier, locale: Locale) -> LabelPresentation {

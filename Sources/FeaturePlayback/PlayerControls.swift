@@ -149,18 +149,20 @@ struct PlayerControls: View {
         /// Leave the film for this person's own page.
         case castMore
         case row(Int)
-        case edit       // Subtitles header ✎ Edit (appearance) button
-        case download   // Trailing "Search for subtitles…" row
+        case edit       // Subtitles track list: Style (appearance) row
+        case download   // Subtitles track list: trailing "Download Subtitles…" row
         case subBack    // Back control inside an options sub-screen
-        case subSync    // Subtitles header Sync (timing) button
+        case subSync    // Subtitles track list: Subtitle Sync (timing) row
+        case dualSubtitles // Subtitles track list: Dual Subtitles row
     }
 
     enum AudioScreen: Equatable {
         case options, dialogue
     }
 
-    /// Sub-screens of the Subtitles panel. `tracks` is the default list; the
-    /// header ✎ Edit opens `style`, and the trailing row opens `download`. The
+    /// Sub-screens of the Subtitles panel. `tracks` is the default list; its
+    /// value rows open `styleDual`, `sync` and `style`, and the trailing row opens
+    /// `download`. The
     /// Style screen has its own detail sub-screens (`styleOutline` / `styleBackground`
     /// / `styleDual`). Back steps to a screen's PARENT rather than closing the panel.
     enum SubtitleScreen: Equatable {
@@ -1276,8 +1278,8 @@ struct PlayerControls: View {
                     category: panel, model: model, palette: palette, actions: actions,
                     subtitleScreen: $subtitleScreen, heightCache: $cachedPanelHeight, focus: $focus,
                     close: { openPanel = nil }, backRequest: panelBackRequest,
-                    maximumHeight: max(0, availableHeight - Self.horizontalMargin
-                        - (styleEditing ? Self.horizontalMargin : menuBottomInset)),
+                    maximumHeight: max(0, availableHeight
+                        - (styleEditing ? 2 * Self.horizontalMargin : menuTopInset + menuBottomInset)),
                     playbackScreen: $playbackScreen, audioScreen: $audioScreen
                 )
                 .reportSubtitleControlsFrame(
@@ -1290,7 +1292,7 @@ struct PlayerControls: View {
                 if styleEditing { Spacer(minLength: 0) }
             }
             .padding(.horizontal, Self.horizontalMargin)
-            .padding(.top, Self.horizontalMargin)
+            .padding(.top, styleEditing ? Self.horizontalMargin : menuTopInset)
             // Rest just above the track controls. Their top edge is MEASURED rather
             // than derived from the transport's height: the buttons are one row inside
             // it, and that row's height is set by the much taller title block beside
@@ -1303,6 +1305,21 @@ struct PlayerControls: View {
             .padding(.bottom, styleEditing ? Self.horizontalMargin : menuBottomInset)
             .transition(.scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity))
         }
+    }
+
+    /// How far a bottom-anchored menu's top may come to the top of its layer:
+    /// whatever keeps the menu `horizontalMargin` from the SCREEN's top edge.
+    ///
+    /// The layer is laid out in a box that already starts below the screen edge
+    /// — it ends at `controlsBottom` and is `availableHeight` tall, so its top
+    /// is their difference (~120pt on tvOS) — and padding that box by the full
+    /// margin again held every menu ~120pt short of the margin, which cut the
+    /// Subtitles list's last rows. Shrinking the inset rather than lengthening
+    /// the budget keeps the layer inside its box: a taller layer would grow the
+    /// ZStack and shift the whole cluster (see `optionsPanelLayer`).
+    private var menuTopInset: CGFloat {
+        guard controlsBottom > 0, availableHeight > 0 else { return Self.horizontalMargin }
+        return max(0, Self.horizontalMargin - (controlsBottom - availableHeight))
     }
 
     /// Distance from the bottom of the controls layer up to the top of the track
@@ -1587,6 +1604,9 @@ struct PlayerControls: View {
         var marqueeTitle: Bool = false
         var submenu: PlayerOptionsRowSpec?
         var isExternal: Bool = false
+        /// Secondary qualifiers set beside the title on the same line ("SDH",
+        /// "Forced"), where `subtitle` is a second line beneath it.
+        var detail: Text?
         var facts: Text?
         var titleLineLimit: Int? = 1
         var versionPresentation: MediaVersion.PickerPresentation?
@@ -1723,7 +1743,8 @@ extension PlayerControlsModel {
     var subtitleTrackListFocus: PlayerControls.FocusSlot {
         guard hasSelectableSubtitles else {
             if subtitleDownload.canSearch { return .download }
-            return subtitleStyleAdjustable || !secondarySubtitleOptions.isEmpty ? .edit : .button(.subtitles)
+            if subtitleStyleAdjustable { return .edit }
+            return secondarySubtitleOptions.isEmpty ? .button(.subtitles) : .dualSubtitles
         }
         return .row(subtitleOptions.firstIndex(where: \.isSelected) ?? 0)
     }

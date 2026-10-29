@@ -14,10 +14,14 @@ struct PlayerOptionsDivider: View {
 
 /// A reusable full-width column of selectable / toggle track rows, extracted from
 /// `PlayerControls`. Shared by the Subtitles track list and the Audio pane — both
-/// render the same compact rows (title, optional external badge / subtitle,
-/// selection mark), differing only in the `TrackRow` data they feed in. Each row
-/// binds to the shared `@FocusState` via its stable `row(id)` slot, so focus
-/// behaviour is identical wherever the stack is used.
+/// render the same compact rows (selection mark, title, optional qualifiers /
+/// external badge / subtitle), differing only in the `TrackRow` data they feed
+/// in. Each row binds to the shared `@FocusState` via its stable `row(id)` slot,
+/// so focus behaviour is identical wherever the stack is used.
+///
+/// The selection mark leads the title in a column every row reserves, as the
+/// Apple TV app's menus draw it, so titles line up whether or not their row is
+/// the chosen one — including toggle and submenu rows sharing the stack.
 struct PlayerMenuRowStack: View {
     let rows: [PlayerControls.TrackRow]
     let palette: ThemePalette
@@ -42,7 +46,9 @@ struct PlayerMenuRowStack: View {
                     .accessibilityIdentifier("player-option-row-\(row.id)")
                     .focused($focus, equals: .row(row.id))
                 } else if let submenu = row.submenu {
-                    PlayerOptionsRow(row: submenu, palette: palette, focus: $focus, titleLineLimit: 2)
+                    PlayerOptionsRow(
+                        row: submenu, palette: palette, focus: $focus, titleLineLimit: 2, reservesMarkColumn: true
+                    )
                 } else if row.isToggle {
                     compactToggleRow(row)
                 } else {
@@ -54,17 +60,29 @@ struct PlayerMenuRowStack: View {
 
     private func compactSelectableRow(_ row: PlayerControls.TrackRow) -> some View {
         Button(action: row.action) {
-            HStack(spacing: 10) {
+            HStack(spacing: PlayerMenuRowMark.spacing) {
+                PlayerMenuRowMark(isSelected: row.isSelected, accent: palette.accent)
                 VStack(alignment: .leading, spacing: 2) {
-                    #if os(tvOS)
-                    if row.marqueeTitle {
-                        MarqueeText(text: row.title)
-                    } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        #if os(tvOS)
+                        if row.marqueeTitle {
+                            MarqueeText(text: row.title)
+                        } else {
+                            row.title.font(.body).lineLimit(row.titleLineLimit)
+                        }
+                        #else
                         row.title.font(.body).lineLimit(row.titleLineLimit)
+                        #endif
+                        if let detail = row.detail {
+                            detail
+                                .font(.caption)
+                                .playerMenuRowSecondary()
+                                .lineLimit(1)
+                                // The qualifier is short and is what tells two
+                                // same-language tracks apart; the name truncates.
+                                .fixedSize()
+                        }
                     }
-                    #else
-                    row.title.font(.body).lineLimit(row.titleLineLimit)
-                    #endif
                     if let facts = row.facts {
                         facts
                             .font(.caption2)
@@ -87,11 +105,6 @@ struct PlayerMenuRowStack: View {
                     ExternalSubtitleBadge()
                 }
                 Spacer(minLength: 8)
-                if row.isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.body.weight(.semibold))
-                        .playerMenuRowMark(isSelected: true, accent: palette.accent)
-                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -106,7 +119,8 @@ struct PlayerMenuRowStack: View {
 
     private func compactToggleRow(_ row: PlayerControls.TrackRow) -> some View {
         Button(action: row.action) {
-            HStack(spacing: 10) {
+            HStack(spacing: PlayerMenuRowMark.spacing) {
+                PlayerMenuRowMark(isSelected: false, accent: palette.accent)
                 VStack(alignment: .leading, spacing: 2) {
                     row.title.font(.body.weight(.medium)).lineLimit(1)
                     if let subtitle = row.subtitle {
@@ -136,6 +150,31 @@ struct PlayerMenuRowStack: View {
         #endif
         .focusEffectDisabled()
         .focused($focus, equals: .row(row.id))
+    }
+}
+
+/// The leading selection column of a menu row: a checkmark on the chosen row,
+/// the same empty width on every other, so titles share one leading edge.
+struct PlayerMenuRowMark: View {
+    static let width: CGFloat = 28
+    /// Gap between the column and the title.
+    static let spacing: CGFloat = 12
+
+    let isSelected: Bool
+    let accent: Color
+
+    var body: some View {
+        Group {
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.body.weight(.semibold))
+                    .playerMenuRowMark(isSelected: true, accent: accent)
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: Self.width)
+        .accessibilityHidden(true)
     }
 }
 

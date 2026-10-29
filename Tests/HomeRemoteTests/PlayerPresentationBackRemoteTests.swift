@@ -28,7 +28,7 @@ final class PlayerPresentationBackRemoteTests: XCTestCase {
         expect(app, "player-back-controls", "true")
         XCTAssertTrue(subtitles.waitForExistence(timeout: 10))
         XCUIRemote.shared.press(.select)
-        let download = app.buttons["Download subtitles…"]
+        let download = app.buttons["Download Subtitles…"]
         waitUntil("Chooser should initially focus Download") {
             download.exists && download.hasFocus
         }

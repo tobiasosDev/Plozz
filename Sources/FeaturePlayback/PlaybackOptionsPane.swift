@@ -42,7 +42,8 @@ struct PlaybackOptionsPane: View {
                 }, palette: palette, focus: $focus)
             }
             ForEach(rows) { row in
-                PlayerOptionsRow(row: row, palette: palette, focus: $focus)
+                // Under the zoom modes, Custom is one more choice in their list.
+                PlayerOptionsRow(row: row, palette: palette, focus: $focus, reservesMarkColumn: screen == .zoom)
             }
         }
         .padding(.horizontal, 14)
