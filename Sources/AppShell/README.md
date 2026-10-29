@@ -24,7 +24,14 @@ registry.
   (`shouldStorePreferencesForCurrentUser`) for the `user-management`
   entitlement.
 - `AddAccountView` — first-run "add another server" flow that routes
-  into `FeatureDiscovery` and `FeatureAuth`.
+  into `FeatureDiscovery` and `FeatureAuth`. The chooser is one horizontal row
+  of flat frosted provider tiles (white and lifted when focused) in the model's
+  provider order; Media Share keeps its name with an SMB · WebDAV · NFS caption.
+  First run adds the welcome header and a static poster-shaped pattern drawn once
+  into a `Canvas` under a page-colour veil (no artwork exists yet; no image
+  assets, blur, mask or animation). When Back is shown, Left from the first
+  tile reaches it through an invisible guard, while Left between tiles stays
+  native.
 - `LibraryDiscoveryModel` — per-account "what libraries does this server
   expose?" coordination.
 - `MediaItemActionCoordinator` — the cross-feature action bus (play,
