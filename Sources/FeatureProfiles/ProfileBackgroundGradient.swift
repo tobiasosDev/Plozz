@@ -237,17 +237,16 @@ final class ProfileBackgroundPalettes {
     }
 }
 
-/// The profile picker's living background: the **same Apple Music–style morphing
-/// mesh** used by the now-playing screen (`LiquidArtworkBackground`), tinted to
-/// the focused profile's signature color(s). It fills the screen — colors drift
-/// and blend on slow, out-of-phase waves — so the picker feels alive the moment
-/// it appears.
+/// The profile picker's background: the **same Apple Music–style mesh** used by
+/// the now-playing screen (`LiquidArtworkBackground`), tinted to the focused
+/// profile's signature color(s) and held still, like the wallpaper behind the
+/// Apple TV profile picker.
 ///
 /// As focus moves between profiles the palette changes and the mesh **crossfades**
 /// to the new colors (handled by `LiquidArtworkBackground`'s own colour
 /// animation), so switching profiles reads as a gentle, fluid transition. The
 /// whole layer fades in on first appearance so launch feels elegant rather than
-/// abrupt. Reduce Motion renders the field statically.
+/// abrupt.
 struct ProfileBackgroundGradient: View {
     /// The profile whose colors drive the field. `nil` shows the neutral field.
     let profile: Profile?
@@ -258,23 +257,19 @@ struct ProfileBackgroundGradient: View {
 
     @Environment(\.themePalette) private var palette
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(ProfileBackgroundPalettes.self) private var palettes
 
     @State private var appeared = false
-    /// Gates the 30fps morphing animation. Stays `false` (a static, fully-colored
-    /// mesh) through the launch/first-interaction window, then flips `true` so the
-    /// field starts drifting. Deferring the per-frame `MeshGradient` + mask render
-    /// past first paint keeps cold-launch cost off the most sensitive window —
-    /// progressive enhancement: the colored field is there instantly, motion joins
-    /// a beat later.
-    @State private var motionStarted = false
 
     var body: some View {
         GeometryReader { proxy in
             LiquidArtworkBackground(
                 palette: resolvedColors,
-                animate: !reduceMotion && motionStarted,
+                // Static, like the Apple TV profile picker's wallpaper. The field
+                // used to drift at 30fps for as long as the picker was open,
+                // re-rendering a full-screen mesh and its mask on every frame;
+                // focus still moves and recolors the glow below.
+                animate: false,
                 // Use the Pure Black treatment for every theme — the most restrained
                 // intensity — so the profile color is a gentle bloom rather than
                 // a bright wash. Each theme's own background colour still shows
@@ -296,15 +291,6 @@ struct ProfileBackgroundGradient: View {
             // Gentle fade-in on first paint so the background arrives elegantly
             // instead of popping in at launch.
             withAnimation(.easeOut(duration: 0.9)) { appeared = true }
-            // Hold the 30fps mesh animation until the picker has painted and the
-            // initial focus has settled, so launch never pays continuous
-            // mesh+mask render cost during first paint / first interaction. The
-            // static field is already on screen; only the drift is deferred.
-            guard !reduceMotion else { return }
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(900))
-                motionStarted = true
-            }
         }
     }
 
