@@ -18,6 +18,14 @@ private struct PlozzCardCaptionShowcaseKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+private struct PlozzCardCaptionSourceNamesKey: EnvironmentKey {
+    static let defaultValue: [String: MediaSourceIdentity]? = nil
+}
+
+private struct PlozzCardCaptionLeadingKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 public extension EnvironmentValues {
     var plozzCardCaptionSettings: CardCaptionSettings {
         get { self[PlozzCardCaptionSettingsKey.self] }
@@ -36,6 +44,22 @@ public extension EnvironmentValues {
     var plozzCardCaptionIsShowcase: Bool {
         get { self[PlozzCardCaptionShowcaseKey.self] }
         set { self[PlozzCardCaptionShowcaseKey.self] = newValue }
+    }
+
+    /// When set, a poster caption names the server an item plays from in place
+    /// of its runtime ("2010 · Wohnzimmer"). Only a surface that mixes servers
+    /// sets it — Search — so every other card keeps its runtime and never pays
+    /// for the lookup.
+    var plozzCardCaptionSourceNames: [String: MediaSourceIdentity]? {
+        get { self[PlozzCardCaptionSourceNamesKey.self] }
+        set { self[PlozzCardCaptionSourceNamesKey.self] = newValue }
+    }
+
+    /// Leading-aligned system poster captions, as the TV app sets them under its
+    /// library and search posters. Captions centre by default.
+    var plozzCardCaptionLeading: Bool {
+        get { self[PlozzCardCaptionLeadingKey.self] }
+        set { self[PlozzCardCaptionLeadingKey.self] = newValue }
     }
 
     /// Explicit values are reserved for non-media navigation tiles and fixtures.

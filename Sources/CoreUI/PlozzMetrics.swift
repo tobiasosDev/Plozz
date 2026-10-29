@@ -181,13 +181,9 @@ public struct PlozzMetrics: Equatable, Sendable {
         )
     }
 
-    /// Library grids use a roomier default without changing the other density presets.
-    public var libraryPosterColumns: [GridItem] {
-        Array(
-            repeating: GridItem(.flexible(), spacing: gridSpacing, alignment: .top),
-            count: density == .standard ? 6 : posterGridColumns
-        )
-    }
+    /// Library grids share the general wall's columns, seven at standard
+    /// density, like the TV app's library grid.
+    public var libraryPosterColumns: [GridItem] { posterColumns }
 
     /// The layout width reserved for one landscape card in a rail — its full
     /// glass-surface width (artwork + both insets) so `cardSpacing` lands as a

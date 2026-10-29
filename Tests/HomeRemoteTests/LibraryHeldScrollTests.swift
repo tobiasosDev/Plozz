@@ -21,6 +21,7 @@ final class LibraryHeldScrollTests: XCTestCase {
                         .matching(identifier: "library-content-mode").firstMatch
                     XCTAssertTrue(bar.waitForExistence(timeout: 15), app.debugDescription)
                     let originalFrame = bar.frame
+                    var keyline: CGFloat?
                     for (mode, title) in [
                         ("recommended", "A: Library item 000"), ("titles", "A: Library item 000"),
                         ("collections", "Collection item 0"), ("playlists", "Playlist item 0")
@@ -41,9 +42,16 @@ final class LibraryHeldScrollTests: XCTestCase {
                         attachment.name = "library-visible-keyline-\(context)"
                         attachment.lifetime = .keepAlways
                         add(attachment)
-                        print("LIBRARY_VISIBLE_KEYLINE \(context) navigation=\(bar.frame.minX) card=\(visibleLeft)")
-                        XCTAssertEqual(visibleLeft, bar.frame.minX, accuracy: 1,
+                        print("LIBRARY_VISIBLE_KEYLINE \(context) navigation=\(bar.frame.midX) card=\(visibleLeft)")
+                        // The mode control is centred between the content keyline and
+                        // the trailing safe margin, as in the TV app, so the rendered
+                        // card surface — not its padded slot — fixes that centre.
+                        XCTAssertEqual(bar.frame.midX, (visibleLeft + app.frame.width - 80) / 2, accuracy: 1,
                                        "Align the rendered card surface, not its invisible padded slot: \(context)")
+                        if let keyline {
+                            XCTAssertEqual(visibleLeft, keyline, accuracy: 1, "Every mode shares one keyline: \(context)")
+                        }
+                        keyline = keyline ?? visibleLeft
                     }
                     app.terminate()
                 }
@@ -93,8 +101,8 @@ final class LibraryHeldScrollTests: XCTestCase {
                 screenshot.lifetime = .keepAlways
                 add(screenshot)
 
-                XCTAssertEqual(bar.frame.minX, heading.frame.minX, accuracy: 1,
-                               "Align the mode container to Showcase without moving the shared content.")
+                XCTAssertEqual(bar.frame.midX, (heading.frame.minX + app.frame.width - 80) / 2, accuracy: 1,
+                               "Centre the mode container on the Showcase content without moving it.")
                 let description = app.staticTexts["showcase-description"]
                 XCTAssertTrue(description.waitForExistence(timeout: 5), app.debugDescription)
                 XCTAssertEqual(description.frame.minX, heading.frame.minX, accuracy: 1,
