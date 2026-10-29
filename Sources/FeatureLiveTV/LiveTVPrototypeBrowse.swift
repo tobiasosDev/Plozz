@@ -186,6 +186,14 @@ struct PrototypeBrowser: View {
                                 .padding(.bottom, PrototypeLayout.rowGap)
                         }
                     }
+                    .background {
+                        PrototypeTimelineReader(timeline: timeline) { offset in
+                            PrototypeNowLine(
+                                start: guideStart, now: model.now, timelineOffset: offset,
+                                width: geometry.size.width
+                            )
+                        }
+                    }
                     .verticalEdgeFadeMask(
                         fadeHeight: PrototypeLayout.verticalFade,
                         topStrength: verticalFade.leading, bottomStrength: 0)
@@ -803,6 +811,7 @@ struct PrototypeTimeRuler: View {
                             .minimumScaleFactor(0.8)
                             .padding(.leading, PrototypeLayout.rowInset)
                             .frame(width: tickWidth, alignment: .leading)
+                            .opacity(isUnderNowPill(time) ? 0 : 1)
                     }
                 }
                 .frame(height: height)
@@ -829,16 +838,40 @@ struct PrototypeTimeRuler: View {
             }
             .overlay(alignment: .bottom) {
                 if showsNowMarker {
+                    #if os(tvOS)
+                    PrototypeNowPill(
+                        start: start, now: now, timelineOffset: timelineOffset,
+                        viewportSeconds: PrototypeLayout.viewportSeconds(for: width)
+                    )
+                    .frame(height: height)
+                    #else
                     PrototypeNowMarker(
                         start: start, now: now, timelineOffset: timelineOffset,
                         viewportSeconds: PrototypeLayout.viewportSeconds(for: width)
                     )
                         .offset(y: PrototypeNowMarker.rulerOffset)
+                    #endif
                 }
             }
         }
+        #if os(tvOS)
+        .font(.system(size: 20, weight: .semibold).monospacedDigit())
+        .foregroundStyle(palette.secondaryText)
+        #else
         .font(.caption.monospacedDigit())
         .foregroundStyle(palette.primaryText)
+        #endif
+    }
+
+    /// The TV's now pill covers the half-hour label it passes, as in the Apple TV guide.
+    private func isUnderNowPill(_ time: Date) -> Bool {
+        #if os(tvOS)
+        guard showsNowMarker else { return false }
+        let minutes = now.timeIntervalSince(time) / 60
+        return minutes > -6 && minutes < 14
+        #else
+        false
+        #endif
     }
 
     /// Half-hour ticks from a screen before the visible time to a screen after it.
@@ -901,6 +934,65 @@ struct PrototypeNowMarker: View {
         .accessibilityHidden(true)
     }
 }
+
+#if os(tvOS)
+/// The current time as the Apple TV guide shows it: a white pill on the
+/// ruler, covering the half-hour label it passes. Moves with the clock's
+/// half-minute tick and the timeline, never on its own.
+struct PrototypeNowPill: View {
+    let start: Date
+    let now: Date
+    let timelineOffset: CGFloat
+    var viewportSeconds: TimeInterval = 7_200
+    @Environment(\.themePalette) private var palette
+    @Environment(\.locale) private var locale
+
+    var body: some View {
+        GeometryReader { geometry in
+            let x = geometry.size.width * now.timeIntervalSince(start) / viewportSeconds - timelineOffset
+            if x >= 0, x <= geometry.size.width {
+                Text(verbatim: now.formatted(.dateTime.hour().minute().locale(locale)))
+                    .font(.system(size: 18, weight: .bold).monospacedDigit())
+                    .foregroundStyle(palette.onAccent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
+                    .background(palette.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .fixedSize()
+                    .position(x: x, y: geometry.size.height / 2)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The now line under the pill, drawn behind the rows so it shows between
+/// and through the cells but never across the focused one.
+struct PrototypeNowLine: View {
+    let start: Date
+    let now: Date
+    let timelineOffset: CGFloat
+    let width: CGFloat
+    @Environment(\.themePalette) private var palette
+
+    var body: some View {
+        GeometryReader { geometry in
+            let leading = PrototypeLayout.stationWidth(for: width) + PrototypeLayout.columnGap
+            let x = leading + PrototypeLayout.timelineX(now.timeIntervalSince(start), for: width) - timelineOffset
+            if x >= leading, x <= geometry.size.width {
+                ZStack {
+                    Rectangle().fill(palette.primaryText.opacity(0.18)).frame(width: 6)
+                    Rectangle().fill(palette.primaryText.opacity(0.85)).frame(width: 2)
+                }
+                .frame(height: geometry.size.height)
+                .position(x: x, y: geometry.size.height / 2)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+#endif
 
 struct PrototypeElapsedProgramFill: View {
     let elapsedWidth: CGFloat
@@ -1019,24 +1111,29 @@ struct PrototypeGuideRow: View {
                                     Button { activate(program) } label: {
                                         PrototypeProgramLabel(
                                             program: program, now: now,
-                                            availableWidth: max(0, cellWidth(slot) - PrototypeLayout.rowInset * 2)
+                                            availableWidth: max(0, cellWidth(slot) - PrototypeLayout.programPadding * 2)
                                         )
-                                        .padding(.horizontal, min(PrototypeLayout.rowInset, slotWidth(slot) / 4))
+                                        .padding(.horizontal, min(PrototypeLayout.programPadding, slotWidth(slot) / 4))
                                         .frame(
                                             width: cellWidth(slot),
                                             height: PrototypeLayout.programHeight(in: rowHeight),
                                             alignment: .leading
                                         )
                                         .clipped()
+                                        #if os(iOS)
                                         .background {
                                             PrototypeElapsedProgramFill(
                                                 elapsedWidth: timelineWidth * now.timeIntervalSince(slot.start) / viewportSeconds
                                             )
                                         }
+                                        #endif
                                     }
                                     .buttonStyle(PrototypeButtonStyle(
                                         selected: selectedTarget == programFocus(program.id),
                                         padded: false, surface: .program,
+                                        // The TV steps aired, airing and upcoming cells
+                                        // instead of filling the elapsed part.
+                                        tier: PrototypeProgramTier(start: program.start, end: program.end, now: now),
                                         focusChanged: { focusChanged(programFocus(program.id), $0) }
                                     ))
                                     .focusEffectDisabled()
@@ -1282,6 +1379,24 @@ struct PrototypeGuideStation: View {
     }
 
     private var stationMark: some View {
+        #if os(tvOS)
+        PrototypeStationCell(
+            channel: channel,
+            size: CGSize(
+                width: width ?? PrototypeLayout.stationColumnWidth, height: height ?? PrototypeLayout.rowHeight
+            )
+        )
+        .overlay(alignment: .topTrailing) {
+            if selectionMarked {
+                Image(systemName: "checkmark.circle.fill")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .black.opacity(0.8))
+                    .padding(6)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        #else
         PrototypeStationMark(
             channel: channel,
             plateSize: CGSize(
@@ -1300,8 +1415,45 @@ struct PrototypeGuideStation: View {
                     .accessibilityHidden(true)
             }
         }
+        #endif
     }
 }
+
+#if os(tvOS)
+/// A TV guide row's channel: its number, then its logo on a plate inset in
+/// the cell. The cell's fill and focus come from the row's button style.
+struct PrototypeStationCell: View {
+    let channel: LiveTVPrototypeChannel
+    let size: CGSize
+    @Environment(\.isFocused) private var focused
+    @Environment(\.themePalette) private var palette
+    @ScaledMetric(relativeTo: .caption) private var numberSize: CGFloat = 20
+
+    var body: some View {
+        let inset = PrototypeLayout.rowInset
+        let plateHeight = max(1, size.height - inset * 2)
+        HStack(spacing: inset) {
+            Text(channel.number, format: .number.grouping(.never))
+                .font(.system(size: numberSize, weight: .semibold).monospacedDigit())
+                .foregroundStyle(focused ? palette.onAccent.opacity(0.62) : palette.tertiaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .frame(width: PrototypeLayout.channelNumberWidth, alignment: .leading)
+            PrototypeStationMark(
+                channel: channel,
+                plateSize: CGSize(
+                    width: max(1, size.width - PrototypeLayout.channelNumberWidth - inset * 3),
+                    height: plateHeight
+                ),
+                cornerRadius: PrototypeLayout.logoRadius,
+                insetOverride: plateHeight * 0.16
+            )
+        }
+        .padding(.horizontal, inset)
+        .frame(width: size.width, height: size.height, alignment: .leading)
+    }
+}
+#endif
 
 private struct PrototypeChannelActions: View {
     let favorite: Bool
@@ -1340,14 +1492,20 @@ struct PrototypeProgramLabel: View {
     var availableWidth: CGFloat? = nil
     @ScaledMetric(relativeTo: .subheadline) private var minimumTitleWidth: CGFloat = 44
     @ScaledMetric(relativeTo: .subheadline) private var fontSize = PrototypeLayout.guideFontSize
+    @ScaledMetric(relativeTo: .caption) private var detailSize = PrototypeLayout.detailFontSize
+    @Environment(\.locale) private var locale
 
     var body: some View {
         VStack(alignment: .leading, spacing: PrototypeLayout.smallGap) {
             if let availableWidth, availableWidth < minimumTitleWidth {
                 Image(systemName: "ellipsis").font(.caption)
             } else {
+                #if os(tvOS)
+                tvLines
+                #else
                 Text(program.title).font(.system(size: fontSize, weight: .regular))
                     .lineLimit(availableWidth == nil ? 2 : 1)
+                #endif
             }
             if availableWidth == nil {
                 Text(program.start, format: .dateTime.hour().minute())
@@ -1365,6 +1523,34 @@ struct PrototypeProgramLabel: View {
             Text("\(program.start, format: .dateTime.hour().minute()) to \(program.end, format: .dateTime.hour().minute())")
         )
     }
+
+    #if os(tvOS)
+    /// The title, then "20:05–21:05 · subtitle" in the guide's quieter ink.
+    /// An aired programme's title steps back too.
+    @ViewBuilder private var tvLines: some View {
+        let aired = program.end <= now
+        VStack(alignment: .leading, spacing: 2) {
+            Text(program.title)
+                .font(.system(size: fontSize, weight: .semibold))
+                .foregroundStyle(aired ? .secondary : .primary)
+                .lineLimit(1)
+            Text(verbatim: details)
+                .font(.system(size: detailSize, weight: .regular).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    private var details: String {
+        let start = program.start.formatted(.dateTime.hour().minute().locale(locale))
+        let end = program.end.formatted(.dateTime.hour().minute().locale(locale))
+        // A narrow cell keeps just its start; a wide one adds its subtitle.
+        guard (availableWidth ?? .infinity) >= minimumTitleWidth * 3 else { return start }
+        let subtitle = program.subtitle.isEmpty ? program.details?.episode : program.subtitle
+        return [ "\(start)–\(end)", subtitle ].compactMap { $0?.isEmpty == false ? $0 : nil }
+            .joined(separator: " · ")
+    }
+    #endif
 }
 
 struct PrototypeGuideGap: View {

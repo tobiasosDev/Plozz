@@ -40,7 +40,8 @@ final class PhysicalDiagnosticInputTests: XCTestCase {
                     XCTFail("Unexpected focus while returning to the guide; stopping input.")
                     return
                 }
-                XCUIRemote.shared.press(.right)
+                // The category chips sit above the guide; the app menu beside it.
+                XCUIRemote.shared.press(containsNavigationFocus(categories) ? .down : .right)
             }
             XCTAssertNotNil(focusedGuideButton(), "Could not enter the existing guide.")
             for _ in 0..<2 {
@@ -68,7 +69,7 @@ final class PhysicalDiagnosticInputTests: XCTestCase {
             XCTAssertTrue(!navigation.exists || navigation.frame.isEmpty,
                           "The app menu must stay collapsed even if a category still owns focus.")
         }
-        XCUIRemote.shared.press(.right)
+        XCUIRemote.shared.press(.down)
         XCTAssertNotNil(focusedGuideButton(), "Leave the user's app on the guide.")
     }
 

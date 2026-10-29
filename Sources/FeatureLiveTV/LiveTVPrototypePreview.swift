@@ -64,14 +64,18 @@ struct PrototypePreviewLayout {
 
     var availableSidebarWidth: CGFloat {
         #if os(tvOS)
-        guard contentFrame.width >= 960,
-              contentFrame.height - heroHeight - PrototypeLayout.sectionGap >= 420 else { return 0 }
-        let preferred: CGFloat = contentFrame.width >= 1_400 ? 384 : 320
-        return min(preferred, contentFrame.width - PrototypeLayout.sectionGap
-            - PrototypeLayout.guideInset * 2 - PrototypeLayout.compactWidth)
+        // A TV's categories are the chip row above the guide, so the guide and
+        // the programme header both take the full width.
+        return 0
         #else
         return Self.categorySidebarWidth(contentFrame.size)
         #endif
+    }
+
+    /// How far the header's programme art reaches down the page: behind the
+    /// header and the category chips, fading out above the guide's ruler.
+    var programArtHeight: CGFloat {
+        (contentFrame.minY - bounds.minY) + heroHeight + sectionGap * 2 + PrototypeLayout.chipHeight
     }
 
     #if os(iOS)
@@ -146,8 +150,13 @@ struct PrototypePreviewLayout {
         let side: CGFloat = topNavigationInsets.top > 0 ? topNavigationInsets.trailing : 32
         // The rail and guide share physical-screen coordinates. Title-safe insets
         // can change during mounting and must not move or resize the pinned guide.
-        let leading = (topNavigationInsets.top > 0 ? topNavigationInsets.leading : 32)
-            + (navigationInset > 0 ? PrototypeLayout.inset : 0)
+        // Without a rail, the header, chips and channels sit on the keyline (the
+        // top bar's own when it has one); the guide's surface starts its inner
+        // inset before it.
+        let keyline = topNavigationInsets.top > 0 ? topNavigationInsets.leading : PrototypeLayout.keyline
+        let leading = navigationInset > 0
+            ? (topNavigationInsets.top > 0 ? topNavigationInsets.leading : 32) + PrototypeLayout.inset
+            : keyline - PrototypeLayout.guideInset
         let top = max(32, topNavigationInsets.top > 0 ? topNavigationInsets.top : safeAreaInsets.top)
             + (nativeNavigation || topNavigationInsets.top > 0 ? 16 : 0)
         let bottom: CGFloat = 20
@@ -171,20 +180,14 @@ struct PrototypePreviewLayout {
         short = !compact && !largeText && contentFrame.height < 500
         self.isSearching = isSearching || (showsCategories && !Self.hasRoomForCategorySidebar(contentFrame.size))
         #endif
-        let browsingHeroHeight = short ? 100 : min(
-            contentFrame.height * (largeText ? 0.48 : 0.30),
-            // Just the info bar: the art and its gap on a TV (no dead band above
-            // it), and on a phone the art row plus three lines of text.
-            // (184 on a phone is its bar's content exactly: art row, title,
-            // timing and two lines of summary, with no dead band above.)
-            largeText ? 440 : (compact ? 184 : 236)
-        )
         #if os(tvOS)
         let videoLeading = bounds.minX
         let videoWidth = bounds.width
+        // The programme header: logo, title, subtitle, facts, time left, actions.
+        let headerHeight = largeText ? min(contentFrame.height * 0.5, 480) : PrototypeLayout.headerHeight
         heroHeight = isSearching
-            ? min(browsingHeroHeight, largeText ? 230 : (compact ? 140 : 180))
-            : browsingHeroHeight
+            ? min(headerHeight, largeText ? 230 : 180)
+            : headerHeight
         #else
         let categoryWidth = Self.categorySidebarWidth(contentFrame.size)
         let videoLeading = categoryWidth > 0
@@ -392,10 +395,35 @@ struct PrototypePreviewHero: View {
     let watch: () -> Void
     var watchTitle: LocalizedStringResource?
     var isLoading = false
+    var now = Date()
+    var actions = PrototypeHeaderActions()
     @Environment(\.themePalette) private var palette
     @Environment(\.locale) private var locale
 
     var body: some View {
+        #if os(tvOS)
+        Group {
+            if isLoading {
+                PrototypePreviewHeroSkeleton(layout: layout)
+                    .clipped()
+            } else {
+                PrototypeProgramHeader(
+                    channel: channel, program: program, now: now, layout: layout,
+                    watch: watch, watchTitle: watchTitle, actions: actions
+                )
+            }
+        }
+        // Not clipped: the focused action lifts past the header's last line.
+        .frame(width: layout.heroWidth, height: layout.heroHeight, alignment: layout.heroAlignment)
+        #if DEBUG
+        .modifier(PrototypeHeroLayoutObservation(phase: isLoading ? "loading" : "content"))
+        #endif
+        #else
+        bar
+        #endif
+    }
+
+    private var bar: some View {
         Group {
             if isLoading {
                 PrototypePreviewHeroSkeleton(layout: layout)
@@ -588,6 +616,372 @@ struct PrototypePreviewHero: View {
             .accessibilityLabel(Text(verbatim: "\(program.start.formatted(.dateTime.hour().minute().locale(locale))) – \(program.end.formatted(.dateTime.hour().minute().locale(locale)))"))
         }
     }
+}
+
+/// What the TV header's buttons do. Fixtures that only show the bar leave
+/// them out, and the header shows just the actions it was given.
+struct PrototypeHeaderActions {
+    var isFavorite = false
+    var canToggleFavorite = true
+    var toggleFavorite: (() -> Void)?
+    var details: ((LiveTVPrototypeProgram) -> Void)?
+    var multiviews: (() -> Void)?
+    var manageChannels: (() -> Void)?
+    var filters: (() -> Void)?
+    var sources: (() -> Void)?
+    var guideTime: (() -> Void)?
+    /// Reports focus entering the header, so the guide gates its re-entry.
+    var focusChanged: ((Bool) -> Void)?
+}
+
+#if os(tvOS)
+/// The Apple TV app's programme header: the channel's logo and a LIVE badge,
+/// the programme title, its subtitle, facts and time left, and the actions.
+/// Every line keeps its place whether or not the guide has it, so moving
+/// between programmes never moves the buttons or the guide below.
+struct PrototypeProgramHeader: View {
+    let channel: LiveTVPrototypeChannel?
+    let program: LiveTVPrototypeProgram?
+    let now: Date
+    let layout: PrototypePreviewLayout
+    let watch: () -> Void
+    var watchTitle: LocalizedStringResource?
+    var actions = PrototypeHeaderActions()
+    @FocusState private var focused: Control?
+    @Environment(\.themePalette) private var palette
+    @Environment(\.locale) private var locale
+
+    private enum Control: Hashable { case watch, favorite, details, multiviews, more }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let channel {
+                channelLine(channel)
+                    .frame(height: 44)
+                    .padding(.bottom, 18)
+                Text(program?.title ?? channel.name)
+                    .font(.system(size: 64, weight: .bold))
+                    .kerning(-0.9)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .frame(height: 76, alignment: .leading)
+                Text(verbatim: subtitle ?? " ")
+                    .font(.system(size: 30, weight: .medium))
+                    .foregroundStyle(palette.primaryText.opacity(0.86))
+                    .lineLimit(1)
+                    .frame(height: 36, alignment: .leading)
+                    .padding(.top, 6)
+                facts(channel)
+                    .frame(height: 30, alignment: .leading)
+                    .padding(.top, 12)
+                timing
+                    .frame(height: 28, alignment: .leading)
+                    .padding(.top, 12)
+            } else {
+                Spacer(minLength: 0)
+                Text("Find your next channel")
+                    .font(.system(size: 48, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text("Browse by channel, genre or what's on.")
+                    .font(.system(size: 26, weight: .medium))
+                    .foregroundStyle(palette.secondaryText)
+                    .padding(.top, 8)
+            }
+            buttons
+                .padding(.top, 24)
+        }
+        .foregroundStyle(palette.primaryText)
+        .frame(width: layout.metadataWidth, alignment: .leading)
+        .padding(.leading, PrototypeLayout.guideInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+    }
+
+    private var subtitle: String? {
+        guard let program else { return nil }
+        let value = program.subtitle.isEmpty ? program.details?.episode : program.subtitle
+        return value?.isEmpty == false ? value : nil
+    }
+
+    private var isOnNow: Bool {
+        guard let program else { return true }
+        return program.start <= now && now < program.end
+    }
+
+    private func channelLine(_ channel: LiveTVPrototypeChannel) -> some View {
+        HStack(spacing: 16) {
+            PrototypeStationMark(
+                channel: channel, plateSize: CGSize(width: 110, height: 44),
+                cornerRadius: PrototypeLayout.logoRadius, insetOverride: 4
+            )
+            if isOnNow { PrototypeLiveBadge() }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(channel.name))
+        .accessibilityValue(isOnNow ? Text("Live") : Text(verbatim: ""))
+        #if DEBUG
+        .modifier(PrototypeBrowseLayoutObservation(element: "artwork"))
+        #endif
+    }
+
+    /// "Documentary · 20:05–21:05 · German" and the rating, when the guide has them.
+    private func facts(_ channel: LiveTVPrototypeChannel) -> some View {
+        HStack(spacing: 12) {
+            let genre = program?.details?.categories.first ?? channel.category
+            if !genre.isEmpty {
+                Text(verbatim: genre)
+                separator
+            }
+            if let program {
+                Text(verbatim: "\(clock(program.start))–\(clock(program.end))")
+                    .monospacedDigit()
+            } else {
+                Text("No listing", comment: "Programme header when the guide has nothing for this channel now.")
+            }
+            if let language = program?.details?.languages.first {
+                separator
+                Text(verbatim: locale.localizedString(forLanguageCode: language) ?? language)
+            }
+            if let rating = program?.details?.rating, !rating.isEmpty {
+                Text(verbatim: rating)
+                    .font(.system(size: 18, weight: .bold))
+                    .padding(.horizontal, 9)
+                    .frame(height: 30)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(palette.primaryText.opacity(0.62), lineWidth: 2)
+                    }
+            }
+        }
+        .font(.system(size: 24, weight: .medium))
+        .foregroundStyle(palette.primaryText.opacity(0.92))
+        .lineLimit(1)
+    }
+
+    private var separator: some View {
+        Text(verbatim: "·").foregroundStyle(palette.secondaryText).accessibilityHidden(true)
+    }
+
+    /// The progress bar and time left while it airs, otherwise when it starts.
+    @ViewBuilder private var timing: some View {
+        if let program, isOnNow {
+            HStack(spacing: 14) {
+                Capsule().fill(palette.primaryText.opacity(0.32))
+                    .frame(width: 260, height: 6)
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(palette.primaryText)
+                            .frame(width: 260 * program.progress(at: now))
+                    }
+                    .accessibilityHidden(true)
+                Text("\(duration(program.end.timeIntervalSince(now))) left",
+                     comment: "Time remaining in the programme airing now. The argument is a duration such as 33 min.")
+            }
+            .font(.system(size: 22, weight: .medium))
+            .foregroundStyle(palette.secondaryText)
+        } else if let program, program.start > now {
+            Text("Starts in \(duration(program.start.timeIntervalSince(now)))",
+                 comment: "When an upcoming programme begins. The argument is a duration such as 25 min.")
+                .font(.system(size: 22, weight: .medium))
+                .foregroundStyle(palette.secondaryText)
+        } else {
+            Color.clear
+        }
+    }
+
+    private var buttons: some View {
+        HStack(spacing: 22) {
+            if let channel {
+                Button(action: watch) {
+                    HStack(spacing: 14) {
+                        Image(systemName: watchTitle == nil ? "play.fill" : "rectangle.split.2x2")
+                            .font(.system(size: 26, weight: .semibold))
+                        Text(watchTitle ?? LocalizedStringResource(
+                            "Watch Live", comment: "Programme header button that plays the channel live."))
+                    }
+                    .font(.system(size: 30, weight: .semibold))
+                    .padding(.leading, 36)
+                    .padding(.trailing, 44)
+                    .frame(height: 66)
+                }
+                .buttonStyle(PrototypeHeaderButtonStyle(prominent: true))
+                .focused($focused, equals: .watch)
+                .accessibilityIdentifier("live-tv-info-watch")
+                if let toggleFavorite = actions.toggleFavorite {
+                    circle(
+                        actions.isFavorite ? "star.fill" : "star",
+                        label: actions.isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                        action: toggleFavorite
+                    )
+                    .focused($focused, equals: .favorite)
+                    .disabled(!actions.canToggleFavorite)
+                    .opacity(actions.canToggleFavorite ? 1 : 0.5)
+                    .accessibilityAddTraits(actions.isFavorite ? .isSelected : [])
+                    .accessibilityIdentifier("live-tv-favorite-\(channel.number)")
+                }
+                if let details = actions.details {
+                    circle("info", label: "Program details") {
+                        if let program { details(program) }
+                    }
+                    .focused($focused, equals: .details)
+                    .disabled(program == nil)
+                    .opacity(program == nil ? 0.5 : 1)
+                    .accessibilityIdentifier("live-tv-program-details")
+                }
+            }
+            if let multiviews = actions.multiviews {
+                circle("square.grid.2x2", label: "Multiviews", action: multiviews)
+                    .focused($focused, equals: .multiviews)
+                    .accessibilityIdentifier("live-tv-multiview-favorites")
+            }
+            if actions.manageChannels != nil || actions.filters != nil
+                || actions.sources != nil || actions.guideTime != nil {
+                Menu {
+                    if let manageChannels = actions.manageChannels {
+                        Button("Manage channels", systemImage: "slider.horizontal.3", action: manageChannels)
+                            .accessibilityIdentifier("live-tv-manage-channels")
+                    }
+                    if let filters = actions.filters {
+                        Button("Filters", systemImage: "line.3.horizontal.decrease", action: filters)
+                            .accessibilityIdentifier("live-tv-category")
+                    }
+                    if let sources = actions.sources {
+                        Button("Sources", systemImage: "antenna.radiowaves.left.and.right", action: sources)
+                            .accessibilityIdentifier("live-tv-sources")
+                    }
+                    if let guideTime = actions.guideTime, program != nil {
+                        Button("Guide time", systemImage: "calendar", action: guideTime)
+                            .accessibilityIdentifier("live-tv-guide-time")
+                    }
+                } label: {
+                    Label {
+                        Text("More", comment: "Live TV header menu with channel management, filters, sources and guide time.")
+                    } icon: {
+                        Image(systemName: "ellipsis")
+                    }
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 28, weight: .semibold))
+                    .frame(width: 66, height: 66)
+                }
+                .buttonStyle(PrototypeHeaderButtonStyle(shape: .circle))
+                .focused($focused, equals: .more)
+                .accessibilityIdentifier("live-tv-more")
+            }
+        }
+        // Across the header's width, so Up from any chip beneath it enters it.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Entering from the chips lands on the primary action. The header is
+        // disabled while the guide has focus, so this never pulls focus out of it.
+        .focusSection()
+        .defaultFocus($focused, channel == nil ? .multiviews : .watch, priority: .userInitiated)
+        .onChange(of: focused) { _, target in
+            actions.focusChanged?(target != nil)
+        }
+    }
+
+    private func circle(
+        _ symbol: String, label: LocalizedStringResource, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label { Text(label) } icon: { Image(systemName: symbol) }
+                .labelStyle(.iconOnly)
+                .font(.system(size: 28, weight: .semibold))
+                .frame(width: 66, height: 66)
+        }
+        .buttonStyle(PrototypeHeaderButtonStyle(shape: .circle))
+    }
+
+    private func clock(_ date: Date) -> String {
+        date.formatted(.dateTime.hour().minute().locale(locale))
+    }
+
+    /// Whole minutes, rounded up: a programme with 20 seconds to go has 1 min left.
+    private func duration(_ seconds: TimeInterval) -> String {
+        let minutes = max(1, Int((seconds / 60).rounded(.up)))
+        return Duration.seconds(minutes * 60).formatted(
+            .units(allowed: [.hours, .minutes], width: .abbreviated, maximumUnitCount: 2))
+    }
+}
+
+/// The header's programme art across the top of the page. One image with its
+/// fades painted in the page colour: no mask and no blur, so it costs one
+/// decoded bitmap and two gradient fills, less than the live preview it
+/// stands in for. Art waits for focus to settle before it loads.
+struct PrototypeProgramBackdrop: View {
+    let url: URL?
+    let size: CGSize
+    let textWidth: CGFloat
+    @State private var shown: URL?
+    @Environment(\.themePalette) private var palette
+    @Environment(\.plozzReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if let shown {
+                FallbackAsyncImage(references: [.remote(shown)], variant: .heroBackdrop) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    Color.clear
+                }
+                .frame(width: size.width, height: size.height)
+                .clipped()
+                .id(shown)
+                .transition(.opacity)
+                LinearGradient(
+                    stops: [
+                        .init(color: palette.backgroundBase, location: 0),
+                        .init(color: palette.backgroundBase.opacity(0.75), location: 0.22),
+                        .init(color: palette.backgroundBase.opacity(0), location: 0.6)
+                    ],
+                    startPoint: .bottom, endPoint: .top
+                )
+                LinearGradient(
+                    stops: reduceTransparency
+                        ? [.init(color: palette.backgroundBase, location: 0),
+                           .init(color: palette.backgroundBase, location: textReach),
+                           .init(color: palette.backgroundBase.opacity(0), location: min(1, textReach + 0.15))]
+                        : [.init(color: palette.backgroundBase.opacity(0.85), location: 0),
+                           .init(color: palette.backgroundBase.opacity(0.5), location: 0.38),
+                           .init(color: palette.backgroundBase.opacity(0), location: 0.64)],
+                    startPoint: .leading, endPoint: .trailing
+                )
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: shown)
+        .task(id: url) {
+            // Passing over a row of programmes shouldn't decode each one's art.
+            if shown != nil, url != nil {
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled else { return }
+            }
+            shown = url
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var textReach: CGFloat {
+        size.width > 0 ? min(0.8, textWidth / size.width) : 0.5
+    }
+}
+#endif
+
+struct PrototypeLiveBadge: View {
+    var compact = false
+
+    var body: some View {
+        Text("LIVE", comment: "Badge on a channel or programme airing now.")
+            .font(.system(size: compact ? 15 : 17, weight: .bold))
+            .kerning(0.7)
+            .foregroundStyle(.white)
+            .padding(.horizontal, compact ? 8 : 10)
+            .frame(height: compact ? 24 : 28)
+            .background(PrototypeLiveBadge.red, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+
+    /// The Apple TV's live red, used for nothing else.
+    static let red = Color(red: 1, green: 0.271, blue: 0.227)
 }
 
 struct PrototypeSearchSummary: View {
