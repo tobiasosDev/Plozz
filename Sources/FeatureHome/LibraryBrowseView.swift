@@ -757,6 +757,7 @@ private struct LibraryContentModeControl: View {
     let viewModel: LibraryBrowseViewModel
     @Environment(\.themePalette) private var palette
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
+    @Environment(\.gradientBackgroundsEnabled) private var gradientBackgroundsEnabled
 
     var body: some View {
         HStack(spacing: 6) {
@@ -779,7 +780,9 @@ private struct LibraryContentModeControl: View {
         }
         .padding(6)
         .background {
-            if reduceTransparency {
+            // Over the flat page a Material only blurs the same colour back, so
+            // the raised fill draws the identical capsule without a blur pass.
+            if reduceTransparency || !gradientBackgroundsEnabled {
                 Capsule().fill(palette.raised.fill)
             } else {
                 Capsule().fill(.regularMaterial)

@@ -551,13 +551,9 @@ struct DetailHeroView: View, Equatable {
             .foregroundStyle(Color.primary)
             .padding(.horizontal, 18 * textScale)
             .padding(.vertical, 10 * textScale)
-            .background {
-                if #available(tvOS 26.0, *) {
-                    shape.fill(.regularMaterial)
-                } else {
-                    shape.fill(.ultraThinMaterial)
-                }
-            }
+            // Flat like the hero pills: a Material here would re-sample the
+            // backdrop and any trailer on every presented frame.
+            .background { shape.fill(Color(uiColor: HeroForegroundGlass.flatFill())) }
             .overlay {
                 shape.stroke(Color.primary.opacity(0.16), lineWidth: textScale)
             }
