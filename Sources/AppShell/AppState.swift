@@ -748,7 +748,8 @@ public final class AppState {
         onPublish: { [weak self] in
             self?.drainWatchOutbox()
             self?.universalWatchlistIdentityDidUpdate()
-        }
+        },
+        defersScanning: { PlaybackInstrumentation.count(.viewModel) > 0 }
     )
 
     /// App-lifetime main-thread responsiveness probe (dev-only; nil unless

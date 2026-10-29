@@ -46,6 +46,38 @@ final class PlayerGlassEnvironmentTests: XCTestCase {
         }
     }
 
+    func testPlayerGlassFollowsTheSystemExceptOnGlassLimitedAppleTVs() {
+        for model in ["AppleTV6,2", "AppleTV5,3"] {
+            XCTAssertTrue(TransparencyPreference.system.reducesPlayerGlass(
+                systemReduceTransparency: false, modelIdentifier: model
+            ))
+            XCTAssertFalse(TransparencyPreference.on.reducesPlayerGlass(
+                systemReduceTransparency: true, modelIdentifier: model
+            ), "An explicit choice keeps the glass.")
+            XCTAssertTrue(TransparencyPreference.off.reducesPlayerGlass(
+                systemReduceTransparency: false, modelIdentifier: model
+            ))
+        }
+        for model in ["AppleTV11,1", "AppleTV14,1", "iPad16,3", ""] {
+            for preference in TransparencyPreference.allCases {
+                for systemReduced in [false, true] {
+                    XCTAssertEqual(
+                        preference.reducesPlayerGlass(systemReduceTransparency: systemReduced, modelIdentifier: model),
+                        preference.reducesTransparency(systemReduceTransparency: systemReduced)
+                    )
+                }
+            }
+        }
+
+        var environment = EnvironmentValues()
+        environment.plozzReduceTransparency = false
+        XCTAssertFalse(environment.plozzReducePlayerGlass, "Without a root value the player follows its panels.")
+        environment.plozzReducePlayerGlass = true
+        environment.plozzReducePanelGlass = environment.plozzReducePlayerGlass
+        XCTAssertFalse(environment.playerUsesNativeGlass)
+        XCTAssertFalse(environment.plozzReduceTransparency, "Glass outside the player is unaffected.")
+    }
+
     func testMaterialPreviewsCanStillSelectEachActualSurfaceExplicitly() {
         var environment = EnvironmentValues()
         environment.plozzReducePanelGlass = true

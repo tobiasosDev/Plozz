@@ -691,7 +691,8 @@ public struct PlexClient: Sendable {
         size: Int,
         sort: CoreModels.SortDescriptor,
         filters: LibraryFilters = .all,
-        genreID: String? = nil
+        genreID: String? = nil,
+        includeStreams: Bool = true
     ) async throws -> PlexMediaContainer {
         var query = containerQuery(start: start, size: size)
         if let type {
@@ -699,6 +700,14 @@ public struct PlexClient: Sendable {
         }
         query.append(URLQueryItem(name: "sort", value: try Self.sortQuery(for: sort)))
         query += try Self.libraryFilterQuery(filters, genreID: genreID)
+        guard includeStreams else {
+            // Inlined streams dominate a whole-library page's payload and decode
+            // time, and an identity scan never reads them.
+            let endpoint = Endpoint(
+                path: "/library/sections/\(sectionID)/all", queryItems: query, headers: headers
+            )
+            return try await decode(PlexMediaContainerResponse.self, endpoint).MediaContainer
+        }
         return try await decodeStreamEnriched(
             PlexMediaContainerResponse.self,
             path: "/library/sections/\(sectionID)/all",

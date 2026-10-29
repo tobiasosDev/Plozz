@@ -295,7 +295,7 @@ public final class TextlessBackdropStore {
     /// suppress a logo after the series metadata is corrected.
     static func key(for item: MediaItem) -> String {
         let subject = seriesItem(for: item)
-        let policy = MetadataProviderSettingsStore().load().artworkPolicyIdentity
+        let policy = MetadataProviderSettingsStore().artworkPolicyIdentity()
         return "series-art-v3|\(policy)|\(subject.stablePresentationID)|\(MetadataQuery(subject).cacheKey(for: .hero))"
     }
 

@@ -1,4 +1,5 @@
 import XCTest
+import os
 @testable import AppRuntime
 import CoreModels
 @testable import AppShell
@@ -178,6 +179,33 @@ final class IdentityIndexModelTests: XCTestCase {
         for _ in 0..<40 { await Task.yield() }
         try? await Task.sleep(nanoseconds: 8_000_000) // 8ms
         for _ in 0..<40 { await Task.yield() }
+    }
+
+    /// A scan defers its page requests while a video plays, asks only for
+    /// identity detail, and resumes into a normal publish once playback ends.
+    func testWarmDefersPagesDuringPlaybackAndRequestsIdentityDetail() async {
+        let namespace = uniqueNamespace()
+        let playing = OSAllocatedUnfairLock(initialState: true)
+        let account = resolved("a", kind: .plex, movies: [movie("a1", account: "a", tmdb: "100")])
+        let provider = account.provider as! FakeIndexProvider
+        let model = IdentityIndexModel(
+            activeAccounts: { [account] },
+            namespace: { namespace },
+            onPublish: {},
+            defersScanning: { playing.withLock { $0 } }
+        )
+
+        model.warmIdentityIndex()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertTrue(provider.pageRequests.withLock { $0 }.isEmpty, "no page may decode beside a playing video")
+        XCTAssertTrue(model.identitySnapshot.isEmpty)
+
+        playing.withLock { $0 = false }
+        let published = await waitUntil(timeout: 8) { model.identitySnapshot.indexedAccountIDs == ["a"] }
+        XCTAssertTrue(published, "the deferred scan resumes and publishes after playback")
+        let requests = provider.pageRequests.withLock { $0 }
+        XCTAssertFalse(requests.isEmpty)
+        XCTAssertTrue(requests.allSatisfy { $0.detail == .identity })
     }
 
     /// A newer warm wave supersedes an older still-in-flight one: the stale wave's
@@ -561,6 +589,7 @@ private final class FakeIndexProvider: MediaProvider, @unchecked Sendable {
     let session: UserSession
     private let movies: [MediaItem]
     private let gate: IdentityWarmGate?
+    let pageRequests = OSAllocatedUnfairLock<[PageRequest]>(initialState: [])
 
     init(kind: ProviderKind, session: UserSession, movies: [MediaItem], gate: IdentityWarmGate?) {
         self.kind = kind
@@ -575,6 +604,7 @@ private final class FakeIndexProvider: MediaProvider, @unchecked Sendable {
     }
 
     func items(in containerID: String, kind: MediaItemKind, page: PageRequest) async throws -> MediaPage {
+        pageRequests.withLock { $0.append(page) }
         guard page.startIndex == 0 else {
             return MediaPage(items: [], startIndex: page.startIndex, totalCount: movies.count)
         }

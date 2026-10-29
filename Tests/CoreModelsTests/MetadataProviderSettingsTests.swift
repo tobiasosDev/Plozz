@@ -13,6 +13,25 @@ final class MetadataProviderSettingsTests: XCTestCase {
         XCTAssertTrue(MetadataProviderSettings().disabledOrder.isEmpty)
     }
 
+    func testCachedPolicyIdentitySeesWritesThatBypassSave() throws {
+        let suite = "MetadataProviderSettingsTests.identity.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = MetadataProviderSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.artworkPolicyIdentity(), store.load().artworkPolicyIdentity)
+
+        var library = MetadataProviderSettings(orderMode: .custom, preferOnlineArtwork: false)
+        library.setLists(enabled: [.tvdb], disabled: [.tmdb])
+        // A synced or transferred profile writes the bytes without `save`.
+        defaults.set(try JSONEncoder().encode(library), forKey: "com.plozz.metadataProviderSettings")
+        XCTAssertEqual(store.artworkPolicyIdentity(), library.artworkPolicyIdentity)
+        XCTAssertEqual(MetadataProviderSettingsStore(defaults: defaults).artworkPolicyIdentity(),
+                       library.artworkPolicyIdentity)
+
+        store.save(.default)
+        XCTAssertEqual(store.artworkPolicyIdentity(), MetadataProviderSettings.default.artworkPolicyIdentity)
+    }
+
     func testSetLists() {
         var settings = MetadataProviderSettings()
         settings.setLists(enabled: [.tmdb, .tvdb], disabled: [.omdb])

@@ -696,6 +696,23 @@ final class MediaVersionTests: XCTestCase {
         XCTAssertEqual(versions.recommendedSelection(for: caps)?.id, "b")
     }
 
+    func testEngineDecodedDTSDoesNotDemoteTheBestVersion() {
+        let versions = [
+            MediaVersion(id: "1080", height: 1080, videoCodec: "h264", videoRange: "SDR", audioCodec: "ac3"),
+            MediaVersion(id: "4k-jellyfin", height: 2160, videoCodec: "hevc", videoRange: "HDR10", audioCodec: "dts"),
+            MediaVersion(id: "4k-plex", height: 2160, videoCodec: "hevc", videoRange: "SDR", audioCodec: "dca")
+        ]
+        let engine = MediaCapabilities(decodesAudioOnDevice: true)
+        XCTAssertEqual(versions[1].compatibility(with: engine), .directPlay)
+        XCTAssertEqual(versions.recommendedSelection(for: engine)?.id, "4k-jellyfin")
+        // Native-only profiles keep the conservative passthrough gate.
+        XCTAssertEqual(versions.recommendedSelection(for: .default)?.id, "4k-plex")
+        // Hardware video decode still decides: engine audio decode never admits AV1.
+        let av1 = [MediaVersion(id: "av1", height: 2160, videoCodec: "av1", videoRange: "SDR", audioCodec: "dts"),
+                   versions[0]]
+        XCTAssertEqual(av1.recommendedSelection(for: engine)?.id, "1080")
+    }
+
     func testRecommendedSelectionEmptyIsNil() {
         XCTAssertNil([MediaVersion]().recommendedSelection(for: .default))
     }

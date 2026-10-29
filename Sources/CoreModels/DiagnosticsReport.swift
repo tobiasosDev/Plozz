@@ -36,15 +36,20 @@ public struct DiagnosticsReport {
     }
 
     public var deviceModel: String {  // l10n:content — developer-facing diagnostic (GitHub bug-report template)
+        let model = Self.machineIdentifier
+        return model.isEmpty ? "Apple device" : model
+    }
+
+    /// The hardware model identifier (for example `AppleTV6,2`), empty if unknown.
+    public static let machineIdentifier: String = {
         var info = utsname()
         uname(&info)
         let bytes = Mirror(reflecting: info.machine).children
             .compactMap { $0.value as? Int8 }
             .filter { $0 != 0 }
             .map { UInt8(bitPattern: $0) }
-        let model = String(decoding: bytes, as: UTF8.self)
-        return model.isEmpty ? "Apple device" : model
-    }
+        return String(decoding: bytes, as: UTF8.self)
+    }()
 
     public var environmentBlock: String {  // l10n:content — developer-facing diagnostic (GitHub bug-report template)
         let appleVersion = marketingVersion.flatMap {

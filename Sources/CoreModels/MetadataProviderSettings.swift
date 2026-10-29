@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 /// Whether metadata providers follow Plozz's per-field recommended policy or the
 /// household's saved single global order.
@@ -232,6 +233,30 @@ public final class MetadataProviderSettingsStore: MetadataProviderSettingsStorin
         }
         return settings
     }
+
+    /// ``MetadataProviderSettings/artworkPolicyIdentity`` of the stored settings.
+    ///
+    /// Card bodies ask for this on every update, and decoding the JSON each time
+    /// showed up on the main thread in Apple TV Home focus traces. The answer is
+    /// reused while the stored bytes are unchanged, so writes that bypass
+    /// ``save(_:)`` (sync, profile transfer) are still seen on the next call.
+    public func artworkPolicyIdentity() -> String {
+        // After the one-time migration the identity is a pure function of the
+        // stored bytes, whichever store or profile wrote them.
+        let data = defaults.data(forKey: key)
+        if defaults.bool(forKey: artworkPreferenceMigrationKey),
+           let cached = Self.lastIdentity.withLock({ $0 }), cached.data == data {
+            return cached.identity
+        }
+        let identity = load().artworkPolicyIdentity
+        let stored = defaults.data(forKey: key)
+        Self.lastIdentity.withLock { $0 = (stored, identity) }
+        return identity
+    }
+
+    private static let lastIdentity = OSAllocatedUnfairLock<(data: Data?, identity: String)?>(
+        initialState: nil
+    )
 
     public func save(_ settings: MetadataProviderSettings) {
         persist(settings)

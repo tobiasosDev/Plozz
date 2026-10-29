@@ -71,6 +71,7 @@ struct PlayerPresentation: View {
     @State private var triedAccountIDs: Set<String> = []
     @State private var handoffTask: Task<Void, Never>?
     @State private var isPresented = true
+    @Environment(\.plozzReducePlayerGlass) private var reducePlayerGlass
 
     init(
         request: PlayRequest,
@@ -109,6 +110,7 @@ struct PlayerPresentation: View {
                     .tint(.white)
             }
         }
+        .environment(\.plozzReducePanelGlass, reducePlayerGlass)
         .task {
             if viewModel == nil {
                 guard externalContext?().isAuthorized != false else {

@@ -977,7 +977,8 @@ public struct PlexProvider: MediaProvider, AuthenticatedHTTPOriginProviding, Ser
             }
             let container = try await client.sectionItems(
                 sectionID: containerID, type: type, start: page.startIndex,
-                size: page.limit, sort: page.sort, filters: page.filters, genreID: genreID
+                size: page.limit, sort: page.sort, filters: page.filters, genreID: genreID,
+                includeStreams: page.detail == .browse
             )
             let items = (container.Metadata ?? []).map(map(metadata:))
             let total = container.totalSize ?? container.size ?? (page.startIndex + items.count)
