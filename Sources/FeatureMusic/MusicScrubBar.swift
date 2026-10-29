@@ -143,9 +143,12 @@ struct MusicScrubSurface: UIViewRepresentable {
     }
 }
 
-/// The visible Liquid Glass scrub bar: a glass track, a bright played fill, and a
-/// knob that grows when the surface is focused. The `MusicScrubSurface` overlay
-/// supplies the analog pan input; the bar itself is purely presentational.
+/// The visible scrub bar: a thin track, a bright played fill, and a playhead
+/// that stands up from it when the surface is focused. The track is Liquid Glass,
+/// or a flat translucent fill when Reduce Transparency or the player-glass
+/// reduction (Apple TV HD and 4K first generation) is on. The
+/// `MusicScrubSurface` overlay supplies the analog pan input; the bar itself is
+/// purely presentational.
 struct MusicScrubBar: View {
     let model: MusicScrubModel
     /// While the control bar is sliding on/off screen, the played fill and knob
@@ -162,15 +165,18 @@ struct MusicScrubBar: View {
     /// the pause button focused instead of the click jumping onto the scrubber.
     var isFocusable: Bool = true
 
+    @Environment(\.plozzReducePlayerGlass) private var reducePlayerGlass
+    @Environment(\.plozzReduceTransparency) private var reduceTransparency
+
     var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
             let focused = model.isFocused
             let fraction = max(0, min(1, model.progressFraction))
             let knobX = width * CGFloat(fraction)
-            let barHeight: CGFloat = focused ? 18 : 10
-            let knobWidth: CGFloat = focused ? 8 : 4
-            let knobHeight: CGFloat = focused ? (model.isScrubbing ? 44 : 36) : barHeight
+            let barHeight: CGFloat = focused ? 12 : 7
+            let knobWidth: CGFloat = focused ? 4 : 3
+            let knobHeight: CGFloat = focused ? (model.isScrubbing ? 34 : 26) : barHeight
 
             ZStack(alignment: .leading) {
                 glassTrack(height: barHeight)
@@ -181,7 +187,7 @@ struct MusicScrubBar: View {
                     topTrailingRadius: 0,
                     style: .continuous
                 )
-                    .fill(.white.opacity(focused ? 0.85 : 0.5))
+                    .fill(.white.opacity(focused ? 0.95 : 0.92))
                     .frame(width: max(knobWidth, knobX), height: barHeight)
                 RoundedRectangle(cornerRadius: knobWidth / 2, style: .continuous)
                     .fill(.white)
@@ -199,7 +205,11 @@ struct MusicScrubBar: View {
 
     @ViewBuilder
     private func glassTrack(height: CGFloat) -> some View {
-        if #available(tvOS 26.0, *) {
+        if reducePlayerGlass || reduceTransparency {
+            Capsule()
+                .fill(.white.opacity(0.28))
+                .frame(height: height)
+        } else if #available(tvOS 26.0, *) {
             Capsule()
                 .fill(.clear)
                 .frame(height: height)
