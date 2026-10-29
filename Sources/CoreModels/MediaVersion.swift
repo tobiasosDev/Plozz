@@ -543,11 +543,14 @@ public extension MediaVersion {
 
         // Audio: lossy AAC/MP3/etc. are always decodable on-device; the codecs
         // that need passthrough (AC-3/E-AC-3 always; DTS only with passthrough)
-        // are gated through the capability policy.
+        // are gated through the capability policy unless the linked engine
+        // decodes them. Plex's `dca` token never matched this gate, so without
+        // the engine check a Jellyfin DTS remux lost to a lesser file.
         if let audioCodec {
             let token = audioCodec.lowercased()
             if let passthrough = PassthroughAudioCodec(rawValue: token),
-               !capabilities.allowedPassthroughAudioCodecs.contains(passthrough) {
+               !capabilities.allowedPassthroughAudioCodecs.contains(passthrough),
+               !(capabilities.decodesAudioOnDevice && PlozzigenMediaFormats.supports(audioCodec: token)) {
                 return .transcode
             }
         }
@@ -557,7 +560,9 @@ public extension MediaVersion {
 
 public extension Array where Element == MediaVersion {
     /// The version a freshly opened picker should select by default: the
-    /// highest-quality version whose known facts fit the native device profile.
+    /// highest-quality version whose known facts fit the native device profile
+    /// (audio the linked engine decodes counts as fitting; video does not, so
+    /// hardware decode still decides).
     /// This is a conservative ordering hint, not a claim about the provider's
     /// resolved delivery mode (Plozzigen may directly decode a version outside
     /// that profile). Falls back to the server default, then highest quality.

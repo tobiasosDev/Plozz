@@ -74,6 +74,10 @@ public struct MediaCapabilities: Sendable, Equatable {
     public var supportsAtmos: Bool
     /// Native output capability; Aether can decode DTS on-device independently.
     public var supportsDTSPassthrough: Bool
+    /// The linked engine decodes `PlozzigenMediaFormats` audio (DTS, TrueHD)
+    /// itself, so version ranking need not demote it. Native-only negotiation
+    /// still reads ``allowedPassthroughAudioCodecs``.
+    public var decodesAudioOnDevice: Bool
 
     public init(
         supportsHEVC: Bool = true,
@@ -83,7 +87,8 @@ public struct MediaCapabilities: Sendable, Equatable {
         supportsDolbyVision: Bool = false,
         maxOutputChannels: Int = 2,
         supportsAtmos: Bool = false,
-        supportsDTSPassthrough: Bool = false
+        supportsDTSPassthrough: Bool = false,
+        decodesAudioOnDevice: Bool = false
     ) {
         self.supportsHEVC = supportsHEVC
         self.supportsAV1 = supportsAV1
@@ -93,6 +98,7 @@ public struct MediaCapabilities: Sendable, Equatable {
         self.maxOutputChannels = max(2, maxOutputChannels)
         self.supportsAtmos = supportsAtmos
         self.supportsDTSPassthrough = supportsDTSPassthrough
+        self.decodesAudioOnDevice = decodesAudioOnDevice
     }
 
     /// A conservative profile used where the hardware can't be probed (Linux CI,
@@ -232,6 +238,12 @@ extension MediaCapabilities {
         // necessary (not sufficient) condition for Atmos via E-AC-3 JOC. There is
         // no public API that confirms Atmos directly, so we stay conservative.
         caps.supportsAtmos = channels > 2
+        #endif
+
+        // Both app shells link Plozzigen wherever UIKit exists
+        // (`ManagedProviderRegistry.hybridEngineEnabled`).
+        #if canImport(UIKit)
+        caps.decodesAudioOnDevice = true
         #endif
 
         return caps

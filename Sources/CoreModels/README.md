@@ -309,6 +309,11 @@ Settings choice; `rememberVersionPerSeries` defaults on. Legacy `rememberChoice`
 decodes as `automatic`. `VersionPreferenceStore` reads the live playback policy
 from its own namespace, so all existing request/detail resolvers honor the toggle
 without another unscoped preference. Automatic resolution never writes a memory.
+Without a memory, `recommendedSelection` takes the highest-quality version that
+fits native video decode. Audio the linked engine decodes on device (DTS, TrueHD;
+`MediaCapabilities.decodesAudioOnDevice`) does not demote a version, so a
+Jellyfin `dts` remux ranks like Plex's `dca` one. Video codecs still require
+hardware decode.
 
 ## Artwork and profile presentation
 
