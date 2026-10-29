@@ -236,10 +236,12 @@ public struct ResumeChipOverlay: View {
     private let bottomScrimStart: CGFloat?
     private let bottomScrimDepth: CGFloat?
     private let compactHorizontalLayout: Bool
+    private let sourceProvider: ProviderKind?
     private var rendersScrim = true
 
     @Environment(\.plozzMetrics) private var metrics
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.displayScale) private var displayScale
 
     /// - Parameters:
     ///   - downloadState: optional trailing download affordance. `nil` renders the
@@ -255,6 +257,8 @@ public struct ResumeChipOverlay: View {
     ///   - bottomScrimDepth: how dark that scrim gets at the bottom edge. `nil`
     ///     keeps the shared default; a host that lays its own wash over the same
     ///     region passes less, since the two compound.
+    ///   - sourceProvider: the server the card plays from, drawn as a brand mark
+    ///     in the trailing slot when there is no download badge to show.
     public init(
         item: MediaItem,
         downloadState: MediaDownloadBadgeState? = nil,
@@ -263,7 +267,8 @@ public struct ResumeChipOverlay: View {
         showsPlayGlyphWhenIdle: Bool = false,
         bottomScrimStart: CGFloat? = nil,
         bottomScrimDepth: CGFloat? = nil,
-        compactHorizontalLayout: Bool = false
+        compactHorizontalLayout: Bool = false,
+        sourceProvider: ProviderKind? = nil
     ) {
         self.item = item
         self.downloadState = downloadState
@@ -273,6 +278,7 @@ public struct ResumeChipOverlay: View {
         self.bottomScrimStart = bottomScrimStart
         self.bottomScrimDepth = bottomScrimDepth
         self.compactHorizontalLayout = compactHorizontalLayout
+        self.sourceProvider = sourceProvider
     }
 
     public var body: some View {
@@ -350,6 +356,14 @@ public struct ResumeChipOverlay: View {
                                 size: metrics.resumeChipAccessorySize
                             )
                             .frame(maxWidth: stacksDownload ? .infinity : nil, alignment: .trailing)
+                        } else if let sourceProvider,
+                                  let badge = ProviderBrandMarkBitmap.image(
+                                      provider: sourceProvider, size: metrics.resumeChipAccessorySize,
+                                      scale: displayScale
+                                  ) {
+                            // A bitmap, not a live mark: the card lifts on focus.
+                            Image(uiImage: badge)
+                                .accessibilityHidden(true)
                         }
                     }
                     .background {

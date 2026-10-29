@@ -69,6 +69,7 @@ public struct PosterCardView: View {
     @Environment(\.plozzMetrics) private var metrics
     @Environment(\.locale) private var locale
     @Environment(\.plozzShowsUnwatchedEpisodeCount) private var showsUnwatchedEpisodeCount
+    @Environment(\.plozzMediaSourceIdentities) private var mediaSourceIdentities
     /// Per-profile card presentation (framed glass card vs borderless artwork).
     @Environment(\.plozzCardStyle) private var cardStyle
     /// Per-profile focus treatment. With the outline off, a framed card keeps its
@@ -860,7 +861,9 @@ public struct PosterCardView: View {
             // with the stronger scrim used by ordinary browsing cards.
             bottomScrimStart: showsSeriesArtwork ? ContinueWatchingCardShape.scrimStart : nil,
             bottomScrimDepth: showsSeriesArtwork ? ContinueWatchingCardShape.scrimDepth : nil,
-            compactHorizontalLayout: showsSeriesArtwork && style == .poster
+            compactHorizontalLayout: showsSeriesArtwork && style == .poster,
+            // Continue Watching names the server each card resumes from.
+            sourceProvider: showsSeriesArtwork ? mediaSourceIdentities.identity(for: item)?.provider : nil
         )
     }
 

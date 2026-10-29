@@ -18,7 +18,9 @@ public enum PlozzRailTitle {
     /// this app titles a rail with, and it scales with the user's text size.
     public static func font(sectionHeaderFontSize: CGFloat) -> Font {
         #if os(tvOS)
-        return .system(size: sectionHeaderFontSize, weight: .bold)
+        // Semibold, as the Apple TV app titles its rows; bold read heavier than
+        // the artwork it introduces.
+        return .system(size: sectionHeaderFontSize, weight: .semibold)
         #else
         return .title2.bold()
         #endif
