@@ -10,6 +10,13 @@ public struct GlassPerformanceBudget: Equatable, Sendable {
     /// The previous 3 GiB classification threshold, not a current rendering gate.
     public static let minimumMemoryBytes: UInt64 = 3 * 1024 * 1024 * 1024
 
+    /// Apple TV models whose GPU cannot composite the player's glass over video
+    /// at the content frame rate: Apple TV HD (A8) and Apple TV 4K 1st generation
+    /// (A10X). On AppleTV6,2 a visible transport over 24p HDR10+ presented 13–20
+    /// frames per second with glass and 22–24 with flat surfaces. Memory is not
+    /// the proxy: the A12 model shares the 3 GB and composites glass in time.
+    public static let playerGlassLimitedModels: Set<String> = ["AppleTV5,3", "AppleTV6,2"]
+
     /// Whether hardware met the previous memory threshold.
     public var hardwareAllowsGlass: Bool
 

@@ -293,6 +293,12 @@ glass, scoped by `playerPlatformAppearance` without changing the browsing theme
 or window. That scope clears inherited browsing accents so Live TV's guide tint
 cannot recolor native playback buttons, including disabled menu-owner buttons.
 TV panels retain their thin edge and selected tabs their highlight.
+One hardware exception: with Transparency on **System**, `PlayerPresentation`
+renders panels solid on Apple TV HD and Apple TV 4K (1st generation)
+(`GlassPerformanceBudget.playerGlassLimitedModels`). On AppleTV6,2 a visible
+transport over 24p HDR10+ presented 13–20 frames per second with glass and
+22–24 with solid panels (thermally throttled runs vary); Home glass measured no
+difference, so it stays. An explicit **On** keeps player glass there too.
 The mobile reduced-glass/older-system fallback follows light and dark mode with paired
 foreground colors. Text directly over video stays white. UIKit-backed route and
 options buttons resolve the same icon contrast. The native playback-options

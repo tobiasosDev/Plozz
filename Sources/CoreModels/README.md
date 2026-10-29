@@ -315,6 +315,11 @@ fits native video decode. Audio the linked engine decodes on device (DTS, TrueHD
 Jellyfin `dts` remux ranks like Plex's `dca` one. Video codecs still require
 hardware decode.
 
+`PageRequest.detail = .identity` marks whole-catalogue identity scans. Plex then
+omits inlined streams, which dominated each page's decode cost; Jellyfin listings
+are already lean. The identity index scans at `.utility` priority and pauses
+between pages while a player is live.
+
 ## Artwork and profile presentation
 
 `MediaItem.artworkReferences` supplies library artwork: server URLs and local

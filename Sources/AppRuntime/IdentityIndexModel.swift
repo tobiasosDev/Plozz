@@ -81,16 +81,22 @@ public final class IdentityIndexModel {
     /// `drainWatchOutbox()`.
     @ObservationIgnored
     private let onPublish: @MainActor () -> Void
+    /// While true, a running scan waits before its next page instead of decoding
+    /// beside a playing video. App shells pass the live player count.
+    @ObservationIgnored
+    private let defersScanning: @Sendable () -> Bool
 
     public init(
         activeAccounts: @escaping @MainActor () -> [ResolvedAccount],
         namespace: @escaping @MainActor () -> String?,
         onPublish: @escaping @MainActor () -> Void,
-        persistenceStore: (any IdentityIndexStoring)? = nil
+        persistenceStore: (any IdentityIndexStoring)? = nil,
+        defersScanning: @escaping @Sendable () -> Bool = { false }
     ) {
         self.activeAccounts = activeAccounts
         self.namespace = namespace
         self.onPublish = onPublish
+        self.defersScanning = defersScanning
         if let persistenceStore {
             self.persistence = IdentityIndexPersistence(makeStore: { _ in persistenceStore })
         } else {
@@ -234,6 +240,7 @@ public final class IdentityIndexModel {
         let storeNamespace = namespace()
         let persistence = persistence
         let fanoutLimit = identityWarmFanoutLimit
+        let defersScanning = defersScanning
 
         // A scan of a real library takes minutes, and the triggers that ask for
         // one fire repeatedly during launch (accounts settle, the source scope
@@ -264,7 +271,11 @@ public final class IdentityIndexModel {
         let warmGeneration = identityWarmGeneration
         Self.globalPersistenceGeneration &+= 1
         let persistenceGeneration = Self.globalPersistenceGeneration
-        identityWarmTask = Task { [weak self] in
+        // A whole-catalogue scan is maintenance: `.utility` lets the scheduler
+        // keep its decoding behind focus animation and artwork work. On a
+        // three-core Apple TV it otherwise ran at the UI's priority for minutes
+        // after every launch.
+        identityWarmTask = Task(priority: .utility) { [weak self] in
             guard self?.isCurrentWarm(warmGeneration, namespace: storeNamespace) == true else { return }
             // B2: On the first warm this launch, seed the index from the persisted
             // membership and publish immediately, so cross-server unions are known
@@ -386,7 +397,8 @@ public final class IdentityIndexModel {
                         into: index,
                         serverInfo: serverInfo[accountID],
                         chunkSize: chunkSize,
-                        maxPerLibrary: maxPerLibrary
+                        maxPerLibrary: maxPerLibrary,
+                        defersScanning: defersScanning
                     )
                     if Task.isCancelled { return }
                     // Publish progressively so surfaces see each warmed account.
@@ -481,12 +493,16 @@ public final class IdentityIndexModel {
 
     /// Scans one account's movie + series libraries in bounded pages and ingests
     /// every catalogue entry's identity → source into the index.
-    private static func indexAccount(
+    ///
+    /// Nonisolated so page decoding and enrichment never queue behind focus and
+    /// layout work on the main actor; it touches only its arguments and actors.
+    private nonisolated static func indexAccount(
         _ resolved: ResolvedAccount,
         into index: IdentityIndex,
         serverInfo: SourceServerInfo?,
         chunkSize: Int,
-        maxPerLibrary: Int
+        maxPerLibrary: Int,
+        defersScanning: @Sendable () -> Bool = { false }
     ) async {
         let provider = resolved.provider
         let accountID = resolved.account.id
@@ -535,10 +551,17 @@ public final class IdentityIndexModel {
             var offset = 0
             while offset < maxPerLibrary {
                 if Task.isCancelled { return }
+                // On a 1st-generation Apple TV 4K this scan took over half a core
+                // during steady playback. The shadow bucket keeps serving the last
+                // complete index, so pausing between pages costs nothing visible.
+                while defersScanning() {
+                    try? await Task.sleep(for: .seconds(2))
+                    if Task.isCancelled { return }
+                }
                 guard let page = try? await provider.items(
                     in: library.id,
                     kind: library.kind,
-                    page: PageRequest(startIndex: offset, limit: chunkSize, sort: .default)
+                    page: PageRequest(startIndex: offset, limit: chunkSize, sort: .default, detail: .identity)
                 ) else {
                     // A page fetch threw (network / server error), not a clean end
                     // of catalogue. Mark the scan inconclusive so this library —

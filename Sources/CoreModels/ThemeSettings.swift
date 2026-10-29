@@ -250,4 +250,15 @@ public enum TransparencyPreference: String, CaseIterable, Identifiable, Codable,
         case .off: return true
         }
     }
+
+    /// Whether the player's panels render solid. Following the system also
+    /// follows hardware that drops video frames under player glass; an explicit
+    /// `on` keeps the glass there too.
+    public func reducesPlayerGlass(
+        systemReduceTransparency: Bool,
+        modelIdentifier: String = DiagnosticsReport.machineIdentifier
+    ) -> Bool {
+        guard self == .system else { return reducesTransparency(systemReduceTransparency: systemReduceTransparency) }
+        return systemReduceTransparency || GlassPerformanceBudget.playerGlassLimitedModels.contains(modelIdentifier)
+    }
 }

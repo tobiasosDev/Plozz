@@ -20,6 +20,11 @@ private struct PlozzReducePanelGlassKey: EnvironmentKey {
     static let defaultValue: Bool? = nil
 }
 
+/// The root's player-glass resolution; absent, players follow panel glass.
+private struct PlozzReducePlayerGlassKey: EnvironmentKey {
+    static let defaultValue: Bool? = nil
+}
+
 /// Whether the display is currently being driven in HDR.
 private struct PlozzHDRDisplayActiveKey: EnvironmentKey {
     static let defaultValue: Bool = false
@@ -37,6 +42,13 @@ public extension EnvironmentValues {
     var plozzReducePanelGlass: Bool {
         get { self[PlozzReducePanelGlassKey.self] ?? plozzReduceTransparency }
         set { self[PlozzReducePanelGlassKey.self] = newValue }
+    }
+
+    /// The resolved ``TransparencyPreference/reducesPlayerGlass(systemReduceTransparency:modelIdentifier:)``.
+    /// Player presentations apply it as their panel-glass setting.
+    var plozzReducePlayerGlass: Bool {
+        get { self[PlozzReducePlayerGlassKey.self] ?? plozzReducePanelGlass }
+        set { self[PlozzReducePlayerGlassKey.self] = newValue }
     }
 
     /// Whether the display is currently in HDR mode, so interface elements can

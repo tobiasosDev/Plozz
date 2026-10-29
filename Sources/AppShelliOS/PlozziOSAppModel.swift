@@ -586,7 +586,8 @@ final class PlozziOSAppModel {
         onPublish: { [weak self] in
             self?.drainWatchOutbox()
             self?.universalWatchlistIdentityDidUpdate()
-        }
+        },
+        defersScanning: { PlaybackInstrumentation.count(.viewModel) > 0 }
     )
 
     private var watchReconciler: WatchStateReconciler {

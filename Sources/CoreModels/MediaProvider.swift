@@ -704,17 +704,29 @@ public struct PageRequest: Equatable, Sendable {
     /// session share one descriptor; changing it restarts paging from index 0.
     public var sort: SortDescriptor
     public var filters: LibraryFilters
+    /// How much per-item detail the caller reads.
+    public var detail: Detail
+
+    /// `.identity` is for catalogue scans that read only ids, title, year and
+    /// kind. A provider may then omit per-file stream payloads that browse
+    /// surfaces need for format badges. Items keep their ordinary shape.
+    public enum Detail: Equatable, Sendable {
+        case browse
+        case identity
+    }
 
     public init(
         startIndex: Int = 0,
         limit: Int = PageRequest.defaultLimit,
         sort: SortDescriptor = .default,
-        filters: LibraryFilters = .all
+        filters: LibraryFilters = .all,
+        detail: Detail = .browse
     ) {
         self.startIndex = startIndex
         self.limit = limit
         self.sort = sort
         self.filters = filters
+        self.detail = detail
     }
 
     /// Default page size tuned for a tvOS 10-foot grid: large enough to fill the
@@ -723,7 +735,7 @@ public struct PageRequest: Equatable, Sendable {
 
     /// The request for the page that follows this one, preserving the sort order.
     public func next() -> PageRequest {
-        PageRequest(startIndex: startIndex + limit, limit: limit, sort: sort, filters: filters)
+        PageRequest(startIndex: startIndex + limit, limit: limit, sort: sort, filters: filters, detail: detail)
     }
 }
 

@@ -891,6 +891,14 @@ public struct RootView: View {
                 systemReduceTransparency: systemReduceTransparency
             )
         )
+        // The one hardware exception: player glass over video, measured to halve
+        // presented frames on Apple TV HD / 4K (1st gen). Home is unaffected.
+        .environment(
+            \.plozzReducePlayerGlass,
+            appState.profileSettings.transparencyModel.preference.reducesPlayerGlass(
+                systemReduceTransparency: systemReduceTransparency
+            )
+        )
         // So a hairline tuned against an SDR backdrop can compensate for SDR
         // white being mapped brighter once the panel switches to HDR.
         .environment(\.plozzHDRDisplayActive, glassPerformance.budget.contentIsHDR)

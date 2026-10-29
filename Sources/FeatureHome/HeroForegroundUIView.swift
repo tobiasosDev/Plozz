@@ -200,6 +200,13 @@ final class HeroForegroundUIView: UIView {
             label.layer.shadowRadius = 7
             label.layer.shadowOffset = CGSize(width: 0, height: 2)
         }
+        // A glyph shadow has no path, so Core Animation renders it in its own
+        // offscreen pass on every frame the hero recomposites — every trailer
+        // frame. Rasterized, the text and its shadow are drawn once per change.
+        for view in [titleLabel, ratingLabel, metadataLabel, overviewLabel, logoImageView] as [UIView] {
+            view.layer.shouldRasterize = true
+        }
+        updateRasterizationScale()
         applyThemeColors()
 
         for v in [logoImageView, titleLabel, ratingLabel, metadataLabel,
@@ -260,6 +267,17 @@ final class HeroForegroundUIView: UIView {
         if previousTraitCollection?.hasDifferentColorAppearance(comparedTo: traitCollection) == true {
             applyThemeColors()
             setNeedsLayout()
+        }
+        if previousTraitCollection?.displayScale != traitCollection.displayScale {
+            updateRasterizationScale()
+        }
+    }
+
+    /// Rasterized copy must match the panel's pixel density or it reads soft.
+    private func updateRasterizationScale() {
+        let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 1
+        for view in [titleLabel, ratingLabel, metadataLabel, overviewLabel, logoImageView] as [UIView] {
+            view.layer.rasterizationScale = scale
         }
     }
 
@@ -925,6 +943,10 @@ private final class HeroPagingDotView: UIView {
         backgroundColor = tint.withAlphaComponent(0.28)
         fill.backgroundColor = tint
         fill.isHidden = !active
+        // Only the gauge fill needs the capsule clip. A rounded clip over
+        // sublayers is an offscreen pass, and inactive dots draw just their
+        // own rounded background.
+        clipsToBounds = active
         if becameActive, bounds.height > 0 {
             // Seed the active fill as a full-height circle before the enclosing dot
             // morph begins. Otherwise its first layout animates from CGRect.zero,

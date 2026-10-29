@@ -1702,6 +1702,28 @@ final class PlexProviderMappingTests: XCTestCase {
         XCTAssertEqual(query.first(where: { $0.name == "includeElements" })?.value, "Stream")
     }
 
+    func testIdentityPagesOmitInlinedStreamsButKeepGuidsAndPaging() async throws {
+        let stub = StubHTTPClient()
+        stub.stub(pathSuffix: "/library/sections/1/all", json: """
+        {"MediaContainer":{"size":1,"totalSize":201,"offset":200,"Metadata":[
+          {"ratingKey":"m1","type":"movie","title":"Alien","year":1979,"Guid":[{"id":"tmdb://348"}]}
+        ]}}
+        """)
+        let provider = PlexProvider(session: makeSession(), http: stub)
+
+        let request = PageRequest(startIndex: 200, limit: 200, detail: .identity)
+        let page = try await provider.items(in: "1", kind: .movie, page: request)
+        XCTAssertEqual(page.items.map(\.title), ["Alien"])
+        XCTAssertEqual(page.items.first?.providerIDs["Tmdb"], "348")
+        XCTAssertEqual(page.totalCount, 201)
+        XCTAssertEqual(request.next().detail, .identity)
+
+        let query = try XCTUnwrap(stub.queryItems(forPathSuffix: "/library/sections/1/all"))
+        XCTAssertEqual(query.first(where: { $0.name == "X-Plex-Container-Start" })?.value, "200")
+        XCTAssertEqual(query.first(where: { $0.name == "includeGuids" })?.value, "1")
+        XCTAssertNil(query.first(where: { $0.name == "includeElements" }))
+    }
+
     func testSeriesLibraryUsesShowType() async throws {
         let stub = StubHTTPClient()
         stub.stub(pathSuffix: "/library/sections/2/all", json: #"{"MediaContainer":{"size":0,"totalSize":0,"Metadata":[]}}"#)
