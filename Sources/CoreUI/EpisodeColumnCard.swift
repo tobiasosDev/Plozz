@@ -100,11 +100,20 @@ public struct EpisodeColumnCard: View, Equatable {
 
     private var episodeCaption: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let eyebrow = presentation.eyebrowLine {
+                eyebrow
+                    .font(.system(size: PlozzTypography.episodeDescription.scaled(by: textScale).pointSize, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.top, metrics.landscapeCaptionTopSpacing + metrics.focusCaptionPush)
+                    .padding(.bottom, 4)
+            }
             presentation.titleLine
                 .font(.system(size: PlozzTypography.episodeTitle.scaled(by: textScale).pointSize, weight: .semibold))
                 .foregroundStyle(presentation.isUpcoming ? .secondary : .primary)
                 .lineLimit(1)
-                .padding(.top, metrics.landscapeCaptionTopSpacing + metrics.focusCaptionPush)
+                .padding(.top, presentation.eyebrowLine == nil
+                    ? metrics.landscapeCaptionTopSpacing + metrics.focusCaptionPush : 0)
 
             SpoilerSafeOverviewText(
                 overview: presentation.overviewTreatment == .blurred
@@ -113,7 +122,9 @@ public struct EpisodeColumnCard: View, Equatable {
                 hidesSpoilers: presentation.overviewTreatment == .blurred
                     || presentation.overviewTreatment == .placeholder,
                 mode: spoilerSettings.mode,
-                lineCount: 3,
+                // The eyebrow takes the line the synopsis gives up, so the
+                // caption keeps its height.
+                lineCount: presentation.eyebrowLine == nil ? 3 : 2,
                 fontSize: PlozzTypography.episodeDescription.scaled(by: textScale).pointSize,
                 lineSpacing: PlozzTypography.episodeDescription.scaled(by: textScale).lineSpacing,
                 maxWidth: Self.artworkSize.width
@@ -184,7 +195,10 @@ public struct EpisodeColumnCard: View, Equatable {
                 }
                 .padding(.horizontal, 12)
             }
-            if presentation.artworkTreatment != .blurred {
+            // Once the caption names the runtime ("Episode 3 · 45m") the artwork
+            // only needs the chip for an episode in progress.
+            if presentation.artworkTreatment != .blurred,
+               presentation.eyebrowLine == nil || item.resumeProgressFraction != nil {
                 ResumeChipOverlay(item: item).plozzChromeFocused(isFocused)
             }
         }

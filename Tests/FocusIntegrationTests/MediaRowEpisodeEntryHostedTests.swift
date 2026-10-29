@@ -216,7 +216,12 @@ final class MediaRowEpisodeEntryHostedTests: XCTestCase {
             XCTAssertEqual(focusedY - initialY, reduceMotion ? 0 : push, accuracy: 2,
                            "\(style): the title itself must move down by the reserved clearance.")
             if !loading {
-                _ = try recognizedText("A secret behind the door", in: screenshot(window))
+                let focused = screenshot(window)
+                let evidence = XCTAttachment(image: focused)
+                evidence.name = "episode-caption-before-synopsis-\(style)-\(reduceMotion)"
+                evidence.lifetime = .keepAlways
+                add(evidence)
+                _ = try recognizedText("A secret behind the door", in: focused)
             }
             capture(window, system: system, name: "episode-caption-focused-\(style)-\(loading)-\(reduceMotion)")
 
@@ -346,8 +351,9 @@ final class MediaRowEpisodeEntryHostedTests: XCTestCase {
                     separator: " ")
                 XCTAssertEqual(
                     copy.contains("The Hidden Room"), visible, "\(style) / \(preference) / \(override): \(copy)")
+                // The designation reads "Episode 4" on the line above the title.
                 XCTAssertEqual(
-                    copy.contains("E4"), visible, "\(style): the episode designation belongs to the caption.")
+                    copy.contains("Episode 4"), visible, "\(style): the episode designation belongs to the caption.")
                 let attachment = XCTAttachment(image: rendered)
                 attachment.name = "detail-episode-labels-\(style)-\(preference)-\(override)"
                 attachment.lifetime = .keepAlways
