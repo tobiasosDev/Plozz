@@ -9,19 +9,19 @@ final class ThemeSettingsStoreTests: XCTestCase {
         return defaults
     }
 
-    func testDefaultIsBlackWhenEmpty() {
+    func testDefaultIsDarkWhenEmpty() {
         let store = ThemeSettingsStore(defaults: makeDefaults())
-        XCTAssertEqual(store.load(), .pureBlack)
-        XCTAssertEqual(AppTheme.default, .pureBlack)
+        XCTAssertEqual(store.load(), .dark)
+        XCTAssertEqual(AppTheme.default, .dark)
     }
 
-    /// An install that already chose Dark must keep it. The default moved to
-    /// Black, and a stored choice has to outrank a changed default or the theme
+    /// An install that already chose Black must keep it. The default moved to
+    /// Dark, and a stored choice has to outrank a changed default or the theme
     /// would appear to reset itself on update.
-    func testStoredDarkSurvivesTheDefaultMoving() {
+    func testStoredBlackSurvivesTheDefaultMoving() {
         let defaults = makeDefaults()
-        defaults.set(AppTheme.dark.rawValue, forKey: "com.plozz.appTheme")
-        XCTAssertEqual(ThemeSettingsStore(defaults: defaults).load(), .dark)
+        defaults.set(AppTheme.pureBlack.rawValue, forKey: "com.plozz.appTheme")
+        XCTAssertEqual(ThemeSettingsStore(defaults: defaults).load(), .pureBlack)
     }
 
     func testRoundTripForEveryTheme() {
@@ -42,28 +42,28 @@ final class ThemeSettingsStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testGradientDefaultsOnAndPersistsIndependentlyForEveryThemeAndProfile() {
+    func testGradientDefaultsOffAndPersistsIndependentlyForEveryThemeAndProfile() {
         let defaults = makeDefaults()
         let primary = ThemeSettingsStore(defaults: defaults)
         let other = ThemeSettingsStore(defaults: defaults, namespace: "other")
         let model = ThemeSettingsModel(store: primary)
-        XCTAssertTrue(model.gradientEnabled)
+        XCTAssertFalse(model.gradientEnabled)
         for theme in AppTheme.allCases {
             model.theme = theme
-            model.gradientEnabled = false
-            XCTAssertFalse(ThemeSettingsModel(store: primary).gradientEnabled)
-            XCTAssertEqual(primary.load(), theme)
-            XCTAssertTrue(other.loadGradientEnabled())
             model.gradientEnabled = true
-            XCTAssertTrue(primary.loadGradientEnabled())
+            XCTAssertTrue(ThemeSettingsModel(store: primary).gradientEnabled)
+            XCTAssertEqual(primary.load(), theme)
+            XCTAssertFalse(other.loadGradientEnabled())
+            model.gradientEnabled = false
+            XCTAssertFalse(primary.loadGradientEnabled())
         }
-        model.gradientEnabled = false
+        model.gradientEnabled = true
         let snapshot = ProfileSettingsTransfer.capture(namespace: nil, defaults: defaults)
         ProfileSettingsTransfer.apply(snapshot, namespace: "other", defaults: defaults)
-        XCTAssertFalse(other.loadGradientEnabled())
-        other.saveGradientEnabled(true)
-        XCTAssertFalse(primary.loadGradientEnabled())
         XCTAssertTrue(other.loadGradientEnabled())
+        other.saveGradientEnabled(false)
+        XCTAssertTrue(primary.loadGradientEnabled())
+        XCTAssertFalse(other.loadGradientEnabled())
     }
 
     @MainActor
@@ -113,9 +113,10 @@ final class ThemePaletteResolutionTests: XCTestCase {
         }
     }
 
-    func testPureBlackHasNoGlowOthersAreThemed() {
+    /// Dark is the Apple TV app's flat ground, so like Black it carries no glow.
+    func testDarkAndBlackAreFlatLightIsThemed() {
         XCTAssertNil(ThemePalette.pureBlack.topGlow)
-        XCTAssertNotNil(ThemePalette.dark.topGlow)
+        XCTAssertNil(ThemePalette.dark.topGlow)
         XCTAssertNotNil(ThemePalette.light.topGlow)
     }
 }

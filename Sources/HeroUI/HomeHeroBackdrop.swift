@@ -194,6 +194,8 @@ public struct HomeHeroBackdrop: View {
     }
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.themePalette) private var palette
+    @Environment(\.gradientBackgroundsEnabled) private var gradientBackgroundsEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.plozzPinnedSidebarActive) private var pinnedSidebarActive
     private var isLight: Bool { colorScheme == .light }
@@ -232,8 +234,26 @@ public struct HomeHeroBackdrop: View {
             )
     }
 
+    /// On a flat page the bottom melt is painted in the page colour instead of
+    /// masking the surface. Over a solid background the two are pixel-identical,
+    /// but a mask over the hero (and its trailer video) costs an offscreen pass on
+    /// every presented frame, which older Apple TV GPUs feel on Home.
+    @ViewBuilder
     private var dissolvedSurface: some View {
-        backdropSurface.mask(dissolveMask)
+        if paintsDissolve {
+            backdropSurface.overlay {
+                paintedVerticalFade(start: receded ? recededMeltStart : meltStart)
+                    .allowsHitTesting(false)
+            }
+        } else {
+            backdropSurface.mask(dissolveMask)
+        }
+    }
+
+    /// The carousel melt is vertical only, so painting it is exact whenever the
+    /// page behind it is the palette's flat background colour.
+    private var paintsDissolve: Bool {
+        scrimStyle == .carousel && !gradientBackgroundsEnabled
     }
 
     private var backdropSurface: some View {
@@ -328,6 +348,25 @@ public struct HomeHeroBackdrop: View {
     /// intermediate stops give an ease-out shape so the melt reads as a gentle,
     /// gradual dissolve rather than a hard linear band. Both dissolve layers use
     /// this same curve shape, so they never produce a mismatched-curve seam.
+    /// `easedVerticalFade` inverted into page colour: where the mask kept `a` of
+    /// the artwork, this paints the page at `1 - a`.
+    private func paintedVerticalFade(start: CGFloat) -> LinearGradient {
+        let span = max(1 - start, 0.0001)
+        let page = palette.backgroundBase
+        return LinearGradient(
+            stops: [
+                .init(color: page.opacity(0), location: 0.0),
+                .init(color: page.opacity(0), location: start),
+                .init(color: page.opacity(0.28), location: start + span * 0.32),
+                .init(color: page.opacity(0.64), location: start + span * 0.60),
+                .init(color: page.opacity(0.90), location: start + span * 0.83),
+                .init(color: page, location: 1.0)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
     private func easedVerticalFade(start: CGFloat, peak: CGFloat = 1.0) -> LinearGradient {
         let span = max(1 - start, 0.0001)
         return LinearGradient(

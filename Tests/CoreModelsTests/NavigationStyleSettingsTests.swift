@@ -74,10 +74,10 @@ final class NavigationStyleSettingsStoreTests: XCTestCase {
         return defaults
     }
 
-    func testUnsetProfileUsesPinnedSidebar() {
+    func testUnsetProfileUsesNativeSidebar() {
         let store = NavigationStyleSettingsStore(defaults: makeDefaults())
 
-        XCTAssertEqual(store.load(), .rail)
+        XCTAssertEqual(store.load(), .sidebar)
     }
 
     func testPinnedSidebarIsFirstInEveryNavigationPicker() {
@@ -101,9 +101,9 @@ final class NavigationStyleSettingsStoreTests: XCTestCase {
         primary.save(.tabBar)
 
         XCTAssertEqual(primary.load(), .tabBar)
-        XCTAssertEqual(child.load(), .rail)
-        child.save(.sidebar)
-        XCTAssertEqual(NavigationStyleSettingsStore(defaults: defaults, namespace: "child").load(), .sidebar)
+        XCTAssertEqual(child.load(), .sidebar)
+        child.save(.rail)
+        XCTAssertEqual(NavigationStyleSettingsStore(defaults: defaults, namespace: "child").load(), .rail)
         XCTAssertEqual(primary.load(), .tabBar)
     }
 

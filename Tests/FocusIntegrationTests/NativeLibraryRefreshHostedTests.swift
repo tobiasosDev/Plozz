@@ -2003,6 +2003,9 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
         let host = UIHostingController(
             rootView:
                 LibraryBrowseView(viewModel: model, title: title, onSelect: onSelect)
+                // The custom library header; the native sidebar's navigation-bar
+                // header is outside this host.
+                .environment(\.plozzNavigationStyle, .rail)
                 .environment(\.plozzCardFocusStyle, focusStyle)
                 .environment(\.plozzCardStyle, cardStyle)
                 .environment(\.themePalette, palette)

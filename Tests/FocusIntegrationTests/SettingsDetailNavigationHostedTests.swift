@@ -201,6 +201,9 @@ final class SettingsDetailNavigationHostedTests: XCTestCase {
                     }
                     .padding(.horizontal, 80)
                     .environment(\.layoutDirection, direction)
+                    // The pinned-sidebar column; the native sidebar presents
+                    // subpages full screen and has its own coverage.
+                    .environment(\.plozzNavigationStyle, .rail)
                     .ignoresSafeArea()
                 )
                 window.makeKeyAndVisible()
@@ -274,6 +277,7 @@ final class SettingsDetailNavigationHostedTests: XCTestCase {
                     }
             }
             .padding(.horizontal, 80)
+            .environment(\.plozzNavigationStyle, .rail)
             .ignoresSafeArea()
         )
         window.rootViewController = host
@@ -480,6 +484,7 @@ final class SettingsDetailNavigationHostedTests: XCTestCase {
             .padding(.horizontal, 80)
             .environment(\.layoutDirection, direction)
             .environment(\.themePalette, .dark)
+            .environment(\.plozzNavigationStyle, .rail)
             .environment(\.colorScheme, .dark)
             .environment(\.locale, Locale(identifier: "en_US"))
             .ignoresSafeArea()

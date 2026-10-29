@@ -65,7 +65,11 @@ public final class WatchStatusIndicatorSettingsStore: WatchStatusIndicatorSettin
             return EpisodeCountBadgeStyle(rawValue: raw) ?? .default
         }
         // Preserve the old appearance once, then keep it independent of watch marks.
-        let migrated: EpisodeCountBadgeStyle = load() == .watched ? .floating : .attached
+        // Only an explicitly chosen check badge carried the floating count; a
+        // profile that never chose follows the count's own default, so moving the
+        // indicator default does not restyle fresh installs.
+        let storedIndicator = defaults.string(forKey: key).flatMap(WatchStatusIndicator.init(rawValue:))
+        let migrated: EpisodeCountBadgeStyle = storedIndicator == .watched ? .floating : .attached
         saveEpisodeCountStyle(migrated)
         return migrated
     }

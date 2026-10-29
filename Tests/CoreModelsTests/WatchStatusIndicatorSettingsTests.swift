@@ -9,10 +9,10 @@ final class WatchStatusIndicatorSettingsStoreTests: XCTestCase {
         return defaults
     }
 
-    func testDefaultIsUnwatchedWhenEmpty() {
+    func testDefaultIsWatchedWhenEmpty() {
         let store = WatchStatusIndicatorSettingsStore(defaults: makeDefaults())
-        XCTAssertEqual(store.load(), .unwatched)
-        XCTAssertEqual(WatchStatusIndicator.default, .unwatched)
+        XCTAssertEqual(store.load(), .watched)
+        XCTAssertEqual(WatchStatusIndicator.default, .watched)
         XCTAssertTrue(store.loadShowsUnwatchedEpisodeCount())
     }
 
@@ -103,6 +103,15 @@ final class WatchStatusIndicatorSettingsStoreTests: XCTestCase {
                 XCTAssertFalse(model.showsUnwatchedEpisodeCount)
             }
         }
+    }
+
+    /// A profile that never chose an indicator gets the check badge by default,
+    /// but its episode count keeps the attached style: only an explicit legacy
+    /// check-badge choice carried the floating count.
+    func testFreshProfileKeepsAttachedCountDespiteWatchedDefault() {
+        let store = WatchStatusIndicatorSettingsStore(defaults: makeDefaults(), namespace: "fresh")
+        XCTAssertEqual(store.load(), .watched)
+        XCTAssertEqual(store.loadEpisodeCountStyle(), .attached)
     }
 
     func testEpisodeCountStyleTransfersWithoutLeakingBetweenProfiles() {
