@@ -35,7 +35,7 @@ struct LiveTVPreviewIntroductionFixture: View {
         var browsing = store.load()
         browsing.startsWithCategories = false
         store.save(browsing)
-        if arguments.contains("--preview-refresh-catalog") {
+        if arguments.contains("--preview-refresh-catalog") || Self.loopbackBase != nil {
             var selected = store.load()
             selected.chooseAutoPreview(false)
             store.save(selected)
@@ -139,6 +139,13 @@ struct LiveTVPreviewIntroductionFixture: View {
         ProcessInfo.processInfo.arguments.contains("--preview-refresh-catalog")
     }
 
+    /// A loopback M3U/XMLTV source with logos and programme art, read by the
+    /// production loader: `--preview-loopback=http://127.0.0.1:<port>`.
+    static var loopbackBase: URL? {
+        ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--preview-loopback=") }
+            .flatMap { URL(string: String($0.dropFirst("--preview-loopback=".count))) }
+    }
+
     private var liveTV: some View {
         LiveTVPrototypeView(
             isActive: !usesNativeNavigation || nativeSelection == .liveTV,
@@ -147,7 +154,8 @@ struct LiveTVPreviewIntroductionFixture: View {
             viewSettingsStore: store,
             sourceStore: PreviewIntroductionSources(
                 refreshCatalog: refreshCatalog,
-                empty: ProcessInfo.processInfo.arguments.contains("--preview-empty-sources")
+                empty: ProcessInfo.processInfo.arguments.contains("--preview-empty-sources"),
+                loopback: Self.loopbackBase
             ),
             serverProviderResolver: { account in
                 guard refreshCatalog, account == "refresh-account" else { return nil }
@@ -161,7 +169,8 @@ struct LiveTVPreviewIntroductionFixture: View {
                     chrome.setStackDepth(expanded ? 1 : 0)
                 }
             },
-            sourceLoader: PreviewIntroductionLoader(),
+            sourceLoader: Self.loopbackBase == nil
+                ? PreviewIntroductionLoader() as any LiveTVSourceLoading : LiveTVSourceLoader(),
             profileID: profileID,
             preferencesNamespace: namespace,
             sourceApprovalContext: { approval }
@@ -240,9 +249,19 @@ private final class PreviewIntroductionPreferences: LiveTVPreferencesStoring, @u
 private struct PreviewIntroductionSources: LiveTVSourcesStoring {
     var refreshCatalog = false
     var empty = false
+    var loopback: URL?
 
     func load() throws -> LiveTVSourcesConfiguration {
         if empty { return LiveTVSourcesConfiguration() }
+        if let loopback {
+            return LiveTVSourcesConfiguration(playlists: [
+                LiveTVPlaylistSource(
+                    id: "preview-loopback", name: "Loopback",
+                    playlistURL: loopback.appending(path: "playlist-0.m3u"),
+                    guideURLs: [loopback.appending(path: "guide.xml")]
+                )
+            ])
+        }
         if refreshCatalog {
             return LiveTVSourcesConfiguration(servers: [
                 LiveTVServerSource(id: "refresh-server", name: "Refresh fixture", accountID: "refresh-account")
