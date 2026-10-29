@@ -306,7 +306,7 @@ final class PlaybackSettingsHostedTests: XCTestCase {
             XCTAssertFalse(text.contains("DTS:X"), text)
         }
         XCTAssertFalse(text.contains("Dolby Atmos"), text)
-        XCTAssertFalse(playback.settings.dolbyVisionFELEnabled)
+        XCTAssertTrue(playback.settings.dolbyVisionFELEnabled)
     }
 
     func testSpatialLayoutControlUpdatesFromDeviceStoreAndFitsLargeText() async throws {

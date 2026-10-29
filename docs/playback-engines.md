@@ -471,13 +471,17 @@ size probes. FFmpegBuild 3.4.x adds AV1 Dolby Vision sample-entry support.
 
 ## Dolby Vision FEL
 
-**Settings > Playback > Advanced > Dolby Vision FEL (experimental)** is off by
+**Settings > Playback > Advanced > Dolby Vision FEL (experimental)** is on by
 default, saved per profile, and applied to new built-in on-demand playback
-sessions on tvOS and iOS/iPadOS. Existing profiles remain off, including older
-or malformed stored values. Profile transfer carries the choice. The adapter
-passes it through `LoadOptions.preferDualLayerDolbyVision`; it does not enable
-FEL for live streams, shared players, muted previews or display-suppressed
-previews. External players own their own decoding preferences.
+sessions on tvOS and iOS/iPadOS. Profile 5, Profile 8 and Profile 7 MEL already
+reach the display without loss; this preference keeps Profile 7 FEL lossless too
+instead of discarding its residual. The choice is stored under
+`dolbyVisionLosslessFEL`; the earlier default-off `dolbyVisionFELEnabled` key is
+ignored, so existing and imported profiles start on until a user turns it off.
+Missing or malformed values use the default. Profile transfer carries the
+choice. The adapter passes it through `LoadOptions.preferDualLayerDolbyVision`;
+it does not enable FEL for live streams, shared players, muted previews or
+display-suppressed previews. External players own their own decoding preferences.
 
 The engine, not provider metadata, decides eligibility: seekable Profile 7 FEL,
 automatic Dolby Vision handling, hardware HEVC decode and the engine's real-time
@@ -728,7 +732,7 @@ retention assertions; they do not establish physical-device frame pacing.
 
 | Feature | Plozzigen | Native |
 |---------|-----------|--------|
-| Dolby Vision | ✅ (Profile 5/8; optional dual-layer path, see above) | ✅ (if server delivers DV) |
+| Dolby Vision | ✅ (Profile 5/8 and Profile 7 MEL; Profile 7 FEL dual-layer by default, see above) | ✅ (if server delivers DV) |
 | Directly compatible spatial audio | ✅ (E-AC-3 JOC on the native path; software/FEL also eligible with Spatial audio on, tvOS 26+) | ✅ (if stream has E-AC-3 JOC) |
 | HDR10 / HLG | ✅ | ✅ |
 | Full-timeline seek | ✅ | ✅ (if not live transcode) |

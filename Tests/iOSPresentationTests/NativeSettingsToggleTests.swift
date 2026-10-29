@@ -399,6 +399,7 @@ final class NativeSettingsToggleTests: XCTestCase {
         }
         let playback = PlaybackSettingsModel(store: PlaybackSettingsStore(defaults: defaults, namespace: "guest"))
         let external = ExternalPlayerSettingsModel(defaults: defaults)
+        PlaybackSettingsStore(defaults: defaults).save(PlaybackSettings(dolbyVisionFELEnabled: false))
         for width: CGFloat in [390, 834] {
             for scheme: ColorScheme in [.light, .dark] {
                 playback.settings.dolbyVisionFELEnabled = false
