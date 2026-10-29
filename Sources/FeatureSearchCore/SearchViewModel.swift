@@ -15,6 +15,12 @@ public final class SearchViewModel {
     public var query: String = ""
     public private(set) var state: LoadState<[SearchSection]> = .idle
 
+    /// Completions for the current results; empty until a search has loaded.
+    public var suggestions: [String] {
+        guard case let .loaded(sections) = state else { return [] }
+        return SearchPolicy.suggestions(from: sections, query: query)
+    }
+
     private let accounts: [ResolvedAccount]
     private let limit: Int
     private let debounce: Duration

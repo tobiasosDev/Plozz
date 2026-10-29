@@ -24,4 +24,27 @@ public enum SearchPolicy {
     public static func isCurrent(requestedQuery: String, liveQuery: String) -> Bool {
         requestedQuery == normalized(liveQuery)
     }
+
+    /// Completions offered under the search field, the way the TV app offers
+    /// "sintel", "spring"… after a single letter: the distinct titles of the
+    /// playable results, in result order, lowercased like the system's own
+    /// suggestions. An episode suggests its show. "Not in Your Library" titles
+    /// are left out — a suggestion should lead to something the user can play.
+    public static func suggestions(
+        from sections: [SearchSection], query: String, limit: Int = 5, locale: Locale = .current
+    ) -> [String] {
+        let current = normalized(query).lowercased(with: locale)
+        var seen: Set<String> = [current]
+        var result: [String] = []
+        for section in sections where section.kind != .notInLibrary {
+            for item in section.items {
+                let title = item.kind == .episode ? (item.parentTitle ?? item.title) : item.title
+                let suggestion = normalized(title).lowercased(with: locale)
+                guard !suggestion.isEmpty, seen.insert(suggestion).inserted else { continue }
+                result.append(suggestion)
+                if result.count == limit { return result }
+            }
+        }
+        return result
+    }
 }

@@ -8,7 +8,14 @@ ranks them with a shared policy.
 
 - `SearchView` + `SearchViewModel` — focusable tvOS search UI with
   debounced input, per-section results, and `LoadState`-driven
-  loading/empty/failure rendering.
+  loading/empty/failure rendering. As in the TV app, each section is one
+  horizontal row of posters, sized like a column of the shared poster wall,
+  with leading captions that name the server each result plays from
+  ("2010 · Wohnzimmer"). The system search field and keyboard stay native
+  (dictation and the focus observers depend on them); title completions from
+  the current results (`SearchPolicy.suggestions`) are offered through
+  `.searchSuggestions`. Cast & Crew results are not offered: no provider
+  exposes a person search.
 - `SearchSection` — section model (movies / shows / episodes / people /
   music / collections) so results are grouped consistently across
   backends.
