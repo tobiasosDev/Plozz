@@ -184,11 +184,13 @@ the focused app, without an icon. Posters stays the default; full-screen explain
 tvOS's swipe-up expansion and retains the same two item limits.
 
 Playback > Advanced also contains **Dolby Vision FEL (experimental)** on TV,
-iPhone and iPad. This is a profile-scoped, default-off preference, unlike the
+iPhone and iPad. This is a profile-scoped, default-on preference, unlike the
 device-wide external-player choice. It applies to new built-in on-demand sessions
-and travels through profile settings transfer. Its short helper warns that it
-may impact performance. On iPhone/iPad and tvOS before 26 it also warns that
-FEL disables spatial audio; ordinary channel audio still plays. On tvOS 26+,
+and travels through profile settings transfer. Values saved under the earlier
+default-off key are ignored, so existing profiles also start lossless. Its short
+helper warns that it may impact performance. On iPhone/iPad and tvOS before 26
+it also warns that FEL disables spatial audio; ordinary channel audio still
+plays. On tvOS 26+,
 eligible FEL tracks can retain spatial audio when the Spatial audio setting is on.
 Live playback, shared players and muted previews do not opt in.
 See [playback engines](../../docs/playback-engines.md#dolby-vision-fel) for eligibility

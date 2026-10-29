@@ -92,6 +92,30 @@ final class PlexHybridDirectPlayTests: XCTestCase {
         XCTAssertTrue(try canDirectPlay(json, caps: caps, hybrid: true))
     }
 
+    func testDolbyVisionProfiles5And7And8ReachAetherAsTheOriginalFile() throws {
+        // Profile 7 is the UHD Blu-ray dual-layer case (HDR10 base, compatibility ID 6).
+        // Aether, not a server transcode, keeps its enhancement layer.
+        for (profile, compatibilityID) in [(5, 0), (7, 6), (8, 1)] {
+            let json = """
+            {"id":1,"container":"mkv","videoCodec":"hevc","audioCodec":"truehd","bitrate":68000,
+             "width":3840,"height":2160,
+             "Part":[{"id":2,"key":"/library/parts/2/16000/file.mkv","container":"mkv","Stream":[
+               {"id":10,"streamType":1,"index":0,"codec":"hevc","DOVIPresent":true,
+                "DOVIProfile":\(profile),"DOVIBLCompatID":\(compatibilityID)},
+               {"id":11,"streamType":2,"index":1,"codec":"truehd","selected":true}
+             ]}]}
+            """
+            let (media, part) = try decodeMedia(json)
+            let client = makeClient(MediaCapabilities(supportsHEVC: true, supportsDolbyVision: true), hybrid: true)
+            let playback = try XCTUnwrap(client.playbackURL(
+                ratingKey: "1", media: media, part: part, sessionID: "session",
+                streaming: StreamingPlaybackOptions(quality: .original)
+            ))
+            XCTAssertFalse(playback.isTranscoding, "Profile \(profile)")
+            XCTAssertEqual(playback.url.path, "/library/parts/2/16000/file.mkv", "Profile \(profile)")
+        }
+    }
+
     func testHDR10MatroskaDirectPlaysOnHDRDisplayWithHybridOn() throws {
         // Plain HDR10 (not DoVi) in an MKV is decoded on-device and presented on an
         // HDR10-capable display — no needless server transcode (matches Infuse).

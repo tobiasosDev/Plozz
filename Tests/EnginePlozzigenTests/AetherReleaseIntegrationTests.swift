@@ -63,7 +63,12 @@ final class AetherReleaseIntegrationTests: XCTestCase {
         XCTAssertEqual(options.objectAudioRendering, .off)
         XCTAssertFalse(options.progressiveSegmentDelivery)
         XCTAssertFalse(options.preferDualLayerDolbyVision)
-        XCTAssertFalse(PlozzigenVideoEngine.onDemandLoadOptions().preferDualLayerDolbyVision)
+    }
+
+    func testOnDemandDefaultRequestsLosslessProfile7() {
+        let options = PlozzigenVideoEngine.onDemandLoadOptions()
+        XCTAssertTrue(options.preferDualLayerDolbyVision)
+        XCTAssertEqual(options.dolbyVisionHandling, .automatic)
     }
 
     @MainActor
