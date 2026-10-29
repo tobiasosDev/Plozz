@@ -443,20 +443,25 @@ final class LibraryHeldScrollTests: XCTestCase {
         }
         let initial = try XCTUnwrap(focusedIndex(in: app), "The initial card must receive actual focus.")
         if preloaded {
-            let horizontal: XCUIRemote.Button = initial % 6 == 5 ? .left : .right
+            // The standard-density library grid shows seven posters per row.
+            let columns = 7
+            let horizontal: XCUIRemote.Button = initial % columns == columns - 1 ? .left : .right
             XCUIRemote.shared.press(horizontal)
             XCTAssertEqual(focusedIndex(in: app), initial + (horizontal == .right ? 1 : -1))
             XCUIRemote.shared.press(horizontal == .right ? .left : .right)
             XCTAssertEqual(focusedIndex(in: app), initial)
             XCUIRemote.shared.press(.down)
-            XCTAssertEqual(focusedIndex(in: app), initial + 6)
+            XCTAssertEqual(focusedIndex(in: app), initial + columns)
             XCUIRemote.shared.press(.up)
             XCTAssertEqual(focusedIndex(in: app), initial)
         }
         let before = try scrollPosition(in: app)
         XCTAssertGreaterThan(before.viewport, 0)
 
-        XCUIRemote.shared.press(.down, forDuration: 5)
+        // Seven columns leave the 500-item fixture 72 rows; a five-second hold
+        // now reaches its last row, where Down has no card below. Stop
+        // mid-library, still dozens of rows past the initial cards.
+        XCUIRemote.shared.press(.down, forDuration: 4)
 
         let after = try scrollPosition(in: app)
         let peakCells = try XCTUnwrap(Int(app.staticTexts["library-peak-cells"].label))
