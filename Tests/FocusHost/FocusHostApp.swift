@@ -7,6 +7,10 @@ import FeatureSettings
 
 @main
 struct FocusHostApp: App {
+    init() {
+        LayerCensus.install()
+    }
+
     var body: some Scene {
         WindowGroup {
             if ProcessInfo.processInfo.arguments.contains("--large-native-navigation-fixture") {

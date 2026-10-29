@@ -225,6 +225,26 @@ before/after attribution. Captures from the former focus-preview behavior includ
 page construction and are not equivalent page-work benchmarks. Hosted focus checks
 separately verify that rapid and settled focus never change or rebuild the open page.
 
+`vertical-navigation` is the same traversal in the native sidebar
+(`--native-vertical-navigation`): twelve Down and twelve Up presses from Home,
+three times. It records which pages the traversal presented instead of asserting
+that none were, so a change in the system sidebar's selection behaviour shows up
+as evidence rather than a failure.
+
+`home-navigation` runs Home without navigation chrome unless `--home-shell`
+names one (`top-bar`, `sidebar` or `rail`). The test then moves focus out of the
+chrome into the hero before the timed input starts. Compare shells only with
+each other or with the same shell on another commit.
+
+The process sample sees the main thread, not the render server. For compositing
+cost (live blurs and glass, masks, filters, path-less shadows), run
+`LayerCensusRemoteTests` against the same fixture build with
+`TEST_RUNNER_PLOZZ_PERFORMANCE_HOME_SHELL=<shell>`; the fixture writes
+`Library/Caches/Plozz/layer-census-<state>.json` for the hero, the rows, deeper
+rows and a detail page. Each file lists how many such layers are on screen and
+the share of the display they cover. It is structure, not frame timing: use it to
+find what to remove, then confirm on the device.
+
 `Process Sample` is the default backend and uses macOS's installed `sample`
 tool. The report separates main-thread frames, app-owned main-thread frames and
 app-owned background frames. Counts are **inclusive stack observations**, which
