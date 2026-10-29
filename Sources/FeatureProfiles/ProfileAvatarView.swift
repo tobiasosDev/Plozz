@@ -126,7 +126,11 @@ public struct ProfileAvatarView: View {
                     at: center
                 )
             } else {
-                context.fill(Path(ellipseIn: bounds), with: .color(ProfileTileColor.color(for: profile)))
+                context.fill(Path(ellipseIn: bounds), with: .radialGradient(
+                    Self.symbolGradient(for: profile),
+                    center: CGPoint(x: bounds.width * 0.3, y: bounds.height * 0.25),
+                    startRadius: 0, endRadius: size * Self.gradientReach
+                ))
                 context.draw(
                     Text(Image(systemName: profile.avatarSymbol))
                         .font(.system(size: size * 0.5, weight: .semibold))
@@ -151,6 +155,15 @@ public struct ProfileAvatarView: View {
         .renderingMode(.original)
     }
 
+    /// Where the gradient reaches the tile's own colour, relative to its size.
+    private static let gradientReach: CGFloat = 0.72
+
+    /// The tile colour lifted halfway to white at the highlight.
+    private static func symbolGradient(for profile: Profile) -> Gradient {
+        let base = ProfileTileColor.color(for: profile)
+        return Gradient(colors: [base.mix(with: .white, by: 0.5), base])
+    }
+
     /// Picks a cache variant sized to the avatar: a crisp source for the large
     /// picker tiles, a cheap thumbnail for the small Settings rows.
     private static func variant(for size: CGFloat) -> ArtworkImageVariant {
@@ -161,9 +174,16 @@ public struct ProfileAvatarView: View {
     /// fallback when a borrowed photo URL fails to load. The glyph colour adapts
     /// to the tile so it stays legible on light backgrounds (e.g. a white or
     /// yellow tile gets a dark glyph instead of an invisible white one).
+    ///
+    /// The tile is a still radial gradient, lit from the top-left like the tvOS
+    /// profile avatars: one static fill, no layer or effect added.
     private var symbolFallback: some View {
         ZStack {
-            Circle().fill(ProfileTileColor.color(for: profile))
+            Circle().fill(RadialGradient(
+                gradient: Self.symbolGradient(for: profile),
+                center: UnitPoint(x: 0.3, y: 0.25),
+                startRadius: 0, endRadius: size * Self.gradientReach
+            ))
             Image(systemName: profile.avatarSymbol)
                 .font(.system(size: size * 0.5, weight: .semibold))
                 .foregroundStyle(ProfileTileColor.legibleForeground(for: profile))

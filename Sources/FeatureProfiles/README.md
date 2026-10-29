@@ -9,15 +9,21 @@ household multi-user UI on top of `CoreModels.ProfileStore`.
   household's profile tiles (avatar + name), focusable, with an "add
   profile" tile that opens the editor. `AppShell.ProfileSelectionView`
   hosts this for both the launch flow and Settings → Switch Profile.
-  Its upper-right Settings cog uses the shared native glass button, including
-  the reduced-transparency fallback. A full-width focus section lets Up from
-  the profile tiles reach it. The shell owns authentication and profile-scoped
+  It sits on a static, theme-independent light pastel background (plain
+  gradient fills; no mask, blur or animation) with dark ink, the Plozz mark
+  top-left and a translucent Settings cog top-right. A full-width focus section
+  lets Up from the profile tiles reach the cog. Focus scales the avatar 1.14×
+  with a white ring; a PIN profile shows a white lock badge on its avatar rather
+  than beside its name. Add Profile and Add Kids Profile are frosted circles;
+  the Kids tile stays because it is the only way to create a profile that is
+  restricted from the start. The shell owns authentication and profile-scoped
   routing; the picker never bypasses a PIN or activates another profile itself.
   Mobile uses `AppShelliOS.PlozziOSProfileSelectionView` and its touch picker.
 - `ProfileEditorView` — create / rename / restyle a profile (name,
   `avatarSymbol` SF Symbol, color from `ProfileTileColor` palette,
   account subset, Plex Home-user mapping).
 - `ProfileAvatarView` — renders a profile's photo, emoji, or SF Symbol.
+  Symbol avatars are a still radial gradient, lit top-left from the tile colour.
   Native navigation labels use `rendersAsImage` so the circular crop, point
   size, and original colors survive native image extraction. This includes
   iOS toolbar buttons when the iPad app runs on Mac; framing a resizable photo
@@ -28,7 +34,7 @@ household multi-user UI on top of `CoreModels.ProfileStore`.
   Avatar choices reuse CoreUI's `ColorSwatchButton`, also used by watch-indicator
   settings. The 40-color avatar palette, TV grid, mobile compact row/full palette
   sheet, and neutral emoji option remain independent of the watch-mark palette.
-- `ProfileNameLabel` — shared picker and summary name with an inline lock
+- `ProfileNameLabel` — shared summary name (and mobile picker name) with an inline lock
   for a Plozz Profile Lock or a configured PIN-protected Plex Home binding.
   The indicator and VoiceOver value describe configured protection, not temporary
   unlock state, source enablement, or Kids restrictions. It does not add a local
