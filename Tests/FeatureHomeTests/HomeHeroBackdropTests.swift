@@ -59,6 +59,42 @@ final class HomeHeroBackdropTests: XCTestCase {
         XCTAssertEqual(item.heroBackdropURL, tmdb, "The original persisted item remains unchanged.")
     }
 
+    func testOnlineHeroUsesWideLibraryArtBeforeAnyPoster() async throws {
+        let server = try XCTUnwrap(URL(string: "https://library.example.test/series-art.jpg"))
+        let poster = try XCTUnwrap(URL(string: "https://metadata.example.test/poster.jpg"))
+        let settings = CarouselArtworkProviderSettings(.init(orderMode: .custom, enabledOrder: ["tvdb"]))
+        let cache = MetadataDiskCache(directory: nil)
+        let router = ArtworkRouter(
+            cache: cache,
+            enrichmentBaseline: .init(order: [.tvdb], priority: .init(rules: [])),
+            settingsStore: settings
+        )
+        // No online backdrop anywhere, but a poster the router may offer instead.
+        var wide = MediaItem(id: "wide", title: "Homeland", kind: .series, posterURL: poster, backdropURL: server)
+        wide.artworkMetadataSourcesByURL = [poster.absoluteString: .tvdb]
+        var posterOnly = MediaItem(id: "poster-only", title: "Poster Only", kind: .movie, posterURL: poster)
+        posterOnly.artworkMetadataSourcesByURL = [poster.absoluteString: .tvdb]
+        for item in [wide, posterOnly] {
+            for kind in [ArtworkKind.hero, .poster] {
+                await cache.store(kind == .poster ? poster : nil, for: ArtworkRouter.providerCacheKey(
+                    query: MetadataQuery(item), kind: kind, source: .tvdb
+                ))
+            }
+        }
+        let online = ArtworkPresentationPolicy(area: .home, settings: .init(preference: .online))
+
+        let wideFallback = try XCTUnwrap(HomeHeroArtwork.backdropFallback(for: wide, router: router))
+        let wideOnline = await wideFallback()
+        XCTAssertNil(wideOnline, "An online poster must not pre-empt the server's wide art.")
+        let wideSource = HomeCarouselArtworkSource(item: wide, policy: online, resolveOnline: { _ in await wideFallback() })
+        let wideWarmed = await wideSource.warmURL()
+        XCTAssertEqual(wideWarmed, server)
+
+        let posterFallback = try XCTUnwrap(HomeHeroArtwork.backdropFallback(for: posterOnly, router: router))
+        let posterOnline = await posterFallback()
+        XCTAssertEqual(posterOnline, poster, "A title with no wide art anywhere still gets a picture.")
+    }
+
     func testCarouselExternalOnlyArtworkStillWarmsThroughItsFallback() async throws {
         let stored = try XCTUnwrap(URL(string: "https://metadata.example.test/old.jpg"))
         let current = try XCTUnwrap(URL(string: "https://metadata.example.test/current.jpg"))

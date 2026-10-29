@@ -414,14 +414,17 @@ public actor ArtworkRouter {
 
     /// Deterministic Home/detail picks from one online candidate pool. Detail uses
     /// the runner-up when available. A poster-only title retains its permitted
-    /// external poster as a last resort.
+    /// external poster as a last resort unless `allowsPosterFallback` is false,
+    /// which lets a caller with its own wide library art try that first.
     public func heroArtworkURL(
         for item: MediaItem,
-        placement: ArtworkPlacement
+        placement: ArtworkPlacement,
+        allowsPosterFallback: Bool = true
     ) async -> URL? {
         let subject = Self.seriesArtworkItem(for: item)
         let candidates = await sourcedArtworkURLs(.hero, for: subject, limit: 4)
         if let hero = Self.heroCandidate(from: candidates, placement: placement) { return hero }
+        guard allowsPosterFallback else { return nil }
         return await artworkURL(for: item, placements: [.poster])
     }
 
