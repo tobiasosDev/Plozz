@@ -49,7 +49,10 @@ semantic styles; unmigrated app text is not implicitly covered.
 
 `HeroDescriptionFactsLayout` measures the live facts row during layout and gives
 its description the same reading width, with an 800pt baseline and 1200pt cap.
-The Detail hero reserves the separate credits column before proposing this width.
+`factsFirst` stacks that row above the description, the Apple TV order the Detail
+hero uses; an empty row moves its gap below the description, so the height is
+unchanged. The Detail hero reserves the separate
+credits column before proposing this width.
 Changes to badges, text size, or the focused episode remeasure in the same pass,
 without geometry state or an extra hidden copy of the badge views.
 

@@ -924,21 +924,22 @@ struct DetailHeroView: View, Equatable {
                 focused: focusedPresentation,
                 root: rootPresentation
             )
-            // Split the facts line: genres ride the certificate line up top; the
-            // year/runtime facts drop to the bottom row beside the ratings.
+            // Apple TV order: certificate, genres, year and runtime share the line
+            // under the title; ratings and capability badges follow as one chip
+            // row, and the description comes last.
             let factParts = comps
             let showRatings = !heroRatings.isEmpty || heroFamilyGuidanceAge != nil
 
             // Line 1: content-rating certificate + genres. Same hoisting as the
             // subtitle above — an always-present container costs a spacing gap even
             // with nothing in it.
-            if heroRatingBadge != nil || !genreParts.isEmpty {
+            if heroRatingBadge != nil || !genreParts.isEmpty || !factParts.isEmpty {
                 HStack(alignment: .center, spacing: 16 * textScale) {
                     if let badge = heroRatingBadge {
                         MediaBadgeChip(badge: badge)
                     }
-                    if !genreParts.isEmpty {
-                        Text(genreParts.joined(separator: "  ·  "))
+                    if !genreParts.isEmpty || !factParts.isEmpty {
+                        Text((genreParts + factParts).joined(separator: "  ·  "))
                             .font(.system(size: PlozzTypography.heroMetadata.scaled(by: textScale).pointSize, weight: .medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -949,7 +950,7 @@ struct DetailHeroView: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .detailEntranceStage(.metadata)
             }
-            HeroDescriptionFactsLayout {
+            HeroDescriptionFactsLayout(factsFirst: true) {
                 SpoilerSafeOverviewText(
                     overview: HeroContentPolicy.detailDescription(
                         focused: focusedPresentation,
@@ -970,9 +971,9 @@ struct DetailHeroView: View, Equatable {
                 // One wrapping row reserves real height when rich facts need
                 // another line, rather than drawing behind the action buttons.
                 ZStack(alignment: .leading) {
-                    if !factParts.isEmpty || showRatings || !featureBadges.isEmpty {
+                    if showRatings || !featureBadges.isEmpty {
                         DetailHeroFactsRow(
-                            facts: factParts,
+                            facts: [],
                             ratings: showRatings ? heroRatings : [],
                             familyGuidanceAge: heroFamilyGuidanceAge,
                             featureBadges: featureBadges
