@@ -25,8 +25,9 @@ final class LibraryFailureRecoveryHostedTests: XCTestCase {
             window.rootViewController = nil
             previous?.makeKeyAndVisible()
         }
+        // On TV the unfiltered button names the control, as in the TV app.
         let cases: [(WatchlistMediaFilter, SortField, String, String)] = [
-            (.all, .dateAdded, "All", "Date Added"),
+            (.all, .dateAdded, "Filter", "Date Added"),
             (.movies, .name, "Movies", "Name"),
             (.shows, .releaseDate, "TV Shows", "Release Date")
         ]
