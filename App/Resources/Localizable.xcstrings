@@ -121421,6 +121421,9 @@
         }
       }
     },
+    "Add and manage the servers and shares Plozz plays from." : {
+      "comment" : "Settings root preview describing Everyone > Servers."
+    },
     "Add another guide" : {
       "localizations" : {
         "ar" : {
@@ -142351,6 +142354,9 @@
         }
       }
     },
+    "Applies to %@ only." : {
+      "comment" : "Settings root preview: the focused category belongs to the active profile. The placeholder is the profile's name."
+    },
     "Applies to Plozz's own labels. Media titles keep the language your server provides, and system prompts follow the device." : {
       "localizations" : {
         "ar" : {
@@ -152051,6 +152057,9 @@
           }
         }
       }
+    },
+    "Audio, autoplay and Up Next, skipping intros and credits, and seeking." : {
+      "comment" : "Settings root preview describing the Playback category."
     },
     "Audio, subtitles, and speed" : {
       "extractionState" : "stale",
@@ -183677,6 +183686,9 @@
           }
         }
       }
+    },
+    "Cast & Crew" : {
+      "comment" : "Detail page row of actors followed by the director, writers and producers."
     },
     "Casual" : {
       "localizations" : {
@@ -286031,7 +286043,7 @@
       }
     },
     "Director" : {
-      "comment" : "Credit label on movie detail hero metadata for the director name or names.",
+      "comment" : "Caption under a crew member in the Cast & Crew row.",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -302448,6 +302460,7 @@
     },
     "Download subtitles…" : {
       "comment" : "Button at the end of the tvOS in-player Subtitles track list that opens the remote subtitle search and download screen.",
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -344210,6 +344223,7 @@
       }
     },
     "Filter" : {
+      "comment" : "TV filter button title while no library filter is active.",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -358977,6 +358991,9 @@
         }
       }
     },
+    "Free forever and open source. Choose where your movies, shows and music live." : {
+      "comment" : "First-run subtitle under Welcome to Plozz, above the media-source choices."
+    },
     "Free, open-source music player" : {
       "localizations" : {
         "ar" : {
@@ -359196,6 +359213,9 @@
           }
         }
       }
+    },
+    "From" : {
+      "comment" : "Detail hero credit label before the server a title plays from, e.g. From Jellyfin · Living Room."
     },
     "From %@" : {
       "comment" : "Hero discovery credit. The variable is a list of catalog brand names, such as TMDB.",
@@ -469321,6 +469341,7 @@
       }
     },
     "More" : {
+      "comment" : "Live TV header menu with channel management, filters, sources and guide time.",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -471086,6 +471107,7 @@
       }
     },
     "More filters" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -474387,6 +474409,9 @@
           }
         }
       }
+    },
+    "Movie" : {
+      "comment" : "Hero metadata line: the slide is a film. Followed by genres and year."
     },
     "Movie and show backgrounds, logos, and related-title posters." : {
       "localizations" : {
@@ -480340,6 +480365,9 @@
           }
         }
       }
+    },
+    "Name, avatar and PIN." : {
+      "comment" : "Settings root preview describing the active profile's own page."
     },
     "Name, avatar, and color" : {
       "comment" : "Subtitle of the row that opens the profile's appearance editor.",
@@ -502388,6 +502416,9 @@
           }
         }
       }
+    },
+    "No listing" : {
+      "comment" : "Programme header when the guide has nothing for this channel now."
     },
     "No listings for this time" : {
       "localizations" : {
@@ -527311,6 +527342,9 @@
           }
         }
       }
+    },
+    "One PIN that keeps Kids profiles inside their limits." : {
+      "comment" : "Settings root preview describing Everyone > Parental PIN."
     },
     "One Parental PIN approval allows all channels in this source." : {
       "localizations" : {
@@ -598105,6 +598139,9 @@
         }
       }
     },
+    "Producer" : {
+      "comment" : "Caption under a crew member in the Cast & Crew row."
+    },
     "Profile" : {
       "comment" : "Singular label used for a single profile in sync summaries, and as the fallback default profile name when no custom name has been entered.",
       "localizations" : {
@@ -601853,6 +601890,9 @@
           }
         }
       }
+    },
+    "Profiles, settings and servers on all your devices." : {
+      "comment" : "Settings root preview describing Everyone > iCloud Sync."
     },
     "Profiles, settings, servers, watchlist, Live TV sources, and tracker sign-ins." : {
       "localizations" : {
@@ -648985,6 +649025,9 @@
           }
         }
       }
+    },
+    "Request movies and shows, and see what's trending." : {
+      "comment" : "Settings root preview describing Everyone > Seerr, a media request service."
     },
     "Request seasons" : {
       "comment" : "Accessibility label for the iOS hero button or menu that opens season request choices for a series when no acting-user name is appended.",
@@ -768758,6 +768801,7 @@
       }
     },
     "Sort" : {
+      "comment" : "Dimmed prefix on the TV sort button, before the current sort field.",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -779336,6 +779380,9 @@
           }
         }
       }
+    },
+    "Starts in %@" : {
+      "comment" : "When an upcoming programme begins. The argument is a duration such as 25 min."
     },
     "Startup" : {
       "localizations" : {
@@ -797618,6 +797665,9 @@
           }
         }
       }
+    },
+    "TV Show" : {
+      "comment" : "Hero metadata line: the slide is a series. Followed by genres and year."
     },
     "TV Shows" : {
       "localizations" : {
@@ -820100,6 +820150,9 @@
           }
         }
       }
+    },
+    "The language Plozz uses for menus and buttons." : {
+      "comment" : "Settings root preview describing the Language setting."
     },
     "The large background, carousel images, and title logo at the top of Home." : {
       "localizations" : {
@@ -846538,6 +846591,9 @@
         }
       }
     },
+    "The servers and libraries this profile watches." : {
+      "comment" : "Settings root preview describing the Libraries category."
+    },
     "The server’s playback response couldn’t be read. Check the server’s logs and try again." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -850280,6 +850336,9 @@
           }
         }
       }
+    },
+    "Theme, Liquid Glass, display size and card style." : {
+      "comment" : "Settings root preview describing the Appearance category. Liquid Glass is Apple's name for the translucent interface material."
     },
     "Theme, cards, artwork, and display size" : {
       "localizations" : {
@@ -947236,6 +947295,9 @@
         }
       }
     },
+    "Watch Live" : {
+      "comment" : "Programme header button that plays the channel live."
+    },
     "Watch Status" : {
       "comment" : "Section header in Settings > Integrations on tvOS. Groups watch-status sync options across servers.",
       "extractionState" : "stale",
@@ -956723,7 +956785,7 @@
       }
     },
     "Welcome to Plozz" : {
-      "extractionState" : "stale",
+      "comment" : "First-run heading above the media-source choices. Plozz is the app name.",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -957162,6 +957224,9 @@
           }
         }
       }
+    },
+    "What Plozz shows above its icon on the Home Screen." : {
+      "comment" : "Settings root preview describing Everyone > Top Shelf."
     },
     "What does this profile watch?" : {
       "comment" : "Title of the screen for choosing which servers and libraries this profile sees.",
@@ -959367,6 +959432,9 @@
         }
       }
     },
+    "When subtitles appear, how they look, their language and downloads." : {
+      "comment" : "Settings root preview describing the Subtitles category."
+    },
     "When tapping an item" : {
       "localizations" : {
         "ar" : {
@@ -960027,6 +960095,9 @@
           }
         }
       }
+    },
+    "Where Plozz finds extra artwork and details." : {
+      "comment" : "Settings root preview describing Everyone > Metadata Providers."
     },
     "Which Plex User Are You?" : {
       "extractionState" : "stale",
@@ -961353,6 +961424,9 @@
           }
         }
       }
+    },
+    "Who uses Plozz here, and signing in automatically." : {
+      "comment" : "Settings root preview describing Everyone > Profiles."
     },
     "Who's watching?" : {
       "comment" : "Title of the tvOS profile picker screen. Asks which local Plozz profile should be opened.",
@@ -963558,6 +963632,9 @@
           }
         }
       }
+    },
+    "Writer" : {
+      "comment" : "Caption under a crew member in the Cast & Crew row."
     },
     "Written By" : {
       "comment" : "Label in the Crew facts section on item detail pages. Introduces the list of writers for the movie, show, or episode.",
@@ -972373,6 +972450,9 @@
           }
         }
       }
+    },
+    "Your channels, the guide and how Live TV plays." : {
+      "comment" : "Settings root preview describing the Live TV category."
     },
     "Your code has expired" : {
       "localizations" : {
@@ -990042,6 +990122,18 @@
         }
       }
     },
+    "detail.hero.versionPill" : {
+      "comment" : "Detail hero button before the selected file's name, e.g. Version 4K Remux. Opens the version picker.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version"
+          }
+        }
+      }
+    },
     "e.g. 192.168.1.100 or mynas.local" : {
       "localizations" : {
         "ar" : {
@@ -990699,6 +990791,42 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "例如：客廳 NAS"
+          }
+        }
+      }
+    },
+    "episodeCard.eyebrow.number" : {
+      "comment" : "Episode card label above the title when the runtime is unknown.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Episode %lld"
+          }
+        }
+      }
+    },
+    "episodeCard.eyebrow.remaining" : {
+      "comment" : "Episode card label above the title: episode number and time remaining, e.g. Episode 3 · 12m left.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Episode %1$lld · %2$@ left"
+          }
+        }
+      }
+    },
+    "episodeCard.eyebrow.runtime" : {
+      "comment" : "Episode card label above the title: episode number and runtime, e.g. Episode 3 · 45m.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Episode %1$lld · %2$@"
           }
         }
       }
@@ -1008596,6 +1008724,30 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "正在播出"
+          }
+        }
+      }
+    },
+    "liveTV.badge.live" : {
+      "comment" : "Badge on a channel or programme airing now.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "LIVE"
+          }
+        }
+      }
+    },
+    "liveTV.header.timeLeft" : {
+      "comment" : "Time remaining in the programme airing now. The argument is a duration such as 33 min.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@ left"
           }
         }
       }
@@ -1029727,6 +1029879,18 @@
         }
       }
     },
+    "player.meta.movie" : {
+      "comment" : "Kind of title on the line above a film's name in the player, as in 'Movie · 2012 · 4K Dolby Vision'.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Movie"
+          }
+        }
+      }
+    },
     "player.subtitles.download" : {
       "comment" : "Header of the in-player screen for downloading subtitle files.",
       "localizations" : {
@@ -1029950,6 +1030114,18 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "下載字幕"
+          }
+        }
+      }
+    },
+    "player.subtitles.downloadRow" : {
+      "comment" : "Last row of the in-player subtitle list; opens a search for subtitle files to download.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Download Subtitles…"
           }
         }
       }

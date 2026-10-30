@@ -160,6 +160,14 @@ final class ProductionHomeNavigationTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Production Home ready"].waitForExistence(timeout: 30))
         let hero = app.buttons["home-hero-action-row"]
         XCTAssertTrue(hero.waitForExistence(timeout: 20))
+        // A navigation shell (`--top-bar-home`, `--native-sidebar-home`) can start
+        // with focus in its chrome; enter the content the way a viewer would.
+        let shell = ProcessInfo.processInfo.environment["PLOZZ_PERFORMANCE_HOME_SHELL"]
+        if let entry: XCUIRemote.Button = shell == "top-bar" ? .down : shell == "sidebar" ? .right : nil {
+            Thread.sleep(forTimeInterval: 2)
+            if !hero.hasFocus { XCUIRemote.shared.press(entry) }
+            Thread.sleep(forTimeInterval: 1)
+        }
         XCTAssertTrue(hero.hasFocus)
         print("PRODUCTION_HOME_READY \(Date().timeIntervalSince1970)")
         Thread.sleep(forTimeInterval: 8)

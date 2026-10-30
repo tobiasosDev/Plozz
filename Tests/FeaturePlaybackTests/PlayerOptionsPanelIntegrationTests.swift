@@ -235,6 +235,10 @@ final class PlayerOptionsPanelIntegrationTests: XCTestCase {
                 XCTAssertEqual(PlayerOptionsPanel.bodyHeightLimit(
                     maximumHeight: height, headerHeight: header, styleFamily: false
                 ), min(440, available))
+                XCTAssertEqual(PlayerOptionsPanel.bodyHeightLimit(
+                    maximumHeight: height, headerHeight: header, styleFamily: false,
+                    cap: PlayerOptionsPanel.trackListBodyMaxHeight
+                ), min(620, available), "The Subtitles track list, with its setting rows, may grow taller.")
             }
         }
         XCTAssertEqual(PlayerOptionsPanel.bodyHeightLimit(maximumHeight: 0, headerHeight: 80, styleFamily: true), 0)

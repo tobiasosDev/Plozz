@@ -44,7 +44,10 @@ struct PanelBodyHeightKey: PreferenceKey {
 /// The scrub track: buffered + played fill, a knob, and a floating trickplay
 /// thumbnail positioned over the scrub head while scrubbing.
 struct ScrubBar: View {
-    private static let restingBarHeight: CGFloat = 12
+    /// A thin line, the Apple TV app's scrubber: 8pt with the surface focused,
+    /// a hair slimmer when focus has moved to the controls.
+    private static let restingBarHeight: CGFloat = 6
+    private static let focusedBarHeight: CGFloat = 8
     let model: PlayerControlsModel
     let palette: ThemePalette
     /// Horizontal distance from the scrub track's leading/trailing edge out to the
@@ -65,20 +68,21 @@ struct ScrubBar: View {
             // The bar is "focused" whenever the scrub surface owns focus — the
             // controls are up and focus hasn't dropped to the button row below
             // (scrubbing counts as focused). Focused, the bar is full height,
-            // the played fill is bright and the playhead is a rounded pill. Once
-            // focus moves to the buttons the bar slims by 8pt, the fill fades and
-            // the playhead squares off flush into the track.
+            // the played fill is bright and the playhead is a thin upright line
+            // standing proud of the track (3×26, the Apple TV app's playhead). Once
+            // focus moves to the buttons the bar slims, the fill fades and the
+            // playhead shortens toward the track.
             // `infoCardOpen` holds the bar in its focused shape for the whole Info
             // reveal. The bar is invisible behind the card, so its appearance there is
             // moot — but without this, focus returning to the surface as the card
-            // closes resized the bar (12→20 tall, knob 4→8) on this view's own 0.2s
+            // closes resized the bar (and its playhead) on this view's own 0.2s
             // curve, while the cluster carrying it translated on the reveal's spring.
             // A thin line growing about its centre while sliding reads as arriving
             // from the wrong direction entirely.
             let focused = model.controlsVisible && (!model.controlBarVisible || model.controlBar.infoCardOpen)
-            let barHeight: CGFloat = focused ? 20 : Self.restingBarHeight
-            let knobWidth: CGFloat = focused ? 8 : 4
-            let knobHeight: CGFloat = focused ? (model.isScrubbing ? 40 : 32) : barHeight
+            let barHeight: CGFloat = focused ? Self.focusedBarHeight : Self.restingBarHeight
+            let knobWidth: CGFloat = focused && model.isScrubbing ? 4 : 3
+            let knobHeight: CGFloat = focused ? (model.isScrubbing ? 34 : 26) : 16
 
             ZStack(alignment: .leading) {
                 ZStack(alignment: .leading) {
@@ -87,13 +91,13 @@ struct ScrubBar: View {
                         .fill(Color.white.opacity(0.14))
                         .frame(width: width * CGFloat(model.bufferedFraction), height: barHeight)
                     UnevenRoundedRectangle(
-                        topLeadingRadius: 10,
-                        bottomLeadingRadius: 10,
+                        topLeadingRadius: barHeight / 2,
+                        bottomLeadingRadius: barHeight / 2,
                         bottomTrailingRadius: 0,
                         topTrailingRadius: 0,
                         style: .continuous
                     )
-                        .fill(Color.white.opacity(focused ? 0.62 : 0.32))
+                        .fill(Color.white.opacity(focused ? 0.95 : 0.6))
                         .frame(width: knobX, height: barHeight)
                 }
                 .mask {
@@ -103,7 +107,7 @@ struct ScrubBar: View {
                     )
                     .equatable()
                 }
-                RoundedRectangle(cornerRadius: focused ? knobWidth / 2 : 0, style: .continuous)
+                RoundedRectangle(cornerRadius: knobWidth / 2, style: .continuous)
                     .fill(Color.white)
                     .frame(width: knobWidth, height: knobHeight)
                     .offset(x: knobX - knobWidth / 2)
@@ -179,25 +183,51 @@ struct ScrubBar: View {
 
 /// Keep per-sample clock reads out of the full controls tree without changing
 /// the transport's established geometry or animation policies.
+///
+/// Three labels, the Apple TV app's timeline: the elapsed time under the
+/// playhead, then "Ends at 21:04" and "−5:50" at the trailing edge. A tap on
+/// the surface switches to clock mode — the wall clock under the playhead and
+/// the finish time on the right — where "Ends at" would only repeat the
+/// trailing label, so it steps aside and the row keeps two labels.
 struct PlayerTimelineTimes: View {
     let model: PlayerControlsModel
+    @Environment(\.locale) private var locale
+    @Environment(\.timeZone) private var timeZone
+    /// The "Ends at" label's rendered width, for the collision fade. Measured
+    /// from the visible label itself; it is localized copy, so it cannot be
+    /// measured up front the way the bare times are.
+    @State private var endsAtWidth: CGFloat = 0
+
+    /// One size for every timeline label, shared with their synchronous width
+    /// measurement (`PlayerControls.measuredTimeWidth`).
+    static let fontSize: CGFloat = 24
+    /// Space between "Ends at …" and the remaining time beside it.
+    private static let trailingGap: CGFloat = 26
 
     var body: some View {
-        PlayerClockTimeline(
-            model: model, enabled: model.timelineClock.isEnabled && !model.isScrubbing,
-            paused: !model.controlsVisible
-        ) { clock in
-            labels(clock: clock)
+        let clockMode = model.timelineClock.isEnabled && !model.isScrubbing
+        // Clock mode ticks every second as before. Otherwise the only wall-clock
+        // reading is the minute-resolution "Ends at", which moves on its own
+        // only while paused; once a minute is enough, and playback ticks
+        // re-evaluate it in between anyway. Both stop with the controls hidden.
+        TimelineView(PlayerClockSchedule(paused: !model.controlsVisible, everyMinute: !clockMode)) { context in
+            let times = PlayerClockTimes(
+                now: clockMode ? context.date : .now,
+                position: clockMode ? model.currentSeconds : model.displaySeconds,
+                duration: model.duration, speed: model.playbackSpeed,
+                locale: locale, timeZone: timeZone
+            )
+            labels(clock: clockMode ? times : nil, endsAt: clockMode ? nil : times.end)
         }
     }
 
-    private func labels(clock: PlayerClockTimes?) -> some View {
+    private func labels(clock: PlayerClockTimes?, endsAt: LocalizedStringResource?) -> some View {
         let fadeGap: CGFloat = 16
         let curLabel = clock?.current ?? PlayerControls.timeLabel(model.displaySeconds)
         let remLabel = clock.map { $0.endTime ?? "--:--" }
-            ?? ("-" + PlayerControls.timeLabel(max(0, model.duration - model.displaySeconds)))
-        let curW = PlayerControls.measuredTimeWidth(curLabel)
-        let remW = PlayerControls.measuredTimeWidth(remLabel)
+            ?? ("\u{2212}" + PlayerControls.timeLabel(max(0, model.duration - model.displaySeconds)))
+        let curW = PlayerControls.measuredTimeWidth(curLabel, pointSize: Self.fontSize)
+        let remW = PlayerControls.measuredTimeWidth(remLabel, pointSize: Self.fontSize)
         return GeometryReader { geo in
             let width = geo.size.width
             let midY = geo.size.height / 2
@@ -210,13 +240,17 @@ struct PlayerTimelineTimes: View {
                 && (model.skipGesture.hintVisible || (model.isPaused && model.intendsPause) || model.isSeeking)
             let glyphReach: CGFloat = glyphShown ? 40 : 0
             let remainingHidden = currentRightEdge + glyphReach + fadeGap >= remainingLeftEdge
+            // "Ends at" gives way first: it sits nearer the playhead, and the
+            // remaining time is the one figure the viewer is scrubbing against.
+            let endsAtHidden = remainingHidden
+                || currentRightEdge + glyphReach + fadeGap >= remainingLeftEdge - Self.trailingGap - endsAtWidth
 
             Text(curLabel)
                 .accessibilityIdentifier("player-timeline-current-time")
                 .accessibilityLabel(clock == nil ? Text("Elapsed time") : Text("Current time"))
                 .accessibilityValue(Text(verbatim: curLabel))
                 .monospacedDigit()
-                .font(.callout.weight(.semibold))
+                .font(.system(size: Self.fontSize, weight: .semibold))
                 .foregroundStyle(.white)
                 .fixedSize()
                 .shadow(radius: 3)
@@ -232,19 +266,34 @@ struct PlayerTimelineTimes: View {
                 }
                 .position(x: centerX, y: midY)
 
-            Text(remLabel)
-                .accessibilityIdentifier("player-timeline-end-time")
-                .accessibilityLabel(clock == nil ? Text("Remaining time") : Text("Estimated end time"))
-                .accessibilityValue(Text(verbatim: remLabel))
-                .monospacedDigit()
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.7))
-                .fixedSize()
-                .shadow(radius: 3)
-                .opacity(remainingHidden ? 0 : 1)
-                .animation(.easeOut(duration: 0.15), value: remainingHidden)
-                .frame(width: width, alignment: .trailing)
-                .position(x: width / 2, y: midY)
+            HStack(spacing: Self.trailingGap) {
+                if let endsAt {
+                    Text(endsAt)
+                        .accessibilityIdentifier("player-timeline-ends-at")
+                        .monospacedDigit()
+                        .font(.system(size: Self.fontSize, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .fixedSize()
+                        .shadow(radius: 3)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { endsAtWidth = $0 }
+                        .opacity(endsAtHidden ? 0 : 1)
+                        .animation(.easeOut(duration: 0.15), value: endsAtHidden)
+                        .accessibilityHidden(endsAtHidden)
+                }
+                Text(remLabel)
+                    .accessibilityIdentifier("player-timeline-end-time")
+                    .accessibilityLabel(clock == nil ? Text("Remaining time") : Text("Estimated end time"))
+                    .accessibilityValue(Text(verbatim: remLabel))
+                    .monospacedDigit()
+                    .font(.system(size: Self.fontSize, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .fixedSize()
+                    .shadow(radius: 3)
+                    .opacity(remainingHidden ? 0 : 1)
+                    .animation(.easeOut(duration: 0.15), value: remainingHidden)
+            }
+            .frame(width: width, alignment: .trailing)
+            .position(x: width / 2, y: midY)
         }
     }
 
@@ -376,11 +425,15 @@ public struct PlayerScrubTrackSurface: View {
 /// Standalone transport backing. Grouped controls leave surface ownership to
 /// their shared capsule instead of nesting glass.
 public struct PlayerGlassCircleSurface: View {
+    /// A brighter resting surface, for a control that is a call to action.
+    private let raised: Bool
     @Environment(\.playerControlsGrouped) private var grouped
     @Environment(\.plozzReducePanelGlass) private var reducePanelGlass
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
 
-    public init() {}
+    public init(raised: Bool = false) {
+        self.raised = raised
+    }
 
     public var body: some View {
         let shape = Circle()
@@ -389,16 +442,16 @@ public struct PlayerGlassCircleSurface: View {
         } else if reducePanelGlass || reduceTransparency {
             shape
                 .fill(.clear)
-                .plozzFrostedBackground(shape)
+                .plozzFrostedBackground(shape, raised: raised)
                 .plozzFrostedBorder(shape)
         } else if #available(iOS 26.0, tvOS 26.0, *) {
             #if os(iOS)
             PlayerNativeGlassSurface(shape, glass: .clear)
             #else
-            PlayerNativeGlassSurface(shape)
+            PlayerNativeGlassSurface(shape, glass: raised ? .regular.tint(.white.opacity(0.30)) : .regular)
             #endif
         } else {
-            shape.fill(.clear).plozzFrostedBackground(shape).plozzFrostedBorder(shape)
+            shape.fill(.clear).plozzFrostedBackground(shape, raised: raised).plozzFrostedBorder(shape)
         }
     }
 }
@@ -408,12 +461,20 @@ public struct PlayerGlassCircleSurface: View {
 public struct PlayerGlassCircleButtonStyle: ButtonStyle {
     /// The button's full circular size, which is also its touch target.
     public let diameter: CGFloat
+    /// tvOS: draw the focused look while unfocused — the track control whose
+    /// menu is open, which leaves the focus order while its menu holds focus.
+    public var highlighted: Bool
+    /// tvOS: a brighter resting surface for a call to action (Live TV's Go
+    /// Live), distinct from the focused look so it never reads as focus.
+    public var prominent: Bool
     @Environment(\.playerControlsGrouped) private var grouped
     @Environment(\.playerUsesNativeGlass) private var nativeGlass
     @Environment(\.playerControlForeground) private var foreground
 
-    public init(diameter: CGFloat) {
+    public init(diameter: CGFloat, highlighted: Bool = false, prominent: Bool = false) {
         self.diameter = diameter
+        self.highlighted = highlighted
+        self.prominent = prominent
     }
 
     public func makeBody(configuration: Configuration) -> some View {
@@ -431,9 +492,10 @@ public struct PlayerGlassCircleButtonStyle: ButtonStyle {
                         .clipShape(Circle())
                 }
                 #else
-                label(configuration)
-                    .background { PlayerGlassCircleSurface() }
-                    .clipShape(Circle())
+                FocusableCircle(
+                    configuration: configuration, diameter: diameter, highlighted: highlighted,
+                    prominent: prominent
+                )
                 #endif
             }
         }
@@ -448,6 +510,81 @@ public struct PlayerGlassCircleButtonStyle: ButtonStyle {
             .frame(width: diameter, height: diameter)
     }
 
+    #if os(tvOS)
+    /// The remote's focus treatment, which a custom style has to draw itself:
+    /// solid white with page-colour ink and a small lift, the Apple TV app's
+    /// focused control. The surface swaps on the same frame focus moves, like
+    /// the tab pills beside it; only the lift is animated.
+    ///
+    /// No shadow under the lifted circle, for the reason `PanelGlassBackground`
+    /// gives: a soft shadow over the moving HDR picture is a per-frame
+    /// offscreen pass, and the white fill reads on any frame without one.
+    private struct FocusableCircle: View {
+        let configuration: ButtonStyle.Configuration
+        let diameter: CGFloat
+        let highlighted: Bool
+        let prominent: Bool
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.playerControlForeground) private var foreground
+        @Environment(\.themePalette) private var palette
+
+        var body: some View {
+            let lit = isFocused || highlighted
+            configuration.label
+                .foregroundStyle(lit ? palette.backgroundBase : foreground)
+                .frame(width: diameter, height: diameter)
+                .background {
+                    if lit {
+                        Circle().fill(Color.white)
+                    } else {
+                        PlayerGlassCircleSurface(raised: prominent)
+                    }
+                }
+                .clipShape(Circle())
+                .animation(nil, value: lit)
+                .scaleEffect(lit ? 1.08 : 1)
+                .animation(.easeOut(duration: 0.15), value: lit)
+        }
+    }
+    #endif
+}
+
+/// The round, icon-only track control above the scrub bar — Playback · Audio ·
+/// Subtitles · Version, the Apple TV app's track buttons — shared by the
+/// on-demand and live transports so both players draw the same control.
+///
+/// `highlighted` keeps the focused look on the control whose menu is open;
+/// `prominent` raises the resting surface of a call to action (Go Live).
+struct PlayerTrackControlButton: View {
+    static let diameter: CGFloat = 72
+
+    let title: LocalizedStringResource
+    let systemImage: String
+    var highlighted = false
+    var prominent = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 30, weight: .medium))
+        }
+        .buttonStyle(PlayerGlassCircleButtonStyle(
+            diameter: Self.diameter, highlighted: highlighted, prominent: prominent
+        ))
+        .accessibilityLabel(Text(title))
+    }
+}
+
+/// Icon, then title: the Apple TV app's player tabs (Info, Chapters, Cast).
+struct PlayerTabLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.icon
+                .font(.system(size: 24, weight: .semibold))
+            configuration.title
+        }
+    }
 }
 
 struct PlayerTabButtonStyle: ButtonStyle {

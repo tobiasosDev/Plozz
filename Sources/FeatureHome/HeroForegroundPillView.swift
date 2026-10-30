@@ -40,35 +40,40 @@ enum HeroForegroundGlass {
         return UIVisualEffectView(effect: UIBlurEffect(style: .dark))
     }
 
-    /// The flat idle-capsule fill. Theme-aware: a dark translucent tint in dark mode,
-    /// a light tint in light mode. Darkness is tunable via `PLZHERO_UIKIT_FILL` (0–1)
-    /// for live eyeballing; defaults to a moderately dark 0.5 in dark mode.
-    static let fillAlpha: CGFloat = {
-        if let raw = ProcessInfo.processInfo.environment["PLZHERO_UIKIT_FILL"],
-           let a = Double(raw), a >= 0 {
-            return CGFloat(min(1, a))
-        }
-        return 0.5
+    /// The flat idle-capsule fill. Theme-aware: in dark mode the see-through grey
+    /// that tvOS 26 glass reads as at rest over artwork, in light mode a light tint.
+    /// `PLZHERO_UIKIT_FILL` (0–1) swaps in a black tint of that alpha for live
+    /// eyeballing against the previous look.
+    static let fillOverride: CGFloat? = {
+        guard let raw = ProcessInfo.processInfo.environment["PLZHERO_UIKIT_FILL"],
+              let a = Double(raw), a >= 0 else { return nil }
+        return CGFloat(min(1, a))
     }()
+
+    static var fillAlpha: CGFloat { fillOverride ?? 0.5 }
 
     static func flatFill() -> UIColor {
         UIColor { traits in
-            traits.userInterfaceStyle == .light
-                ? UIColor.white.withAlphaComponent(max(0, fillAlpha - 0.06))
-                : UIColor.black.withAlphaComponent(fillAlpha)
+            if traits.userInterfaceStyle == .light {
+                return UIColor.white.withAlphaComponent(max(0, fillAlpha - 0.06))
+            }
+            // A mid grey rather than a white tint: without the live blur, white
+            // over bright art would wash the glyph out, and black reads as a hole.
+            return fillOverride.map { UIColor.black.withAlphaComponent($0) }
+                ?? UIColor(white: 0.42, alpha: 0.42)
         }
     }
 
     /// The hairline border stroke for the flat capsule. A faint light edge in dark
     /// mode (and a faint dark edge in light mode) to define the pill against art —
-    /// deliberately subtle. Alpha is tunable via `PLZHERO_UIKIT_BORDER` (0–1) for live
-    /// eyeballing; defaults to 0.10 and `0` removes the border entirely.
+    /// the glass rim. Alpha is tunable via `PLZHERO_UIKIT_BORDER` (0–1) for live
+    /// eyeballing; defaults to 0.22 and `0` removes the border entirely.
     static let borderAlpha: CGFloat = {
         if let raw = ProcessInfo.processInfo.environment["PLZHERO_UIKIT_BORDER"],
            let a = Double(raw), a >= 0 {
             return CGFloat(min(1, a))
         }
-        return 0.10
+        return 0.22
     }()
 
     static var borderWidth: CGFloat { borderAlpha <= 0 ? 0 : 2 }
@@ -244,6 +249,13 @@ final class HeroForegroundPillView: UIView {
             sheenLayer.isHidden = true
             layer.borderWidth = 0
             backgroundColor = .white
+        } else if pill?.kind == .next {
+            // The paging chevron rests as a bare glyph, as in the Apple TV app,
+            // and only becomes a capsule when focused.
+            glassView.isHidden = true
+            sheenLayer.isHidden = true
+            layer.borderWidth = 0
+            backgroundColor = .clear
         } else if style == .glass {
             glassView.isHidden = false
             backgroundColor = .clear
@@ -308,8 +320,13 @@ final class HeroForegroundPillView: UIView {
             layer.shadowOpacity = 0.30
             layer.shadowRadius = 14
             layer.shadowOffset = CGSize(width: 0, height: 8)
+            // The capsule's own outline. Without a path Core Animation derives the
+            // shadow from the layer's alpha in an offscreen pass on every frame the
+            // hero recomposites, which under a playing trailer is every frame.
+            layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: radius).cgPath
         } else {
             layer.shadowOpacity = 0
+            layer.shadowPath = nil
         }
 
         let midY = bounds.midY

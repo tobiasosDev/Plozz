@@ -22,6 +22,32 @@ final class SearchPolicyTests: XCTestCase {
         // The user kept typing: the in-flight "dune" result is now stale.
         XCTAssertFalse(SearchPolicy.isCurrent(requestedQuery: "dune", liveQuery: "dune 2"))
     }
+
+    func testSuggestionsOfferDistinctPlayableTitlesInResultOrder() {
+        var episode = MediaItem(id: "e1", title: "Pilot", kind: .episode)
+        episode.parentTitle = "Sprite Fright"
+        let sections = [
+            SearchSection(kind: .movies, items: [
+                MediaItem(id: "m1", title: "Sintel", kind: .movie),
+                MediaItem(id: "m2", title: "S", kind: .movie),
+                MediaItem(id: "m3", title: "sintel", kind: .movie),
+                MediaItem(id: "m4", title: "Spring", kind: .movie)
+            ]),
+            SearchSection(kind: .episodes, items: [episode]),
+            SearchSection(kind: .notInLibrary, items: [MediaItem(id: "seer:1", title: "Superman", kind: .movie)])
+        ]
+
+        let suggestions = SearchPolicy.suggestions(
+            from: sections, query: " s ", locale: Locale(identifier: "en_US")
+        )
+
+        XCTAssertEqual(suggestions, ["sintel", "spring", "sprite fright"],
+                       "The live query, repeats and requestable titles are not suggested")
+        XCTAssertEqual(
+            SearchPolicy.suggestions(from: sections, query: "s", limit: 1, locale: Locale(identifier: "en_US")),
+            ["sintel"]
+        )
+    }
 }
 
 final class SearchSectionTests: XCTestCase {

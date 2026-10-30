@@ -86,17 +86,11 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
                     if let rowFrame { XCTAssertEqual(currentRow, rowFrame) }
                     rowFrame = currentRow
                     if let previousLogo {
-                        if style == .sidebar, step == 10 {
-                            // The sidebar page button leaves room for roughly the
-                            // default logo. Larger sizes must cap before the badge
-                            // reaches navigation, not force the rows down.
-                            XCTAssertGreaterThanOrEqual(logo.height, previousLogo.height - 1)
-                            XCTAssertLessThan(logo.height, previousLogo.height * 1.5 - 3)
-                        } else {
-                            let ratio: CGFloat = step == 0 ? 2 : 1.5
-                            XCTAssertEqual(logo.height, previousLogo.height * ratio, accuracy: 3,
-                                           "Allow the rasterized wordmark's antialiased edge, not OCR padding.")
-                        }
+                        // The mode control shares the sidebar page button's row,
+                        // so the sidebar leaves the same room as the other styles.
+                        let ratio: CGFloat = step == 0 ? 2 : 1.5
+                        XCTAssertEqual(logo.height, previousLogo.height * ratio, accuracy: 3,
+                                       "Allow the rasterized wordmark's antialiased edge, not OCR padding.")
                     }
                     previousLogo = logo
                 }
@@ -134,7 +128,10 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
                         let originalFrame = try XCTUnwrap(
                             NavigationRowFocusRequester.frame(of: firstControl, relativeTo: window)
                         )
-                        let keyline = originalFrame.minX - 6
+                        // The mode control is centred, as in the TV app; the
+                        // grid keeps the header's leading content edge.
+                        let headerFrame = header.view.convert(header.view.bounds, to: window)
+                        let keyline = headerFrame.minX + navigationInset
                         for mode: LibraryContentMode in [.recommended, .titles, .collections, .playlists, .recommended] {
                             let index = try XCTUnwrap(model.availableContentModes.firstIndex(of: mode))
                             owner.target = controls[index]
@@ -153,7 +150,16 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
                             let item = try XCTUnwrap(mode == .recommended
                                 ? model.recommendationState.value?.first?.items.first : model.item(at: 0))
                             let source = try XCTUnwrap(self.findSource(item.stablePresentationID, in: root))
-                            let artwork = try XCTUnwrap(source.reference?.geometry(in: window)?.frame)
+                            // A card that just lost focus to the controls is still
+                            // settling from its lift; measure it at rest.
+                            var artwork = try XCTUnwrap(source.reference?.geometry(in: window)?.frame)
+                            let settled = ContinuousClock.now + .seconds(1)
+                            while ContinuousClock.now < settled {
+                                try await Task.sleep(for: .milliseconds(100))
+                                let next = try XCTUnwrap(source.reference?.geometry(in: window)?.frame)
+                                if next == artwork { break }
+                                artwork = next
+                            }
                             let visibleLeading = artwork.minX - (cardStyle == .framed ? PlozzMetrics.standard.cardInset : 0)
                             let context = "\(mode) inset=\(navigationInset) focus=\(focusStyle) card=\(cardStyle)"
                             print("LIBRARY_KEYLINE \(context) header=\(keyline) visibleCard=\(visibleLeading)")
@@ -185,7 +191,10 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
             XCTAssertFalse(probe.canBecomeFocused)
             let collection = try XCTUnwrap(self.find(UICollectionView.self, in: root))
             let first = try XCTUnwrap(collection.cellForItem(at: IndexPath(item: 0, section: 0)) as? NativeTVLibraryCell)
-            let second = try XCTUnwrap(collection.cellForItem(at: IndexPath(item: 6, section: 0)) as? NativeTVLibraryCell)
+            let columns = PlozzMetrics.standard.libraryPosterColumns.count
+            let second = try XCTUnwrap(
+                collection.cellForItem(at: IndexPath(item: columns, section: 0)) as? NativeTVLibraryCell
+            )
             @MainActor func focus(_ cell: NativeTVLibraryCell) async throws {
                 XCTAssertTrue(cell.onRequestFocus?() == true)
                 let deadline = ContinuousClock.now + .seconds(2)
@@ -204,7 +213,7 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
             let value = try XCTUnwrap(probe.accessibilityValue)
             let after = try JSONDecoder().decode(LibraryTraversalSnapshot.self, from: Data(value.utf8))
             let evidence = try LibraryTraversalValidation.validate(
-                before: before, after: after, start: start, end: end, mode: .stepped(path: [0, 6])
+                before: before, after: after, start: start, end: end, mode: .stepped(path: [0, columns])
             )
             XCTAssertEqual(evidence.transitions, 2)
             XCTAssertEqual(evidence.deepestRow, 1)
@@ -231,7 +240,7 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
                 let banner = try XCTUnwrap(self.find(TVCardView.self, in: header))
                 let bannerFrame = banner.contentView.convert(banner.contentView.bounds, to: window)
                 let cells = collection.visibleCells.compactMap { $0 as? NativeTVLibraryCell }
-                    .filter { (collection.indexPath(for: $0)?.item ?? .max) < 6 }
+                    .filter { (collection.indexPath(for: $0)?.item ?? .max) < PlozzMetrics.standard.libraryPosterColumns.count }
                     .sorted { $0.frame.minX < $1.frame.minX }
                 let first = try XCTUnwrap(cells.first)
                 let last = try XCTUnwrap(cells.last)
@@ -293,19 +302,34 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
                 self.add(log)
                 XCTAssertEqual(frame.maxX, window.bounds.maxX, accuracy: 1, "\(style): artwork must reach the physical trailing edge.")
                 XCTAssertEqual(frame.minY, window.bounds.minY, accuracy: 1, "\(style): artwork must start at the physical top edge.")
-                let expectedTop = window.safeAreaInsets.top + (style == .sidebar ? 60 : 0)
+                // The centred mode control shares the native sidebar page
+                // button's row, as in the TV app, so no style adds clearance.
+                let expectedTop = window.safeAreaInsets.top + (style == .sidebar
+                    ? LibraryBrowseView.sidebarPageButtonCentre - LibraryHeaderMetrics.rowHeight / 2 : 0)
                 XCTAssertEqual(headerFrame.minY, expectedTop, accuracy: 1,
-                               "Only a visible native sidebar page button needs extra header clearance.")
+                               "\(style): the mode control sits on the navigation row, not below it.")
                 XCTAssertEqual(headerFrame.minX, window.safeAreaInsets.left, accuracy: 1)
                 XCTAssertEqual(headerFrame.maxX, window.bounds.maxX - window.safeAreaInsets.right, accuracy: 1,
                                "Full-bleed artwork must not remove the controls' trailing safety margin.")
-                let firstControl = try XCTUnwrap(self.focusItems(in: header.host.view).compactMap {
+                let segments = self.focusItems(in: header.host.view).compactMap {
                     NavigationRowFocusRequester.frame(of: $0, relativeTo: window)
-                }.min { $0.minX < $1.minX })
-                XCTAssertEqual(firstControl.minX,
-                               window.safeAreaInsets.left
-                                   + (style == .rail ? LibraryNavigationLayoutFixture.railInset : 0) + 6,
-                               accuracy: 1, "Pinned rail clearance must remain on the foreground, not the artwork.")
+                }
+                XCTAssertEqual(segments.count, model.availableContentModes.count)
+                let controlMinX = try XCTUnwrap(segments.map(\.minX).min())
+                let controlMaxX = try XCTUnwrap(segments.map(\.maxX).max())
+                let contentMinX = window.safeAreaInsets.left
+                    + (style == .rail ? LibraryNavigationLayoutFixture.railInset : 0)
+                let contentMaxX = window.bounds.maxX - window.safeAreaInsets.right
+                XCTAssertEqual((controlMinX + controlMaxX) / 2, (contentMinX + contentMaxX) / 2, accuracy: 1,
+                               "\(style): the mode control is centred in the foreground, which keeps the "
+                                   + "pinned rail clearance, not the artwork.")
+                if style == .sidebar {
+                    XCTAssertGreaterThan(controlMinX, window.safeAreaInsets.left + 300,
+                                         "The centred control must leave the sidebar page button its row.")
+                    XCTAssertEqual(try XCTUnwrap(segments.first).midY,
+                                   window.safeAreaInsets.top + LibraryBrowseView.sidebarPageButtonCentre,
+                                   accuracy: 1, "The modes centre on the sidebar page button.")
+                }
                 for mode: LibraryContentMode in [.titles, .collections, .playlists, .recommended] {
                     await model.setContentMode(mode)
                     try await Task.sleep(for: .milliseconds(150))
@@ -969,8 +993,9 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
                 XCTAssertTrue(focus.focusedItem === focusedBeforeRefresh)
                 let headers = self.focusItems(in: window).filter { item in
                     guard let frame = NavigationRowFocusRequester.frame(of: item, relativeTo: window) else { return false }
+                    // The centred mode tabs end before the trailing query pills.
                     return frame.midY < window.bounds.height * 0.2 && frame.height < 150
-                        && frame.maxX < window.bounds.width * 0.6
+                        && frame.maxX < window.bounds.width * 0.75
                 }
                 XCTAssertEqual(headers.count, hasHub ? 0 : model.availableContentModes.count)
             }
@@ -1272,7 +1297,8 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
             let headerControls = self.focusItems(in: window).compactMap { item -> (any UIFocusItem, CGRect)? in
                 guard let frame = NavigationRowFocusRequester.frame(of: item, relativeTo: window),
                       frame.midY < window.bounds.height * 0.2,
-                      frame.maxX < window.bounds.width * 0.6 else { return nil }
+                      // The centred mode tabs end before the trailing query pills.
+                      frame.maxX < window.bounds.width * 0.75 else { return nil }
                 return (item, frame)
             }.sorted { $0.1.minX < $1.1.minX }
             XCTAssertEqual(headerControls.count, model.availableContentModes.count)
@@ -1309,8 +1335,9 @@ final class NativeLibraryRefreshHostedTests: XCTestCase {
                     guard let frame = NavigationRowFocusRequester.frame(of: item, relativeTo: window) else {
                         return false
                     }
+                    // The centred mode tabs end before the trailing query pills.
                     return frame.midY < window.bounds.height * 0.2 && frame.height < 150 &&
-                        frame.maxX < window.bounds.width * 0.6
+                        frame.maxX < window.bounds.width * 0.75
                 }
             }
             let cards = focusItems(in: window).compactMap { item -> (any UIFocusItem, CGRect)? in

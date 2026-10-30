@@ -108,6 +108,13 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     @State private var categoryFocusRequest = 0
     @State private var sidebarRestoresCategoryFocus = false
     @State private var guideHasFocus = false
+    #if os(tvOS)
+    @FocusState private var chipFocus: PrototypeChipFocus?
+    /// Focus left Live TV (for the app menu, say) from the controls: until it
+    /// returns, the chosen chip is the only thing it can land on, as the
+    /// sidebar kept its selected category. Sending focus to the guide ends it.
+    @State private var chipsAwaitReturn = false
+    #endif
     @State private var toolbarFocusRequest = 0
     @State private var focusedProgram: LiveTVPrototypeProgram?
     @State private var loadedRequest: Int?
@@ -382,6 +389,21 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
             ZStack(alignment: .topLeading) {
                 #if !os(tvOS)
                 AppBackground(palette: palette)
+                #else
+                // Still art stands in for the live preview, never under it.
+                if !showsVideo && !model.channels.isEmpty {
+                    PrototypeProgramBackdrop(
+                        url: heroProgram?.details?.artworkURL,
+                        size: CGSize(width: layout.bounds.width, height: layout.programArtHeight),
+                        textWidth: layout.contentFrame.minX - layout.bounds.minX + layout.metadataWidth
+                    )
+                    .position(
+                        x: layoutDirection == .rightToLeft
+                            ? geometry.size.width - layout.bounds.midX : layout.bounds.midX,
+                        y: layout.bounds.minY + layout.programArtHeight / 2
+                    )
+                    .opacity(expanded || isSearching ? 0 : 1)
+                }
                 #endif
 
                 // Stable pane IDs retain renderers through single/multiple layouts and promotion.
@@ -471,7 +493,8 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                             ? geometry.size.width - layout.bounds.midX : layout.bounds.midX,
                         y: layout.bounds.midY
                     )
-                    .opacity(expanded || model.channels.isEmpty ? 0 : 1)
+                    // Without a picture behind the guide there is nothing to fade.
+                    .opacity(expanded || model.channels.isEmpty || !showsVideo ? 0 : 1)
                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.32), value: preview.isExpanded)
                 #endif
 
@@ -1043,6 +1066,9 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
             updatePreviewAvailability()
         }
         .onChange(of: guideHasFocus) { _, focused in
+            #if os(tvOS)
+            if focused { chipsAwaitReturn = false }
+            #endif
             updatePreviewAvailability()
         }
         .onChange(of: sheet?.id) { _, _ in
@@ -1122,6 +1148,11 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
         scanBinding.deactivate()
         portableIdentityHold.update(false)
         onExpandedChange(false)
+    }
+
+    /// Whether a channel's picture is on screen behind the guide.
+    private var showsVideo: Bool {
+        multiview.panes.contains { $0.preparation.current != nil }
     }
 
     private var holdsPlaybackIdentity: Bool {
@@ -1527,19 +1558,53 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
         }
     }
 
-    private func browseToolbar(_ layout: PrototypePreviewLayout) -> some View {
-        PrototypeBrowseToolbar(
+    #if os(tvOS)
+    private var categoryChips: some View {
+        PrototypeCategoryChips(
             model: model, active: $controlsActive,
-            focusRequest: toolbarFocusRequest,
-            compact: layout.contentFrame.width < 650,
-            isSearching: isSearching,
+            focusRequest: toolbarFocusRequest, categoryFocusRequest: categoryFocusRequest,
             search: { if isSearching { closeSearch() } else { openSearch() } },
-            filters: { sheet = .filters },
-            multiviews: multiviewSelection == nil ? { sheet = .multiviewFavorites } : nil
+            select: { scope in showChannels(enteringGuide: false) { model.showScope(scope) } },
+            focus: $chipFocus, onlyChosen: chipsAwaitReturn
         )
         .modifier(LiveTVMultiviewGuideExit(
             cancel: multiviewSelection == nil ? nil : finishMultiviewSelection))
-        .disabled(blocksBrowseControls)
+        .disabled(blocksHeaderControls)
+    }
+
+    /// Like the sidebar they replace, the header and chips take focus only once
+    /// Left from the guide's channels (or Back) activates them, so the system's
+    /// automatic focus passes, which pick the first control, land in the guide.
+    private var blocksHeaderControls: Bool {
+        blocksBrowseControls || (!controlsActive && !model.guideChannels.isEmpty)
+    }
+
+    /// The header's actions for the channel it shows.
+    private var headerActions: PrototypeHeaderActions {
+        let channelID = heroChannel?.id
+        return PrototypeHeaderActions(
+            isFavorite: channelID.map { model.favoriteIDs.contains($0) } ?? false,
+            canToggleFavorite: model.preferencesIssue != .loadFailed,
+            toggleFavorite: channelID.map { id in { model.toggleFavoriteWithFeedback(id) } },
+            details: { sheet = .program($0) },
+            multiviews: multiviewSelection == nil ? { sheet = .multiviewFavorites } : nil,
+            manageChannels: { sheet = .organization },
+            filters: { sheet = .filters },
+            sources: { sheet = .sources },
+            guideTime: { sheet = .guideTime },
+            focusChanged: { if $0 { controlsActive = true } }
+        )
+    }
+    #endif
+
+    /// Left from the guide's channels opens the categories rather than the
+    /// app's menu: the chip row on a TV, the sidebar where there is one.
+    private func leadingExit(_ layout: PrototypePreviewLayout) -> (() -> Void)? {
+        #if os(tvOS)
+        revealCategories
+        #else
+        layout.availableSidebarWidth > 0 ? revealCategories : nil
+        #endif
     }
 
     private func usesCategoryDirectory(_ layout: PrototypePreviewLayout) -> Bool {
@@ -1550,7 +1615,26 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
         #endif
     }
 
+    @ViewBuilder
     private func browsingContent(_ layout: PrototypePreviewLayout) -> some View {
+        #if os(tvOS)
+        browseLayout(layout)
+            .background {
+                NativeFocusRegionObserver(
+                    isEnabled: controlsActive,
+                    onFocusExited: { chipsAwaitReturn = true },
+                    onFocusEntered: {}
+                )
+            }
+            .onChange(of: chipFocus) { _, target in
+                if target == .scope(model.currentScope) { chipsAwaitReturn = false }
+            }
+        #else
+        browseLayout(layout)
+        #endif
+    }
+
+    private func browseLayout(_ layout: PrototypePreviewLayout) -> some View {
         PrototypeBrowseLayout(
             layout: layout, extendsGuideToEdges: !usesCategoryDirectory(layout) && !isSearching
         ) {
@@ -1560,9 +1644,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
         } guide: {
             VStack(spacing: PrototypeLayout.toolbarGuideGap) {
                 #if os(tvOS)
-                if layout.availableSidebarWidth == 0 {
-                    browseToolbar(layout)
-                }
+                categoryChips
                 #endif
                 if usesCategoryDirectory(layout) && model.query.isEmpty {
                     if isInitialCatalogLoading || model.categoryChannelCount(nil) == 0 {
@@ -1580,11 +1662,12 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                         #endif
                     searchResults(closeSearch: closeSearch)
                 } else {
-                    guideBrowser(
-                        closeSearch: closeSearch,
-                        leadingExit: layout.availableSidebarWidth > 0 ? revealCategories : nil
-                    )
-                    .disabled(usesNativeFullscreen && controlsActive)
+                    guideBrowser(closeSearch: closeSearch, leadingExit: leadingExit(layout))
+                        #if os(iOS)
+                        .disabled(usesNativeFullscreen && controlsActive)
+                        #else
+                        .disabled(chipsAwaitReturn)
+                        #endif
                 }
             }
         }
@@ -1643,8 +1726,10 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                 channel: heroChannel, program: heroProgram, layout: layout,
                 watch: { if let id = heroChannel?.id { tune(id) } },
                 watchTitle: multiviewSelection?.title,
-                isLoading: isInitialCatalogLoading
+                isLoading: isInitialCatalogLoading,
+                now: model.now, actions: headerActions
             )
+            .disabled(blocksHeaderControls || chipsAwaitReturn)
             .opacity(isSearching ? 0 : 1)
             .allowsHitTesting(!isSearching)
             .accessibilityHidden(isSearching)
@@ -2019,6 +2104,9 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     }
 
     private func returnToGuide() {
+        #if os(tvOS)
+        chipsAwaitReturn = false
+        #endif
         playback.cancelWatch()
         model.synchronizeClock()
         controlsActive = false
@@ -2083,10 +2171,15 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     }
 
     private func showCategory(_ category: String?, enteringGuide: Bool = true) {
+        showChannels(enteringGuide: enteringGuide) { model.category = category }
+    }
+
+    /// Narrows the guide and starts it again from its first channel, now.
+    private func showChannels(enteringGuide: Bool, narrowing: () -> Void) {
         playback.cancelWatch()
         model.query = ""
-        model.category = category
-        categoryDirectoryReturnID = category
+        narrowing()
+        categoryDirectoryReturnID = model.category
         showsCategoryDirectory = false
         isSearching = false
         searchOrigin = nil
@@ -2110,6 +2203,9 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     }
 
     private func enterGuide() {
+        #if os(tvOS)
+        chipsAwaitReturn = false
+        #endif
         controlsActive = false
         guard isActive else { return }
         #if os(tvOS)

@@ -6,10 +6,12 @@ import CoreUI
 import UIKit
 #endif
 
-/// The full-screen Now Playing surface: large artwork, track/artist/album, a
-/// quality badge, a full-width analog Liquid Glass scrub bar with the play/pause
-/// button beside it, and a row of equally-sized Liquid Glass transport buttons
-/// below. Single centered column — no Up Next list. Observes the shared
+/// The full-screen Now Playing surface, laid out like the Apple TV app's music
+/// player: the album art large at the leading edge over a once-blurred copy of
+/// itself, the title and "Artist — Album" beneath it with an outlined quality
+/// chip, a compact transport cluster under the text, a full-width progress bar
+/// along the bottom, the lyrics column on the right and the source server in
+/// the top corner. No Up Next list. Observes the shared
 /// `AudioPlaybackController`.
 public struct NowPlayingView: View {
     @Environment(\.transientStatusPresenter) private var statusPresenter
@@ -38,16 +40,16 @@ public struct NowPlayingView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.plozzArtworkPolicy) private var artworkPolicy
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.layoutDirection) private var layoutDirection
     @State private var scrubModel = MusicScrubModel()
     #if canImport(UIKit)
     @State private var wakeLease = DisplayWakeLease()
     #endif
 
-    /// Prominent colors of the current track's artwork, driving the morphing
-    /// liquid background. Recomputed whenever the track changes.
-    @State private var artworkPalette: [Color] = []
+    /// The current track's artwork, blurred once into the backdrop bitmap.
+    /// Rebuilt whenever the track changes.
+    @State private var backdrop: NowPlayingBackdrop.Artwork?
+    /// The account each source ID names, for the "Jellyfin · Wohnzimmer" label.
+    @Environment(\.plozzMediaSourceIdentities) private var sourceIdentities
 
     /// Whether the bottom control bar is currently shown. It auto-hides after a
     /// spell of no interaction so only the artwork, title/album and lyrics
@@ -65,7 +67,7 @@ public struct NowPlayingView: View {
     /// out of the focus relocation that fires when the reveal catcher is removed
     /// on reveal — that relocation was what landed a down-press on the scrubber
     /// instead of the pause button. Once settled it's focusable again so the user
-    /// can navigate up into the bar to scrub.
+    /// can navigate down into the bar to scrub.
     @State private var scrubFocusable = false
 
     /// Whether the transport *buttons* may take focus, held separately from
@@ -95,23 +97,10 @@ public struct NowPlayingView: View {
     /// from playback ticks).
     @State private var controlsSliding = false
 
-    /// Measured height of the bottom control bar, so it can slide fully off the
+    /// Measured height of the progress row, so it can slide fully off the
     /// bottom edge (as one persistent layer) instead of being inserted/removed —
-    /// keeping the glass scrub track, played fill and knob moving in lockstep with
-    /// the rest of the bar.
-    @State private var bottomBarHeight: CGFloat = 0
-
-    /// Horizontal shift applied to the title's now-playing equalizer so it always
-    /// hugs the first word of the *top* title line. The title is center-aligned,
-    /// so when a title wraps and the second line is wider than the first, the
-    /// shorter first line is centered inside the (wider) text frame — leaving a
-    /// gap between the frame's leading edge (where the equalizer sits) and the
-    /// first word. We measure the rendered title width and, via Core Text, the
-    /// first line's width, then slide the equalizer right by half their
-    /// difference so it lands just left of the first word. `.offset` doesn't
-    /// affect layout, so the title stays perfectly centered. Zero for
-    /// single-line titles (and titles whose first line is the widest).
-    @State private var titleIndicatorInset: CGFloat = 0
+    /// keeping the glass scrub track, played fill and knob moving in lockstep.
+    @State private var progressRowHeight: CGFloat = 0
 
     /// Focus targets on the player. Play/pause is the anchor the bar always
     /// comes back focused on; the reveal catcher holds focus while the bar is
@@ -239,42 +228,34 @@ public struct NowPlayingView: View {
             // the controls are hidden.
             PlaybackClock(controller: controller, model: scrubModel)
 
-            // Main content + bottom bar share the ZStack. The bar stays mounted
-            // and its two groups (scrub bar / transport buttons) each slide off
-            // the bottom edge via offset/opacity (rather than an insert/remove
-            // transition). Each group moves as one persistent layer — so the glass
-            // scrub track, played fill and knob (which live inside a GeometryReader
-            // that wouldn't inherit a .move transition) travel together — and the
-            // two groups are staggered slightly for a layered settle.
-            mainContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 80)
-                .padding(.top, 60)
-                // Reserve room for the bar while it's shown so the artwork and
-                // lyrics center in the space *above* the controls, then re-center
-                // on the full screen once the bar slides away.
-                .padding(.bottom, controlsVisible ? bottomBarHeight : 0)
-
-            bottomControls
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .allowsHitTesting(controlsVisible)
+            // One persistent layout. The transport cluster and the progress bar
+            // stay mounted while hidden: each slides/fades via offset/opacity
+            // (rather than an insert/remove transition), so the glass scrub
+            // track, played fill and knob (which live inside a GeometryReader
+            // that wouldn't inherit a .move transition) travel together, and the
+            // artwork and lyrics never move.
+            playerLayout
                 // Gate the transport's focusability on `transportFocusable`, NOT
-                // `controlsVisible`. The bar slides in the instant `controlsVisible`
-                // flips, but the buttons must not become focus candidates in that
-                // same pass — otherwise the focus-move a directional *press*
-                // queues lands on one of them. `transportFocusable` is held false
-                // for a couple of frames across a reveal (see `showControls`) so
-                // the reveal catcher stays the only focusable view while the press
-                // resolves, then we enable the buttons and place focus ourselves.
+                // `controlsVisible`. The controls slide in the instant
+                // `controlsVisible` flips, but the buttons must not become focus
+                // candidates in that same pass — otherwise the focus-move a
+                // directional *press* queues lands on one of them.
+                // `transportFocusable` is held false for a couple of frames across
+                // a reveal (see `showControls`) so the reveal catcher stays the only
+                // focusable view while the press resolves, then we enable the
+                // buttons and place focus ourselves. Nothing else in the layout
+                // takes focus, so gating all of it gates exactly the controls.
                 .disabled(!transportFocusable)
                 // Bias the focus engine toward the pause button so it's the
                 // default landing spot when the controls appear, rather than the
-                // scrub surface that sits above it.
+                // scrub surface below it.
                 .defaultFocus($focus, .playPause)
                 // Group the controls into a focus scope so showControls() can
                 // call resetFocus(in:) and force the engine to honour the
                 // defaultFocus above on a vertical/select reveal.
                 .focusScope(controlsFocusScope)
+
+            sourceLabel
 
             // While the bar is hidden — and across the brief reveal hand-off — a
             // transparent, focusable UIKit surface takes focus so the Siri Remote's
@@ -298,7 +279,7 @@ public struct NowPlayingView: View {
             }
 
             // Transient toggle confirmation ("Repeat All", "Shuffle On", …),
-            // floating just above the control bar. Non-interactive and
+            // floating just above the progress bar. Non-interactive and
             // non-focusable so it never disturbs the transport focus flow.
             if let statusPresenter {
                 TransientStatusView(
@@ -307,12 +288,9 @@ public struct NowPlayingView: View {
                     palette: isLightPlayer ? .light : .dark
                 )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, bottomBarHeight + 20)
+                    .padding(.bottom, progressRowHeight)
             }
         }
-        // mainContent's bottom-padding re-center still rides one shared spring;
-        // each bar group drives its own (staggered) slide inside bottomControls.
-        .animation(.spring(response: 0.5, dampingFraction: 0.86), value: controlsVisible)
         .onChange(of: controlsVisible) { _, _ in
             // Mark the slide window so the scrub bar holds its progress spring
             // until the bar has settled (see controlsSliding).
@@ -322,8 +300,8 @@ public struct NowPlayingView: View {
                 controlsSliding = false
             }
         }
-        .onPreferenceChange(BottomBarHeightKey.self) { height in
-            bottomBarHeight = height
+        .onPreferenceChange(ProgressRowHeightKey.self) { height in
+            progressRowHeight = height
         }
         .onAppear {
             syncScrubModel()
@@ -347,7 +325,7 @@ public struct NowPlayingView: View {
             if controlsVisible { scheduleHide() }
         }
         .task(id: "\(controller.currentTrack?.id ?? "")|\(artworkPolicy.forArea(.music).identity)") {
-            await loadArtworkPalette()
+            await loadBackdrop()
         }
         // Re-evaluate the lyrics-panel layout only on a *definitive* result (or a
         // toggle change), holding it steady through `.loading` so the artwork
@@ -423,20 +401,111 @@ public struct NowPlayingView: View {
         }
     }
 
-    /// The centered content that stays on screen even after the controls hide:
-    /// artwork + title/album on the left, lyrics on the right when present.
-    private var mainContent: some View {
-        HStack(alignment: .center, spacing: 56) {
-            metaColumn
-                .frame(maxWidth: showsLyricsPanel ? 620 : 760)
-            if showsLyricsPanel {
-                LyricsPanel(controller: controller, showTrackDetails: showTrackDetails)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+    /// Side margin of the whole layout, and the top of the artwork: the
+    /// concept's 140pt frame around the player.
+    private static let horizontalMargin: CGFloat = 140
+    private static let artworkTop: CGFloat = 150
+    /// The album art's edge, and so the left column's width.
+    private static let artworkSize: CGFloat = 560
+    /// Space between the left column and the lyrics.
+    private static let columnGap: CGFloat = 140
+
+    /// The controls' shared reveal: each group slides on this spring.
+    private static let reveal = Animation.spring(response: 0.5, dampingFraction: 0.86)
+
+    /// The whole player: the art column on the left — art, text and transport
+    /// cluster — with the lyrics to its right when there are any (the column
+    /// centres itself when there aren't), and the progress bar along the bottom
+    /// under both. Laid out against the screen edges, not the safe area, so the
+    /// margins are the concept's.
+    private var playerLayout: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: Self.columnGap) {
+                leftColumn
+                if showsLyricsPanel {
+                    LyricsPanel(controller: controller, showTrackDetails: showTrackDetails)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: showsLyricsPanel ? .topLeading : .top)
+            .animation(.easeInOut(duration: 0.25), value: showsLyricsPanel)
+            scrubRow
+                .padding(.top, 38)
+                // Slides fully clear of the bottom edge as one persistent layer.
+                .offset(y: controlsVisible ? 0 : progressRowHeight + 60)
+                .opacity(controlsVisible ? 1 : 0)
+                .animation(Self.reveal, value: controlsVisible)
+                .allowsHitTesting(controlsVisible)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.easeInOut(duration: 0.25), value: showsLyricsPanel)
+        .padding(.horizontal, Self.horizontalMargin)
+        .padding(.top, Self.artworkTop)
+        .padding(.bottom, 36)
+        .ignoresSafeArea()
+    }
+
+    /// Artwork, then the text beneath it, then the transport cluster pinned to
+    /// the column's foot. The text block's height varies (a missing album, the
+    /// quality chip), so the cluster is held at the bottom by a spacer rather
+    /// than stacked under the text, and never moves between tracks; the art
+    /// is pinned to the top for the same reason.
+    private var leftColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            artwork
+            trackTextBlock
+                .padding(.top, 30)
+            Spacer(minLength: 16)
+            transportRow
+                // Fades in place, a touch of travel for the settle. Trails the
+                // progress bar by a hair so the two groups land in layers.
+                .offset(y: controlsVisible ? 0 : 24)
+                .opacity(controlsVisible ? 1 : 0)
+                .animation(Self.reveal.delay(controlsVisible ? 0.07 : 0), value: controlsVisible)
+                .allowsHitTesting(controlsVisible)
+        }
+        .frame(width: Self.artworkSize, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var artwork: some View {
+        MusicArtworkImage(
+            url: controller.currentTrack?.artworkURL,
+            systemPlaceholder: "music.note",
+            cornerRadius: 22,
+            showsMediaEdge: false,
+            asyncFallbackURL: trackFallback(controller.currentTrack),
+            pinIdentity: controller.currentTrack?.id
+        )
+            .frame(width: Self.artworkSize, height: Self.artworkSize)
+            // The lift is a plain filled shape behind the art casting the
+            // shadow, not a shadow of the image itself: a shape's shadow is
+            // drawn from its path, an image's from its rendered pixels.
+            .background {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.black)
+                    .shadow(color: .black.opacity(isLightPlayer ? 0.2 : 0.55), radius: 45, y: 30)
+            }
+    }
+
+    /// Which server the track plays from — "Jellyfin · Wohnzimmer" — in the top
+    /// trailing corner. Absent for a source the app has no account for.
+    @ViewBuilder
+    private var sourceLabel: some View {
+        if let accountID = controller.currentTrack?.sourceAccountID,
+           let identity = sourceIdentities[accountID] {
+            HStack(spacing: 10) {
+                ProviderBrandMark(provider: identity.provider, size: 22, showsBackground: false)
+                Text(verbatim: "\(identity.provider.displayName) · \(identity.serverName)")
+                    .font(.system(size: 21, weight: .medium))
+                    .lineLimit(1)
+            }
+            .plozzForeground(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .padding(.top, 66)
+            .padding(.trailing, Self.horizontalMargin)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+        }
     }
 
     /// Reveals the control bar and (re)arms the auto-hide timer, landing focus on
@@ -483,8 +552,8 @@ public struct NowPlayingView: View {
                 // Land on play/pause: enable the buttons and unmount the catcher
                 // with the scrub surface still out, so play/pause (defaultFocus)
                 // is the only place focus can go. Re-assert once the row has slid
-                // on-screen, then finally allow the scrub bar so Up-navigation can
-                // reach it.
+                // on-screen, then finally allow the scrub bar so Down-navigation
+                // can reach it.
                 transportFocusable = true
                 revealCatcherMounted = false
                 focus = .playPause
@@ -524,13 +593,15 @@ public struct NowPlayingView: View {
 
     /// Schedules the control bar to fade away after `controlsAutoHideDelay`,
     /// cancelling any previously scheduled hide. Stays up while the user is
-    /// actively scrubbing.
+    /// actively scrubbing, and while playback is paused: with the controls
+    /// hidden, a paused player would look exactly like a playing one, and the
+    /// shown pause/play button is the one cue that tells them apart.
     private func scheduleHide() {
         hideTask?.cancel()
         hideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(Self.controlsAutoHideDelay))
             guard !Task.isCancelled else { return }
-            if scrubModel.isScrubbing {
+            if scrubModel.isScrubbing || !controller.isPlaying {
                 scheduleHide()
                 return
             }
@@ -546,181 +617,37 @@ public struct NowPlayingView: View {
         #endif
     }
 
-    /// The artwork + title/artist block. By default it shows only the title and
-    /// artist (the clean, Apple Music-style minimum); album and the audio
-    /// quality badge appear only when "Show track details" is enabled in
-    /// Settings. Stays on screen after the controls auto-hide.
-    private var metaColumn: some View {
-        VStack(spacing: 32) {
-            MusicArtworkImage(
-                url: controller.currentTrack?.artworkURL,
-                systemPlaceholder: "music.note",
-                cornerRadius: 16,
-                showsMediaEdge: false,
-                asyncFallbackURL: trackFallback(controller.currentTrack),
-                pinIdentity: controller.currentTrack?.id
-            )
-                .frame(width: 420, height: 420)
-                .shadow(radius: 30)
-
-            trackTextBlock
-                // Reserve a constant height for the text so the artwork above it
-                // never shifts when the next track's text differs — a 1- vs 2-line
-                // title, a missing album, or no quality badge. Top aligned, so any
-                // slack falls *below* the text and the artwork stays put; that's
-                // what makes switching tracks seamless. The height depends only on
-                // whether the extra-info rows are shown (album + quality badge),
-                // never on the individual track, so within a setting it's stable.
-                // The constants below assume the explicit font sizes in
-                // `trackTextBlock`/`qualityBadge` — update them together.
-                .frame(height: showTrackDetails ? 236 : 156, alignment: .top)
-                .frame(maxWidth: .infinity)
-        }
-    }
-
-    /// Size of the Now Playing title equalizer. Scaled up from the shared
-    /// list/mini-player size (scale 1) so it reads at across-the-room distance,
-    /// and reused for the width-matched trailing spacer that keeps the block
-    /// centered.
-    private let nowPlayingIndicatorScale: CGFloat = 1.53
-    private var nowPlayingIndicatorWidth: CGFloat { 26 * nowPlayingIndicatorScale }
-    private var nowPlayingIndicatorHeight: CGFloat { 24 * nowPlayingIndicatorScale }
-
-    /// A small animated equalizer shown immediately to the left of the playing
-    /// track's title — the one on-screen cue that audio is *actively* playing once
-    /// the transport controls auto-hide (artwork + title alone look identical
-    /// paused vs playing). Reuses the same `NowPlayingEqualizer` shown in track
-    /// lists and the mini player for visual consistency. Fades out when playback
-    /// is paused, so its presence *is* the "playing now" signal; respects Reduce
-    /// Motion by holding the bars still (still visible) rather than animating.
-    /// Hidden from accessibility — it's a decorative state cue, and "is playing"
-    /// is already exposed by the transport controls.
-    private var nowPlayingTitleIndicator: some View {
-        NowPlayingEqualizer(isAnimating: controller.isPlaying && !reduceMotion,
-                            scale: nowPlayingIndicatorScale)
-            .frame(width: nowPlayingIndicatorWidth)
-            // Sits a touch below the title baseline so the taller bars read as
-            // centered against the large title cap height. The x shift keeps the
-            // equalizer beside the first word even when a centered title wraps to
-            // a wider second line (see `titleIndicatorInset`).
-            // `titleIndicatorInset` is a reading-order adjustment toward the
-            // first word of a centered, wrapping title. Positive x is correct in
-            // LTR, but moves away from the first word after the HStack mirrors.
-            .offset(
-                x: layoutDirection == .rightToLeft
-                    ? -titleIndicatorInset
-                    : titleIndicatorInset,
-                y: 1
-            )
-            .opacity(controller.isPlaying ? 1 : 0)
-            .animation(.easeInOut(duration: 0.3), value: controller.isPlaying)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-    }
-
-    /// Slides the title equalizer right so it hugs the first word of a wrapped,
-    /// center-aligned title. `Text.Layout` (via `titleFirstLineInset`) reports the
-    /// first line's actual leading offset within the text — the widest line sits at
-    /// x0, so a shorter, centered first line is inset by half the width difference.
-    /// That inset is exactly how far the equalizer must move to reach the first
-    /// word. Reading SwiftUI's own layout means it matches whatever line-breaking
-    /// (balanced, not greedy) SwiftUI chose, so "Otherside / (2014 Remaster)" lands
-    /// correctly even though the first line isn't the widest.
-
-    /// The title/artist (+ album & quality badge when "show track details" is on)
-    /// stack rendered inside `metaColumn`'s reserved-height slot. The album row is
-    /// always rendered (transparent when empty) and the quality badge reserves a
-    /// constant height, so a track that lacks either doesn't change the layout —
-    /// only its visibility changes.
+    /// The title, "Artist — Album" and the quality chip, left-aligned under the
+    /// art. By default it shows only the title and artist (the clean, Apple
+    /// Music-style minimum); album and the quality chip appear only when "Show
+    /// track details" is enabled in Settings. Stays on screen after the
+    /// controls auto-hide.
     private var trackTextBlock: some View {
         let title = controller.currentTrack?.title ?? "Not Playing"
-        return VStack(spacing: 10) {
-            // Title with the "now playing" equalizer to its left, baseline-aligned
-            // to the title's top line so it sits beside the first line (not floating
-            // to the vertical middle) when a long title wraps to two lines. The
-            // title is center-aligned; the width-matched leading equalizer and
-            // trailing clear spacer keep the whole block centered and prevent any
-            // horizontal shift on play/pause (indicator visible when playing, faded
-            // but still occupying its slot when paused).
-            HStack(alignment: .firstTextBaseline, spacing: 14) {
-                nowPlayingTitleIndicator
-                Text(title)
-                    .font(.system(size: 46, weight: .bold))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .shadow(color: .black.opacity(isLightPlayer ? 0 : 0.4), radius: 8, y: 2)
-                    // Read the first line's actual leading offset from SwiftUI's own
-                    // text layout so the equalizer hugs the first word on wrap.
-                    .modifier(MeasureFirstLineInset { inset in
-                        if abs(inset - titleIndicatorInset) > 0.5 { titleIndicatorInset = inset }
-                    })
-                Color.clear
-                    .frame(width: nowPlayingIndicatorWidth, height: nowPlayingIndicatorHeight)
-                    .accessibilityHidden(true)
-            }
-            if let artist = controller.currentTrack?.artistName, !artist.isEmpty {
-                Text(artist)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 40, weight: .bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            if let byline {
+                Text(verbatim: byline)
                     .font(.system(size: 26, weight: .medium))
                     .plozzForeground(.secondary)
-                    .multilineTextAlignment(.center)
                     .lineLimit(1)
-                    .shadow(color: .black.opacity(isLightPlayer ? 0 : 0.35), radius: 6, y: 2)
             }
             if showTrackDetails {
-                let album = controller.currentTrack?.albumTitle ?? ""
-                Text(album.isEmpty ? " " : album)
-                    .font(.system(size: 18))
-                    .plozzForeground(.tertiary)
-                    .lineLimit(1)
-                    .opacity(album.isEmpty ? 0 : 1)
-                    .shadow(color: .black.opacity(isLightPlayer ? 0 : 0.3), radius: 5, y: 2)
-                qualityBadge
+                qualityChip
+                    .padding(.top, 8)
             }
         }
     }
 
-    /// The full-width transport bar across the bottom, over a soft scrim so it
-    /// stays legible against the artwork colors. The scrim flips to white for the
-    /// frosted-light look so it lightens rather than darkens the controls area.
-    private var bottomControls: some View {
-        let slide = bottomBarHeight + 60
-        let reveal = Animation.spring(response: 0.5, dampingFraction: 0.86)
-        // Buttons trail the scrub bar by a hair so the two groups settle in
-        // layers rather than as one slab — each group still moves as a unit.
-        let buttonStagger = 0.07
-        return VStack(spacing: 24) {
-            scrubRow
-                .offset(y: controlsVisible ? 0 : slide)
-                .opacity(controlsVisible ? 1 : 0)
-                .animation(reveal, value: controlsVisible)
-            transportRow
-                .offset(y: controlsVisible ? 0 : slide)
-                .opacity(controlsVisible ? 1 : 0)
-                .animation(reveal.delay(controlsVisible ? buttonStagger : 0), value: controlsVisible)
-        }
-        .padding(.horizontal, 80)
-        .padding(.top, 48)
-        .padding(.bottom, 56)
-        .frame(maxWidth: .infinity)
-        // Measure the bar's natural height so each group can slide fully clear of
-        // the bottom edge. Offsets don't change the reported size, so this stays
-        // stable whether the bar is shown or hidden.
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: BottomBarHeightKey.self, value: proxy.size.height)
-            }
-        )
-        .background(
-            LinearGradient(
-                colors: [.clear, (isLightPlayer ? Color.white : Color.black).opacity(0.55)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-            .offset(y: controlsVisible ? 0 : slide)
-            .opacity(controlsVisible ? 1 : 0)
-            .animation(reveal, value: controlsVisible)
-        )
+    /// "Artist — Album"; just the artist unless track details are shown.
+    private var byline: String? {  // l10n:content — artist/album names from the server
+        let artist = controller.currentTrack?.artistName ?? ""
+        let album = showTrackDetails ? controller.currentTrack?.albumTitle ?? "" : ""
+        let parts = [artist, album].filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " — ")
     }
 
     private func syncScrubModel() {
@@ -731,167 +658,145 @@ public struct NowPlayingView: View {
         }
     }
 
-    @ViewBuilder
     private var background: some View {
-        LiquidArtworkBackground(palette: artworkPalette, animate: !reduceMotion, style: playerStyle)
+        NowPlayingBackdrop(artwork: backdrop, style: playerStyle)
     }
 
     /// Loads the current track's artwork (reusing the shared decoded-image cache)
-    /// and extracts its prominent colors off the main thread to feed the morphing
-    /// background. Clears to the neutral field when there's no artwork.
-    private func loadArtworkPalette() async {
+    /// and blurs it once, off the main thread, into the bitmap the backdrop
+    /// stretches across the screen. Clears to the plain field when there's no
+    /// artwork.
+    private func loadBackdrop() async {
         #if canImport(UIKit)
         guard let track = controller.currentTrack else {
-            artworkPalette = []
+            backdrop = nil
             return
         }
         guard let selected = await MusicArtworkFallback.resolveTrack(
             track, policy: artworkPolicy.forArea(.music)
-        ), !Task.isCancelled else {
-            if !Task.isCancelled { artworkPalette = [] }
+        ), !Task.isCancelled, let source = selected.image.cgImage else {
+            if !Task.isCancelled { backdrop = nil }
             return
         }
-        let image = selected.image
-        let colors = await Task.detached(priority: .utility) {
-            ArtworkColorExtractor.palette(from: image, maxColors: 5)
-        }.value
+        let blurred = await NowPlayingBackdropRenderer.shared.blurred(.init(cgImage: source))
         guard !Task.isCancelled, controller.currentTrack?.id == track.id,
               controller.currentTrack?.sourceAccountID == track.sourceAccountID else { return }
-        artworkPalette = colors
+        backdrop = blurred.map {
+            NowPlayingBackdrop.Artwork(image: $0.cgImage, identity: "\(track.sourceAccountID ?? "")|\(track.id)")
+        }
         #endif
     }
 
+    /// The stream's fidelity as an outlined chip — "FLAC · 24-bit/96kHz". Its
+    /// technical detail when the file plays untouched; the tier ("Transcoding")
+    /// leads when it doesn't, tinted as the warning it is.
     @ViewBuilder
-    private var qualityBadge: some View {
-        Group {
-            if let quality = controller.currentQuality {
-                HStack(spacing: 5) {
-                    Image(systemName: quality.isDirectPlay ? "waveform" : "arrow.triangle.2.circlepath")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text(quality.headline)
-                        .font(.system(size: 11, weight: .semibold))
-                    if let detail = quality.detail {
-                        Text(verbatim: detail)
-                            .font(.system(size: 11))
-                            .plozzForeground(.secondary)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().stroke(qualityTint.opacity(0.6), lineWidth: 1))
-                .foregroundStyle(qualityTint)
-            }
+    private var qualityChip: some View {
+        if let quality = controller.currentQuality {
+            let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+            chipText(quality)
+                .font(.system(size: 18, weight: .bold))
+                .tracking(0.4)
+                .lineLimit(1)
+                .padding(.horizontal, 9)
+                .frame(height: 30)
+                .overlay(shape.strokeBorder(qualityTint.opacity(0.62), lineWidth: 2))
+                .foregroundStyle(qualityTint.opacity(0.92))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(quality.headline))
+                .accessibilityValue(Text(verbatim: quality.detail ?? ""))
         }
-        // Reserve a constant height even when there's no quality info, so a track
-        // that lacks a badge keeps the same layout as one that has it — see the
-        // reserved text slot in `metaColumn`.
-        .frame(height: 26)
-        .padding(.top, 4)
+    }
+
+    private func chipText(_ quality: PlaybackQuality) -> Text {
+        guard let detail = quality.detail else { return Text(quality.headline) }
+        guard quality.isDirectPlay else {
+            return Text(quality.headline) + Text(verbatim: " · \(detail)")
+        }
+        return Text(verbatim: detail)
     }
 
     private var qualityTint: Color {
-        guard let quality = controller.currentQuality else { return .secondary }
-        if !quality.isDirectPlay { return .orange }
-        return quality.isLossless ? .green : .primary
+        guard let quality = controller.currentQuality, !quality.isDirectPlay else { return .primary }
+        return .orange
     }
 
-    /// The full-width analog scrub bar with elapsed / remaining times. Play/pause
-    /// no longer sits beside it — it's the big round button centered in the
-    /// transport row below.
+    /// The full-width progress bar with elapsed and remaining times beneath it,
+    /// below the transport cluster — the Apple TV app's music player.
     private var scrubRow: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             MusicScrubBar(model: scrubModel, suppressProgressAnimation: controlsSliding, isFocusable: scrubFocusable)
-                .frame(height: 44)
-            HStack {
-                Text(MusicFormat.duration(scrubModel.displaySeconds))
-                Spacer()
-                Text(MusicFormat.duration(controller.duration))
-            }
-            .font(.caption.monospacedDigit())
-            .plozzForeground(.secondary)
+                .frame(height: 30)
+            MusicProgressTimes(model: scrubModel)
         }
         .frame(maxWidth: .infinity)
+        // Measure the row's natural height so it can slide fully clear of the
+        // bottom edge. Offsets don't change the reported size, so this stays
+        // stable whether the row is shown or hidden.
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: ProgressRowHeightKey.self, value: proxy.size.height)
+            }
+        )
     }
 
-    /// The transport row: the big round play/pause sits dead-centre (aligned with
-    /// the album art above it) with previous/next flanking it. Shuffle is pinned
-    /// left and repeat + lyrics pinned right via equal-width side containers, so
-    /// the asymmetric side clusters never pull the centre group off-centre. Every
-    /// button carries a Focus case so moving between them keeps the bar awake.
+    /// The compact transport cluster under the text: shuffle, previous, the
+    /// white play/pause, next, repeat and lyrics. Previous and next are bare
+    /// glyphs; the toggles are round buttons, filled while on. Every button
+    /// carries a Focus case so moving between them keeps the bar awake.
     private var transportRow: some View {
-        HStack(spacing: 0) {
-            // Left cluster, pinned leading in a flexible container.
-            HStack(spacing: 28) {
-                transportButton(
+        HStack(spacing: 22) {
+            transportButton(icon: "shuffle", active: controller.isShuffled) {
+                controller.toggleShuffle()
+                flashStatus(
                     icon: "shuffle",
-                    active: controller.isShuffled
-                ) {
-                    controller.toggleShuffle()
-                    flashStatus(
-                        icon: "shuffle",
-                        text: shuffleStatusLabel(controller.isShuffled)
-                    )
-                }
-                    .focused($focus, equals: .shuffle)
+                    text: shuffleStatusLabel(controller.isShuffled)
+                )
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+                .focused($focus, equals: .shuffle)
 
-            // Centre group — symmetric, so play/pause lands on the screen centre.
-            HStack(spacing: 28) {
-                transportButton(icon: "backward.end.fill") {
-                    controller.previous()
-                    if controller.hasActivePlayback { TouchFeedback.shared.emit(.impact) }
-                }
-                    .focused($focus, equals: .previous)
-
-                playPauseButton
-
-                transportButton(icon: "forward.end.fill") {
-                    controller.next()
-                    if controller.hasActivePlayback { TouchFeedback.shared.emit(.impact) }
-                }
-                    .focused($focus, equals: .next)
+            transportButton(icon: "backward.end.fill", kind: .plain) {
+                controller.previous()
+                if controller.hasActivePlayback { TouchFeedback.shared.emit(.impact) }
             }
+                .focused($focus, equals: .previous)
 
-            // Right cluster, pinned trailing in a flexible container of equal
-            // width to the left one, keeping the centre group centred.
-            HStack(spacing: 28) {
-                transportButton(
-                    icon: repeatIcon,
-                    active: controller.repeatMode != .off
-                ) {
-                    controller.cycleRepeatMode()
-                    let label = repeatStatusLabel(controller.repeatMode)
-                    flashStatus(icon: label.icon, text: label.text)
-                }
-                    .focused($focus, equals: .repeatMode)
+            playPauseButton
 
-                lyricsToggleButton
-                    .focused($focus, equals: .lyrics)
+            transportButton(icon: "forward.end.fill", kind: .plain) {
+                controller.next()
+                if controller.hasActivePlayback { TouchFeedback.shared.emit(.impact) }
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+                .focused($focus, equals: .next)
+
+            transportButton(icon: repeatIcon, active: controller.repeatMode != .off) {
+                controller.cycleRepeatMode()
+                let label = repeatStatusLabel(controller.repeatMode)
+                flashStatus(icon: label.icon, text: label.text)
+            }
+                .focused($focus, equals: .repeatMode)
+
+            lyricsToggleButton
+                .focused($focus, equals: .lyrics)
         }
     }
 
-    /// The big, round, centred play/pause button — about twice the size of the
-    /// other transport controls so it reads as the primary action.
+    /// The white play/pause — the cluster's one solid control, as the primary
+    /// action.
     private var playPauseButton: some View {
         Button {
             controller.togglePlayPause()
             scheduleHide()
         } label: {
             Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
-                .font(.system(size: 46, weight: .semibold))
-                .frame(width: 104, height: 104)
-                .contentShape(Circle())
+                .font(.system(size: 36, weight: .bold))
         }
-        .musicGlassButton(prominent: true)
-        .clipShape(Circle())
+        .buttonStyle(MusicTransportButtonStyle(kind: .primary))
+        .focusEffectDisabled()
         .focused($focus, equals: .playPause)
     }
 
-    /// Toggles the lyrics panel. Highlighted when on; disabled (and dimmed) only
+    /// Toggles the lyrics panel. Filled when on; disabled (and dimmed) only
     /// while lyrics are ON but the current track genuinely has none — turning it
     /// "on" again would do nothing. While lyrics are OFF the toggle stays enabled
     /// so the user can always turn them back on, even on a track that resolved to
@@ -900,24 +805,21 @@ public struct NowPlayingView: View {
     private var lyricsToggleButton: some View {
         let hasLyrics = controller.lyricsState.hasLyrics
         let blocked = lyricsEnabled && !hasLyrics
-        return transportButton(
-            icon: "quote.bubble",
-            active: lyricsEnabled && hasLyrics
-        ) {
+        let on = lyricsEnabled && hasLyrics
+        return transportButton(icon: on ? "quote.bubble.fill" : "quote.bubble", active: on) {
             lyricsEnabled.toggle()
         }
         .disabled(blocked)
         .opacity(blocked ? 0.4 : 1)
     }
 
-    /// A secondary transport control. Its glass button style is **constant** —
-    /// active/inactive state is conveyed only by `tint`, never by swapping to a
-    /// prominent style. Switching button styles dynamically changes the view's
-    /// identity, which on tvOS drops focus (bouncing it to the scrub bar), so the
-    /// style must stay fixed for these toggles.
+    /// A secondary transport control. Its button style TYPE is constant —
+    /// on/off is a parameter of it, never a swap to another style. Switching
+    /// button styles dynamically changes the view's identity, which on tvOS drops
+    /// focus (bouncing it to the scrub bar), so toggles must keep one style.
     private func transportButton(
         icon: String,
-        tint: Color = .primary,
+        kind: MusicTransportButtonStyle.Kind = .round,
         active: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
@@ -926,26 +828,10 @@ public struct NowPlayingView: View {
             action()
         } label: {
             Image(systemName: icon)
-                .foregroundStyle(tint)
+                .font(.system(size: kind == .plain ? 30 : 26, weight: .semibold))
         }
-        .musicGlassButton(prominent: false)
-        .overlay(alignment: .bottom) { activeUnderline(active) }
-    }
-
-    /// A selected-tab-style "on" indicator: a short accent bar that sits on the
-    /// bar *below* the button, outside the button's own surface. Because it
-    /// lives outside the focus-highlighted material, the accent stays vibrant
-    /// whether the button is focused or not — unlike a glyph tint, which the
-    /// tvOS focus highlight washes out. It's an overlay (offset clear of the
-    /// button), so it never changes the button's shape, size, or the row layout.
-    @ViewBuilder
-    private func activeUnderline(_ active: Bool) -> some View {
-        Capsule(style: .continuous)
-            .fill(Color.accentColor)
-            .frame(width: 24, height: 4)
-            .offset(y: 13)
-            .opacity(active ? 1 : 0)
-            .animation(.easeInOut(duration: 0.2), value: active)
+        .buttonStyle(MusicTransportButtonStyle(kind: kind, active: active))
+        .focusEffectDisabled()
     }
 
     private var repeatIcon: String {
@@ -1164,46 +1050,48 @@ struct NowPlayingLyricsView: View {
         }
     }
 
+    /// Where the sung line rests, as a fraction of the column's height: level
+    /// with the upper half of the artwork, as the concept sets it, rather than
+    /// the screen's centre.
+    private static let activeAnchor: CGFloat = 0.32
+
     private func lyricsScroll(_ lyrics: Lyrics) -> some View {
         let active = activeIndex(in: lyrics)
-        // The line to keep vertically centered. Before the first timestamp is
-        // reached `active` is nil, so fall back to the upcoming line (line 0 at
-        // the very start) — this guarantees the lyrics open centered rather than
-        // pinned to the top.
+        // The line to keep at the anchor. Before the first timestamp is reached
+        // `active` is nil, so fall back to the upcoming line (line 0 at the very
+        // start) — this guarantees the lyrics open in place rather than pinned
+        // to the top.
         let focus = focusIndex(in: lyrics)
         let highlight = Animation.spring(response: 0.55, dampingFraction: 0.85)
+        let anchor = UnitPoint(x: 0, y: Self.activeAnchor)
         return GeometryReader { geo in
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 52) {
-                        // Top/bottom breathing room so the first and last lines
-                        // can scroll all the way to the vertical center.
-                        Color.clear.frame(height: geo.size.height * 0.45)
+                    VStack(alignment: .leading, spacing: 34) {
+                        // Breathing room above and below so the first and last
+                        // lines can scroll all the way to the anchor.
+                        Color.clear.frame(height: geo.size.height * Self.activeAnchor)
                         ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { index, line in
                             Text(line.text.isEmpty ? " " : line.text)
-                                .font(.system(size: 46, weight: .bold))
+                                .font(.system(size: 50, weight: .bold))
                                 .foregroundStyle(.primary)
-                                .opacity(opacity(forIndex: index, active: active))
-                                .scaleEffect(index == active ? 1.06 : 1.0, anchor: .leading)
+                                .opacity(Self.opacity(forIndex: index, active: active))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .id(index)
                                 .animation(highlight, value: active)
                         }
-                        Color.clear.frame(height: geo.size.height * 0.45)
+                        Color.clear.frame(height: geo.size.height * (1 - Self.activeAnchor))
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    // The active line scales up from its leading edge, so reserve
-                    // a little room on the right; without it long lines render
-                    // right up to the panel edge and the scaled-up current line
-                    // gets clipped (and cut by the edge-fade mask).
-                    .padding(.trailing, max(40, geo.size.width * 0.08))
                 }
                 .scrollDisabled(true)
-                .mask(edgeFade)
+                // No edge-fade mask: the graded opacity already fades the lines
+                // toward the column's edges, and a mask over a column this size
+                // is an offscreen pass every time the lines move.
                 .opacity(appeared ? 1 : 0)
                 .onChange(of: focus) { _, newIndex in
                     withAnimation(highlight) {
-                        proxy.scrollTo(newIndex, anchor: .center)
+                        proxy.scrollTo(newIndex, anchor: anchor)
                     }
                 }
                 // Position correctly as soon as the panel appears and again once
@@ -1211,19 +1099,19 @@ struct NowPlayingLyricsView: View {
                 // onAppear can fire before the final height is known). The first
                 // appearance also eases the lines in rather than popping.
                 .onAppear {
-                    proxy.scrollTo(focus, anchor: .center)
+                    proxy.scrollTo(focus, anchor: anchor)
                     withAnimation(.easeOut(duration: 0.5)) { appeared = true }
                 }
                 .onChange(of: geo.size.height) { _, _ in
-                    proxy.scrollTo(focus, anchor: .center)
+                    proxy.scrollTo(focus, anchor: anchor)
                 }
             }
         }
     }
 
-    /// The line to keep centered: the active line, or — before the first
+    /// The line to keep at the anchor: the active line, or — before the first
     /// timestamp is reached — the next upcoming line (line 0 at song start), so
-    /// the lyrics always open in the middle.
+    /// the lyrics always open in place.
     private func focusIndex(in lyrics: Lyrics) -> Int {
         if let active = activeIndex(in: lyrics) { return active }
         if lyrics.isSynced,
@@ -1233,28 +1121,24 @@ struct NowPlayingLyricsView: View {
         return 0
     }
 
-    /// Vertical edge fade. Lines stay fully visible through a wide central band
-    /// and only dissolve in the outer ~16% at the top and bottom, so lyrics
-    /// reach much closer to the panel edges before fading into the background.
-    private var edgeFade: some View {
-        LinearGradient(
-            stops: [
-                .init(color: .clear, location: 0.0),
-                .init(color: .black, location: 0.24),
-                .init(color: .black, location: 0.76),
-                .init(color: .clear, location: 1.0)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
-    /// How visible a line is given its distance from the active one: the current
-    /// line is solid, neighbours dim progressively. With no active line (unsynced
-    /// or pre-roll) every line sits at a calm, even brightness.
-    private func opacity(forIndex index: Int, active: Int?) -> Double {
+    /// How visible a line is given its distance from the active one: the sung
+    /// line is solid; the next line, the one about to be sung, is the brightest
+    /// of the rest; the lines already sung recede faster than those to come;
+    /// and every line fades further with distance — which also fades the column
+    /// out toward its edges. Opacity only — no per-line blur. With no active line
+    /// (unsynced or pre-roll) every line sits at a calm, even brightness.
+    static func opacity(forIndex index: Int, active: Int?) -> Double {
         guard let active else { return 0.25 }
-        return index == active ? 1.0 : 0.25
+        let distance = index - active
+        switch distance {
+        case 0: return 1
+        case 1: return 0.28
+        case 2: return 0.2
+        case 3: return 0.12
+        case -2 ... -1: return 0.18
+        case -3: return 0.1
+        default: return 0.06
+        }
     }
 
     /// A small anticipation lead (seconds) so a line highlights right as it's
@@ -1322,69 +1206,105 @@ struct LyricsSourceBadge: View {
     }
 }
 
-private extension View {
-    /// The system Liquid Glass button style (tvOS 26+), falling back to the
-    /// bordered styles on older systems. `prominent` highlights play/active toggles.
+/// The Now Playing transport's buttons, drawn here rather than with the stock
+/// `.glass` styles for two reasons: the resting surface must honour Reduce
+/// Transparency and the player-glass reduction (frosted instead of glass, as on
+/// Apple TV HD and 4K first generation), which the stock styles cannot; and
+/// every control shares the redesign's focus treatment — solid white with
+/// page-colour ink and a small lift.
+struct MusicTransportButtonStyle: ButtonStyle {
+    enum Kind {
+        /// A round surface — glass, or frost when reduced — filled while on.
+        case round
+        /// A bare glyph (previous / next); only focus draws a surface.
+        case plain
+        /// The solid play/pause.
+        case primary
+    }
+
+    let kind: Kind
+    var active = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        MusicTransportButtonBody(configuration: configuration, kind: kind, active: active)
+    }
+}
+
+private struct MusicTransportButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    let kind: MusicTransportButtonStyle.Kind
+    let active: Bool
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.plozzReducePlayerGlass) private var reducePlayerGlass
+    @Environment(\.plozzReduceTransparency) private var reduceTransparency
+
+    private var diameter: CGFloat { kind == .primary ? 84 : 64 }
+    private var solid: Bool { isFocused || kind == .primary }
+
+    var body: some View {
+        configuration.label
+            .foregroundStyle(solid ? ink : Color.primary)
+            .frame(width: diameter, height: diameter)
+            .background { surface }
+            .contentShape(Circle())
+            // The surface swaps on the same frame focus moves; only the lift
+            // and the press are animated.
+            .animation(nil, value: isFocused)
+            .scaleEffect(configuration.isPressed ? 0.94 : (isFocused ? 1.08 : 1))
+            .animation(.easeOut(duration: 0.15), value: isFocused)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+
+    /// The page colour on the white (dark looks) or black (light look) fill.
+    private var ink: Color {
+        colorScheme == .light ? .white : Color(red: 21 / 255, green: 22 / 255, blue: 26 / 255)
+    }
+
     @ViewBuilder
-    func musicGlassButton(prominent: Bool) -> some View {
-        if #available(tvOS 26.0, *) {
-            if prominent {
-                buttonStyle(.glassProminent)
-            } else {
-                buttonStyle(.glass)
-            }
+    private var surface: some View {
+        let shape = Circle()
+        if solid {
+            // A filled shape's shadow, over the still backdrop — not over video.
+            shape.fill(Color.primary)
+                .shadow(color: .black.opacity(kind == .primary ? 0.35 : 0.25), radius: 17, y: 14)
+        } else if kind == .plain {
+            Color.clear
+        } else if reducePlayerGlass || reduceTransparency {
+            shape.fill(Color.primary.opacity(active ? 0.24 : 0))
+                .plozzFrostedBackground(shape, raised: active)
+                .plozzFrostedBorder(shape)
+        } else if #available(tvOS 26.0, iOS 26.0, *) {
+            shape.fill(Color.primary.opacity(active ? 0.24 : 0))
+                .glassEffect(.regular, in: shape)
         } else {
-            if prominent {
-                buttonStyle(.borderedProminent)
-            } else {
-                buttonStyle(.bordered)
-            }
+            shape.fill(Color.primary.opacity(active ? 0.32 : 0.12))
         }
     }
 }
 
-/// Reports the natural height of the bottom control bar so the player can slide
-/// it fully off the bottom edge as a single layer.
-private struct BottomBarHeightKey: PreferenceKey {
+/// Elapsed and remaining time under the progress bar. Its own view, so only
+/// it re-renders on the 4x/sec playback tick that moves the numbers.
+private struct MusicProgressTimes: View {
+    let model: MusicScrubModel
+
+    var body: some View {
+        HStack {
+            Text(MusicFormat.duration(model.displaySeconds))
+            Spacer()
+            Text(verbatim: "\u{2212}" + MusicFormat.duration(max(0, model.duration - model.displaySeconds)))
+        }
+        .font(.system(size: 21, weight: .semibold).monospacedDigit())
+        .plozzForeground(.secondary)
+    }
+}
+
+/// Reports the natural height of the progress row so the player can slide it
+/// fully off the bottom edge as a single layer.
+private struct ProgressRowHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
-    }
-}
-
-/// Reports the rendered width of the Now Playing title so the leading equalizer
-/// can be shifted to hug the first word of a wrapped, center-aligned title.
-private struct MeasureFirstLineInset: ViewModifier {
-    /// Called with the first line's leading inset (0 when the first line is the
-    /// widest, i.e. no gap to close).
-    let onMeasure: (CGFloat) -> Void
-
-    func body(content: Content) -> some View {
-        if #available(tvOS 18.0, *) {
-            content.textRenderer(FirstLineInsetRenderer(onMeasure: onMeasure))
-        } else {
-            content
-        }
-    }
-}
-
-/// Draws the title normally while reading the first line's leading offset from the
-/// resolved `Text.Layout`. For a centered title the widest line sits at x0, so a
-/// shorter first line's `rect.minX` is exactly how far the equalizer must slide to
-/// reach the first word. Reported off the render pass to avoid mutating state mid
-/// update.
-@available(tvOS 18.0, *)
-private struct FirstLineInsetRenderer: TextRenderer {
-    let onMeasure: (CGFloat) -> Void
-
-    func draw(layout: Text.Layout, in context: inout GraphicsContext) {
-        if let firstLine = layout.first {
-            let inset = firstLine.typographicBounds.rect.minX
-            DispatchQueue.main.async { onMeasure(max(0, inset)) }
-        }
-        for line in layout {
-            context.draw(line)
-        }
     }
 }
 #endif

@@ -45,11 +45,12 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
             suite: "PreviewRefresh.\(UUID().uuidString)", reset: true, refreshCatalog: true
         )
         defer { app.terminate() }
-        assertFocused(app.buttons["live-tv-search"])
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.right)
         let refresh = app.buttons["Refresh channels"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 15), app.debugDescription)
+        // Header actions, then the chips, then the empty guide's recovery actions.
+        for _ in 0..<4 where !containsFocus(refresh) {
+            XCUIRemote.shared.press(.down)
+        }
         assertFocused(refresh)
         XCTAssertFalse(app.staticTexts["Refreshed fixture channel"].exists,
                        "Automatic entry must retain the saved empty catalog")
@@ -120,15 +121,14 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
         _ = focusFirstGuideContent(in: app)
         XCUIRemote.shared.press(.left)
         XCUIRemote.shared.press(.left)
-        assertFocused(app.buttons["All categories"])
+        assertFocused(app.buttons["All channels"])
         let multiviewsReady = NSPredicate { _, _ in app.buttons["live-tv-multiview-favorites"].isEnabled }
         XCTAssertEqual(XCTWaiter.wait(
             for: [XCTNSPredicateExpectation(predicate: multiviewsReady, object: nil)], timeout: 5
         ), .completed)
         XCUIRemote.shared.press(.up)
-        assertFocused(app.buttons["live-tv-manage-channels"])
-        XCUIRemote.shared.press(.up)
-        assertFocused(app.buttons["live-tv-multiview-favorites"])
+        assertFocused(app.buttons["live-tv-info-watch"])
+        moveFocus(to: app.buttons["live-tv-multiview-favorites"], pressing: .right)
         XCUIRemote.shared.press(.select)
         assertFocused(app.buttons[saved ? "live-multiview-saved-fixture-1" : "live-tv-close-sheet"])
         return app
@@ -220,10 +220,13 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
         _ = focusFirstGuideContent(in: app, rtl: rtl)
         let playbackID = app.staticTexts["preview-playback-session"].label
         let leading: XCUIRemote.Button = rtl ? .right : .left
+        let search = app.buttons["live-tv-search"]
         if fromCategories {
             XCUIRemote.shared.press(leading)
             XCUIRemote.shared.press(leading)
-            assertFocused(app.buttons["All categories"])
+            assertFocused(app.buttons["All channels"])
+            XCUIRemote.shared.press(leading)
+            assertFocused(search)
         }
         let menu = topBar ? app.descendants(matching: .any)["top-navigation"] : app.collectionViews["Sidebar"]
         for iteration in 0..<3 {
@@ -237,8 +240,12 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
             capture("\(fromCategories && !topBar ? "one-leading" : "one-back")-native-menu-\(iteration)", in: app)
             XCTAssertEqual(result, .completed, "One press must reveal native navigation, not an embedded Live TV page\n\(app.debugDescription)")
             XCUIRemote.shared.press(topBar ? .down : (rtl ? .left : .right))
-            if fromCategories { assertFocused(app.buttons["All categories"]) }
-            else { _ = focusFirstGuideContent(in: app, rtl: rtl) }
+            if fromCategories {
+                // Back in Live TV, focus returns to the chosen chip; Search leads it.
+                assertFocused(app.buttons["All channels"])
+                XCUIRemote.shared.press(leading)
+                assertFocused(search)
+            } else { _ = focusFirstGuideContent(in: app, rtl: rtl) }
             assertNativeNavigationCollapsed(in: app)
             XCTAssertEqual(app.staticTexts["preview-playback-session"].label, playbackID)
         }
@@ -257,12 +264,12 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
         _ = focusFirstGuideContent(in: app)
         XCUIRemote.shared.press(.left)
         XCUIRemote.shared.press(.left)
-        assertFocused(app.buttons["All categories"])
+        assertFocused(app.buttons["All channels"])
         XCUIRemote.shared.press(.up)
-        assertFocused(app.buttons["live-tv-manage-channels"])
-        XCUIRemote.shared.press(.up)
-        assertFocused(app.buttons["live-tv-multiview-favorites"])
-        XCUIRemote.shared.press(.up)
+        assertFocused(app.buttons["live-tv-info-watch"])
+        XCUIRemote.shared.press(.down)
+        assertFocused(app.buttons["All channels"])
+        XCUIRemote.shared.press(.left)
         assertFocused(app.buttons["live-tv-search"])
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 5))
@@ -328,12 +335,14 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
         let appMenu = topBar ? app.descendants(matching: .any)["top-navigation"] : app.collectionViews["Sidebar"]
         assertCategoriesVisible(in: app)
         assertNativeNavigationCollapsed(in: app)
-        var selectedCategory = "All categories"
+        var selectedCategory = "All channels"
+        let trailing: XCUIRemote.Button = rtl ? .left : .right
         for iteration in 0..<3 {
             if iteration > 0 {
-                XCUIRemote.shared.press(rtl ? .left : .right)
+                // Down from the chips returns to the guide where it was.
+                XCUIRemote.shared.press(.down)
                 assertCategoriesVisible(in: app)
-                XCUIRemote.shared.press(rtl ? .left : .right)
+                if containsFocus(station) { XCUIRemote.shared.press(trailing) }
                 assertFocused(content)
                 assertCategoriesVisible(in: app)
             }
@@ -352,8 +361,7 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
                            "Revealing categories must not open the app menu")
             if iteration == 0 {
                 selectedCategory = "Entertainment & Lifestyle"
-                XCUIRemote.shared.press(.down)
-                assertFocused(app.buttons[selectedCategory])
+                moveFocus(to: app.buttons[selectedCategory], pressing: trailing)
                 XCUIRemote.shared.press(.select)
                 XCTAssertTrue(app.buttons[selectedCategory].isSelected)
             }
@@ -435,7 +443,7 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
         let values = measurement.label.split(separator: ",").compactMap { Double($0) }
         XCTAssertEqual(values.count, 3)
         guard values.count == 3 else { return }
-        XCTAssertEqual(values[0], values[1], accuracy: 1, "Search and active-channel artwork must align")
+        XCTAssertGreaterThan(values[0], values[1], "Search leads the chip row below the programme header")
         if fullHeight {
             XCTAssertLessThanOrEqual(values[1], 40, "Native navigation must not reserve a top band")
             XCTAssertGreaterThanOrEqual(values[1], 24, "Keep a small intentional screen-edge inset")
@@ -471,12 +479,12 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
         assertCategoriesVisible(in: app)
         XCUIRemote.shared.press(.right)
         XCUIRemote.shared.press(.right)
-        assertFocused(app.buttons["All categories"])
-        assertFullHeightCategories(in: app, beside: second)
+        assertFocused(app.buttons["All channels"])
+        assertCategoryChips(in: app, above: second)
         capture("rtl-categories-revealed", in: app)
-        XCUIRemote.shared.press(.left)
+        XCUIRemote.shared.press(.down)
         assertCategoriesVisible(in: app)
-        XCUIRemote.shared.press(.left)
+        if containsFocus(app.buttons["live-tv-channel-channels-2"]) { XCUIRemote.shared.press(.left) }
         assertFocused(second)
         capture("rtl-guide-same-channel", in: app)
     }
@@ -518,16 +526,15 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
         capture("preview-persistent-categories", in: app)
         XCUIRemote.shared.press(.left)
         XCUIRemote.shared.press(.left)
-        assertFocused(app.buttons["All categories"])
+        assertFocused(app.buttons["All channels"])
         XCTAssertEqual(content.frame.minX, guideX, accuracy: 1)
-        assertFullHeightCategories(in: app, beside: content)
-        capture("preview-wider-categories", in: app)
-        XCUIRemote.shared.press(.down)
-        assertFocused(app.buttons["Entertainment & Lifestyle"])
+        assertCategoryChips(in: app, above: content)
+        capture("preview-category-chips", in: app)
+        moveFocus(to: app.buttons["Entertainment & Lifestyle"], pressing: .right)
         XCUIRemote.shared.press(.select)
-        XCUIRemote.shared.press(.right)
+        XCUIRemote.shared.press(.down)
         assertCategoriesVisible(in: app)
-        XCUIRemote.shared.press(.right)
+        if containsFocus(app.buttons["live-tv-channel-channels-1"]) { XCUIRemote.shared.press(.right) }
         assertFocused(content)
         XCUIRemote.shared.press(.left)
         XCUIRemote.shared.press(.left)
@@ -581,8 +588,15 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
     }
 
     private func containsFocus(_ element: XCUIElement) -> Bool {
-        element.exists && (element.hasFocus || element.descendants(matching: .any)
-            .matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists)
+        guard element.exists else { return false }
+        if element.hasFocus || element.descendants(matching: .any)
+            .matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { return true }
+        // An icon-only button reports focus on an unlabelled element with its own frame.
+        let focused = XCUIApplication(bundleIdentifier: "com.thatcube.Plozz.FocusHost")
+            .descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        guard focused.exists, focused.elementType == .other, element.elementType == .button else { return false }
+        let frame = focused.frame, target = element.frame
+        return target.insetBy(dx: -8, dy: -8).contains(frame)
     }
 
     private func assertStatus(
@@ -602,21 +616,43 @@ final class LiveTVPreviewIntroductionRemoteTests: XCTestCase {
         add(attachment)
     }
 
-    private func assertFullHeightCategories(
-        in app: XCUIApplication, beside channel: XCUIElement,
+    /// The categories are one chip row, led by Search, between the programme
+    /// header's actions and the guide.
+    private func assertCategoryChips(
+        in app: XCUIApplication, above channel: XCUIElement,
         file: StaticString = #filePath, line: UInt = #line
     ) {
         let search = app.buttons["live-tv-search"]
+        let all = app.buttons["All channels"]
         let categories = app.scrollViews["live-tv-category-list"]
         XCTAssertTrue(categories.exists, file: file, line: line)
-        XCTAssertLessThan(search.frame.minY, 120, file: file, line: line)
-        XCTAssertLessThan(search.frame.maxY, channel.frame.minY - 200, file: file, line: line)
-        XCTAssertGreaterThanOrEqual(categories.frame.maxY, app.frame.maxY - 40, file: file, line: line)
-        XCTAssertEqual(app.buttons["All categories"].frame.width, 384, accuracy: 1, file: file, line: line)
+        XCTAssertLessThan(categories.frame.maxY, channel.frame.minY, file: file, line: line)
+        XCTAssertEqual(search.frame.midY, all.frame.midY, accuracy: 2, file: file, line: line)
+        XCTAssertGreaterThan(search.frame.minY, app.buttons["live-tv-info-watch"].frame.maxY, file: file, line: line)
+        let rtl = all.frame.midX < search.frame.midX
+        XCTAssertTrue(rtl ? all.frame.maxX < search.frame.minX : search.frame.maxX < all.frame.minX,
+                      "Search leads the chip row", file: file, line: line)
+    }
+
+    private func moveFocus(
+        to element: XCUIElement, pressing direction: XCUIRemote.Button,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        XCTAssertTrue(element.waitForExistence(timeout: 10), file: file, line: line)
+        // The header's icon buttons don't report focus to XCTest; they lift by 6% when focused.
+        let resting = element.frame.size
+        let arrived = NSPredicate { _, _ in
+            self.containsFocus(element) || element.frame.width > resting.width + 2
+        }
+        for _ in 0..<6 where !arrived.evaluate(with: nil) {
+            XCUIRemote.shared.press(direction)
+            _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: arrived, object: nil)], timeout: 1.5)
+        }
+        XCTAssertTrue(arrived.evaluate(with: nil), "Focus did not reach \(element)", file: file, line: line)
     }
 
     private func assertCategoriesVisible(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
-        let visible = NSPredicate { _, _ in app.buttons["All categories"].exists }
+        let visible = NSPredicate { _, _ in app.buttons["All channels"].exists }
         let result = XCTWaiter.wait(
             for: [XCTNSPredicateExpectation(predicate: visible, object: nil)], timeout: 5
         )

@@ -32,6 +32,9 @@ public struct EpisodeColumnPresentation: Equatable, Sendable, CustomDebugStringC
     /// out of sync with the real (English) wording without both call sites
     /// changing together).
     private let titleLinePlain: String
+    /// "Episode 4 · 45m" above the title, as the Apple TV app labels its episode
+    /// rail. `nil` when the title is spoiler-masked or the episode has no number.
+    public let eyebrowLine: Text?
     public let metadataText: String?
     public let progress: Double?
     public let isWatched: Bool
@@ -51,7 +54,21 @@ public struct EpisodeColumnPresentation: Equatable, Sendable, CustomDebugStringC
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nonEmpty
 
+        let runtime = item.cardRuntimeText?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty
+        if let runtime {
+            // `cardRuntimeText` is bare ("20m"); this struct is a plain String-based
+            // presentation model (not a View), so the "left" suffix is composed
+            // here as plain interpolation, matching this file's existing
+            // not-yet-localized `String`-based accessibility text below.
+            metadataText = item.cardRuntimeIsRemaining ? "\(runtime) left" : runtime
+        } else {
+            metadataText = nil
+        }
+
         if hidesText {
+            eyebrowLine = nil
             titleLine = Text(spoilerSettings.maskedTitle(for: item))
             // Inlined (not a separate `-> String` helper) to match the existing,
             // pre-existing, out-of-scope shape of the non-masked branch below —
@@ -71,19 +88,31 @@ public struct EpisodeColumnPresentation: Equatable, Sendable, CustomDebugStringC
                 plain = title.isEmpty ? "Episode" : title
             }
             titleLinePlain = plain
-            titleLine = Text(verbatim: plain)
-        }
-
-        if let runtime = item.cardRuntimeText?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-                  !runtime.isEmpty {
-            // `cardRuntimeText` is bare ("20m"); this struct is a plain String-based
-            // presentation model (not a View), so the "left" suffix is composed
-            // here as plain interpolation, matching this file's existing
-            // not-yet-localized `String`-based accessibility text below.
-            metadataText = item.cardRuntimeIsRemaining ? "\(runtime) left" : runtime
-        } else {
-            metadataText = nil
+            if let number = item.episodeNumber {
+                // The number moves to the eyebrow, so the title stands alone.
+                titleLine = title.isEmpty ? Text("Episode \(number)") : Text(verbatim: title)
+                if let runtime {
+                    // Semantic keys: the number is the episode's index, not a
+                    // count, so the line has no plural forms.
+                    eyebrowLine = item.cardRuntimeIsRemaining
+                        ? Text(LocalizedStringResource(
+                            "episodeCard.eyebrow.remaining", defaultValue: "Episode \(number) · \(runtime) left",
+                            comment: "Episode card label above the title: episode number and time remaining, e.g. Episode 3 · 12m left."
+                        ))
+                        : Text(LocalizedStringResource(
+                            "episodeCard.eyebrow.runtime", defaultValue: "Episode \(number) · \(runtime)",
+                            comment: "Episode card label above the title: episode number and runtime, e.g. Episode 3 · 45m."
+                        ))
+                } else {
+                    eyebrowLine = Text(LocalizedStringResource(
+                        "episodeCard.eyebrow.number", defaultValue: "Episode \(number)",
+                        comment: "Episode card label above the title when the runtime is unknown."
+                    ))
+                }
+            } else {
+                titleLine = Text(verbatim: plain)
+                eyebrowLine = nil
+            }
         }
         progress = item.resumeProgressFraction
         isWatched = item.isPlayed && progress == nil

@@ -29,6 +29,9 @@ FLAGS = [
     "COMPILER_INDEX_STORE_ENABLE=NO", "DEBUG_INFORMATION_FORMAT=dwarf",
     "ONLY_ACTIVE_ARCH=YES", "CODE_SIGNING_ALLOWED=NO",
 ]
+HOME_SHELL_ARGUMENTS = {
+    "none": [], "sidebar": ["--native-sidebar-home"], "top-bar": ["--top-bar-home"], "rail": ["--pinned-home"],
+}
 METRICS = ("wallMilliseconds", "cpuMilliseconds", "residentBytes", "residentDeltaBytes")
 HOME_HOST_FITTING_COUNTERS = [
     "motionSizeThatFitsCalls", "rowHostFitCalls", "columnHostFitCalls", "maskSizeThatFitsCalls",
@@ -770,12 +773,17 @@ class Lane:
         tree = configure_scheme(ET.parse(source))
         ET.SubElement(tree.getroot().find("TestAction/EnvironmentVariables"), "EnvironmentVariable",
                       key="PLOZZ_PERFORMANCE_ATTACH", value="1", isEnabled="YES")
+        ET.SubElement(tree.getroot().find("TestAction/EnvironmentVariables"), "EnvironmentVariable",
+                      key="PLOZZ_PERFORMANCE_HOME_SHELL", value=getattr(self.args, "home_shell", "none"),
+                      isEnabled="YES")
         derived = self.root / ".build/performance-derived-data/tvOS/ui"
         bundle_id = "com.thatcube.Plozz.FocusHost"
         workload = getattr(self.args, "workload", "home-navigation")
         test = (
             "LargeNativeNavigationRemoteTests/testProfileRapidHorizontalNavigation"
             if workload == "horizontal-navigation"
+            else "LargeNativeNavigationRemoteTests/testProfileRapidVerticalNavigation"
+            if workload == "vertical-navigation"
             else "DetailReturnFocusRemoteTests/testProfilePopulatedShowcaseDetailReturns"
             if workload == "detail-return"
             else "ProductionHomeNavigationTests/testNavigateProductionHomeWithNativeCards"
@@ -813,17 +821,19 @@ class Lane:
                 raise Failure("Unexpected navigation fixture identity; refusing to install.")
             self.command("fixture-install", ["xcrun", "simctl", "install", self.args.sim_id, str(app)], 120)
             arguments = ["--production-home-fixture", "--home-performance-fixture", "--distinct-home-artwork",
-                         "--home-artwork-cache-namespace=" + self.output.name]
+                         "--home-artwork-cache-namespace=" + self.output.name,
+                         *HOME_SHELL_ARGUMENTS[getattr(self.args, "home_shell", "none")]]
             if workload == "detail-return":
                 arguments = [
                     "--production-home-fixture", "--top-bar-home", "--return-focus-trace",
                     "--immersive-home", "--progressive-library-rows", "--populated-home-return",
                     "--distinct-home-artwork", "--home-artwork-cache-namespace=" + self.output.name,
                 ]
-            elif workload == "horizontal-navigation":
+            elif workload in ("horizontal-navigation", "vertical-navigation"):
                 arguments = [
                     "--large-native-navigation-fixture", "--real-library-pages",
                     "--trace-tab-transitions",
+                    *(["--native-vertical-navigation"] if workload == "vertical-navigation" else []),
                 ]
             _, launch = self.command("fixture-launch", ["xcrun", "simctl", "launch", self.args.sim_id, bundle_id, *arguments])
             launched = True
@@ -886,7 +896,7 @@ class Lane:
             if self.args.template == "Process Sample":
                 return {
                     "pid": pid, "bundleID": bundle_id, "arguments": arguments, "template": self.args.template,
-                    "workload": workload,
+                    "workload": workload, "homeShell": getattr(self.args, "home_shell", "none"),
                     "stacks": stack_sample_summary(sample_path, pid), "sample": str(sample_path),
                     "note": "Sampled simulator navigation, not device frame pacing or a full multi-provider app session.",
                 }
@@ -904,7 +914,7 @@ class Lane:
                 raise Failure("Instruments reported incomplete recording; raw evidence retained.")
             return {
                 "pid": pid, "bundleID": bundle_id, "arguments": arguments, "template": self.args.template,
-                "workload": workload,
+                "workload": workload, "homeShell": getattr(self.args, "home_shell", "none"),
                 "cpu": trace_tools.sample_summary(samples, pid), "trace": str(trace),
                 "note": "Instrumented simulator navigation, not device frame pacing or a full multi-provider app session.",
             }
@@ -1022,7 +1032,9 @@ def main(argv=None):
     profile.add_argument("--sim-id", required=True)
     profile.add_argument("--timeout", type=int, default=2400)
     profile.add_argument("--template", choices=("Time Profiler", "SwiftUI", "Process Sample"), default="Process Sample")
-    profile.add_argument("--workload", choices=("home-navigation", "detail-return", "horizontal-navigation"), default="home-navigation")
+    profile.add_argument("--workload", choices=("home-navigation", "detail-return", "horizontal-navigation", "vertical-navigation"), default="home-navigation")
+    profile.add_argument("--home-shell", choices=tuple(HOME_SHELL_ARGUMENTS), default="none",
+                         help="Navigation chrome around the home-navigation fixture; other workloads choose their own.")
     comparison = commands.add_parser("compare", help="Compare saved runs; never updates a baseline.")
     comparison.add_argument("baseline", type=Path)
     comparison.add_argument("candidate", type=Path)

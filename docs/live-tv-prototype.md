@@ -196,7 +196,7 @@ On Apple TV, Live TV remains inside the selected native tab/sidebar, including
 its normal title/header. Browsing never presents a separate fullscreen host or
 reparents the player to reveal navigation. One Back from the guide or browsing
 controls belongs to native navigation. The native sidebar also owns the leading
-direction from categories (Left in LTR, Right in RTL). Search, dialogs, pending
+direction from the category chips' Search button (Left in LTR, Right in RTL). Search, dialogs, pending
 channel preparation, and expanded playback retain their own Back handling.
 Menu round trips preserve the guide and playback session; a genuine
 destination/profile change still deactivates playback.
@@ -209,20 +209,36 @@ Automatic entry reuses the account's saved channel catalog. Explicit Refresh
 channels, Refresh sources, and retry actions bypass that cache and await the
 replacement, including when the saved playlist has no channels.
 
-Search and the active-channel artwork stay aligned, with an additional 16-point
-clearance below native navigation. Pinned navigation keeps its existing inset.
-The full-height Search/categories pane remains beside the guide during TV
-browsing. Moving focus between panes does not move or resize the guide.
-The category list remains lazy; no per-row animation timers or rasterized
-snapshots are used. Mobile layouts choose the sidebar or category directory
+On Apple TV the page follows the Apple TV app's guide. A programme header sits
+16 points below native navigation (pinned navigation keeps its existing inset):
+the channel's logo with a red LIVE badge while it airs, the title, subtitle,
+genre/time/language/rating, a progress bar with the time left (or when it
+starts), then **Watch Live** and circular Favorite, Program details,
+Multiviews and More (Manage channels, Filters, Sources, Guide time) buttons.
+Every header line keeps its place, so moving between programmes never moves
+the guide. Without a live preview, the focused programme's art spans the top
+of the page behind the header: one image, loaded once focus settles, with its
+fades painted in the page colour (no mask, no blur). The live preview's scrim
+is drawn only while a picture is playing behind the guide.
+
+Below the header, one chip row leads with Search, then All channels,
+Favorites, Recently watched (once a channel has been watched) and the source's
+categories. Chips are a single choice: each clears the others, and Recently
+watched narrows the guide to its row for the session. Left from the guide's
+channels focuses the chosen chip rather than opening the app menu; Up from
+the guide reaches the chips and then the header; Down returns to the guide
+where it was. Header and chips are flat see-through fills at rest and solid
+white with dark ink when focused, never glass, since they can sit over the
+preview. The guide's rows are 88 points: the channel number and logo, then
+programme cells with the title and "start–end · subtitle", stepped darker for
+aired and lighter for airing programmes. The focused cell is solid white with
+dark ink. A white pill on the ruler shows the time, and a thin line under it
+runs behind the rows. Mobile layouts choose the sidebar or category directory
 from the available window dimensions, not the device name.
 Native guide row hosts accept both growing and shrinking widths with leading
-alignment, so explicit-width programme timelines do not recenter independently
-of channels without listings during the sidebar transition.
+alignment, so explicit-width programme timelines do not recenter.
 Native-menu round trips, selected-category restoration, and preview-session
-identity have remote regressions; hosted rendered-pixel tests cover synchronized
-Search/Multiviews/category movement, mixed-source guide rows, guide travel, and
-rapid reversal.
+identity have remote regressions.
 
 ### IPTV accounts and large catalogues
 
@@ -551,7 +567,7 @@ On iPhone and iPad, source icons use the theme accent; server-enrollment status
 sits below a divider as secondary context.
 Light, dark, black, and the gradient-background preference remain respected.
 Pending catalogs keep the page layout in place with non-focusable skeletons for
-the info artwork/text, category column, channel logos, and programme cells. They
+the programme header, category chips, channel logos, and programme cells. They
 share the loaded guide's sizes/insets and Home's neutral fills/shimmer, including
 Reduce Motion behavior; normal startup never replaces the page with a loading
 message. The storage-opening stage uses that same layout. Already-loaded

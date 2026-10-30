@@ -123,10 +123,11 @@ final class LiveTVInitialLoadingHostedTests: XCTestCase {
             await Task.yield()
             window.layoutIfNeeded()
             loaded = try text(in: window)
-            if loaded.contains("Saved movie channel") { break }
+            // The TV header names the airing programme; its channel is a logo.
+            if loaded.contains("Fixture movie") { break }
             try await Task.sleep(for: .milliseconds(50))
         }
-        XCTAssertTrue(loaded.contains("Saved movie channel"), loaded)
+        XCTAssertTrue(loaded.contains("Fixture movie"), loaded)
         XCTAssertFalse(loaded.contains("Add your channels"), loaded)
         let content = XCTAttachment(image: DetailTransitionSnapshot.image(of: window))
         content.name = "Live TV loaded layout"

@@ -194,6 +194,16 @@ public struct RootView: View {
         )
     }
 
+    /// Server badge and name for each account, read by cards and heroes.
+    private var mediaSourceIdentities: [String: MediaSourceIdentity] {
+        Dictionary(
+            appState.accountsProviders.accounts.map {
+                ($0.id, MediaSourceIdentity(provider: $0.server.provider, serverName: $0.server.name))
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
     /// The identity of the whole signed-in subtree. Logged under the diagnostic
     /// flag because a change here throws away every `@State` below it — including
     /// Home's view model and its in-flight load.
@@ -881,6 +891,7 @@ public struct RootView: View {
         // rather than passed down because the mark is drawn beneath every row,
         // grid and shelf in the app.
         .environment(\.plozzSeerConnected, appState.seerService.isConfigured)
+        .environment(\.plozzMediaSourceIdentities, mediaSourceIdentities)
         .environment(\.plozzNavigationStyle, appState.profileSettings.navigationStyleModel.style)
         // Accessibility and user intent only. Performance does NOT enter here:
         // this reaches every glass surface in the app, including controls small

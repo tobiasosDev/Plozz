@@ -37,7 +37,8 @@ struct PlayerOptionsActions {
 ///  * **Options panel slot** — the now-playing title, which cross-fades to an open
 ///    options panel. It sits ABOVE the track-control row, so a menu always opens
 ///    over its own buttons rather than under them.
-///  * **Track controls** — Playback · Audio · Subtitles, directly above the scrub bar.
+///  * **Track controls** — round Playback · Audio · Subtitles · Version buttons,
+///    directly above the scrub bar at the trailing edge.
 ///    Reached by pressing **Up** from the scrub surface; Menu (or the idle
 ///    auto-hide) returns to the video, since nothing sits above them.
 ///  * **Scrub bar** — buffered/played fill + floating trickplay thumbnail.
@@ -148,18 +149,20 @@ struct PlayerControls: View {
         /// Leave the film for this person's own page.
         case castMore
         case row(Int)
-        case edit       // Subtitles header ✎ Edit (appearance) button
-        case download   // Trailing "Search for subtitles…" row
+        case edit       // Subtitles track list: Style (appearance) row
+        case download   // Subtitles track list: trailing "Download Subtitles…" row
         case subBack    // Back control inside an options sub-screen
-        case subSync    // Subtitles header Sync (timing) button
+        case subSync    // Subtitles track list: Subtitle Sync (timing) row
+        case dualSubtitles // Subtitles track list: Dual Subtitles row
     }
 
     enum AudioScreen: Equatable {
         case options, dialogue
     }
 
-    /// Sub-screens of the Subtitles panel. `tracks` is the default list; the
-    /// header ✎ Edit opens `style`, and the trailing row opens `download`. The
+    /// Sub-screens of the Subtitles panel. `tracks` is the default list; its
+    /// value rows open `styleDual`, `sync` and `style`, and the trailing row opens
+    /// `download`. The
     /// Style screen has its own detail sub-screens (`styleOutline` / `styleBackground`
     /// / `styleDual`). Back steps to a screen's PARENT rather than closing the panel.
     enum SubtitleScreen: Equatable {
@@ -202,7 +205,9 @@ struct PlayerControls: View {
     @FocusState private var focus: FocusSlot?
 
     /// Side margin shared by the controls layer and its trailing options panels.
-    private static let horizontalMargin: CGFloat = 60
+    /// The Apple TV app's 80pt page margin, so the title and the scrub bar start
+    /// on the same line as every other screen's content.
+    private static let horizontalMargin: CGFloat = 80
 
     /// Extra lift under an open options panel so it clears the transport instead of
     /// sitting right on top of the scrub bar.
@@ -477,7 +482,7 @@ struct PlayerControls: View {
             //
             // This holds the scrub bar in its focused shape for the whole reveal.
             // Excluding Cast meant that leaving it, focus returning to the scrub
-            // surface resized the bar (12→20 tall, knob 4→8) on the bar's OWN
+            // surface resized the bar (and its playhead) on the bar's OWN
             // 0.2s curve while the cluster carrying it travelled on the reveal's
             // 0.5s spring — the exact failure `ScrubBar` documents at the
             // `focused` line, and why only the bar looked wrong while everything
@@ -761,20 +766,20 @@ struct PlayerControls: View {
 
     // MARK: Title (episode line above the series title, bottom-left)
 
-    /// The episode line ("S1, E2 • Episode Title") sits *above* the prominent
-    /// series/movie title, Apple-TV style. The whole block lives at the bottom
-    /// just above the scrub bar and fades out fast while scrubbing so the scrub
-    /// surface stays uncluttered (the times stay).
+    /// The meta line ("S1, E2 • Episode Title", or "Movie · 2012 · 4K Dolby
+    /// Vision") sits *above* the prominent series/movie title, Apple-TV style.
+    /// The whole block lives at the bottom just above the scrub bar and fades out
+    /// fast while scrubbing so the scrub surface stays uncluttered (the times stay).
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            if !model.subtitle.isEmpty {
-                Text(model.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.85))
+        VStack(alignment: .leading, spacing: 8) {
+            if let metaLine = Self.metaLine(model: model) {
+                metaLine
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.88))
                     .lineLimit(1)
             }
             Text(model.title)
-                .font(.largeTitle.weight(.bold))
+                .font(.system(size: 56, weight: .bold))
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -786,13 +791,48 @@ struct PlayerControls: View {
         .allowsHitTesting(!model.isScrubbing)
     }
 
+    /// The line above the title. Episodes keep their "S1, E2 • Title" line; a
+    /// film reads "Movie · 2012 · 4K Dolby Vision", built from facts the Info
+    /// card already holds — the item's kind and year, and the picture badges
+    /// (audio formats stay on the card). `nil` when there is nothing to say.
+    static func metaLine(model: PlayerControlsModel) -> Text? {
+        if !model.subtitle.isEmpty { return Text(model.subtitle) }
+        let item = model.infoCard.artworkItem
+        var parts: [Text] = []
+        if item?.kind == .movie {
+            parts.append(Text(LocalizedStringResource(
+                "player.meta.movie",
+                defaultValue: "Movie",
+                comment: "Kind of title on the line above a film's name in the player, as in 'Movie · 2012 · 4K Dolby Vision'."
+            )))
+        }
+        let year = item?.productionYear ?? item?.releaseDate.map {
+            Calendar(identifier: .gregorian).dateComponents(in: .gmt, from: $0).year
+        } ?? nil
+        if let year { parts.append(Text(verbatim: String(year))) }
+        let picture = model.infoCard.badges.filter { badge in
+            switch badge.style {
+            case .prominent, .hdr: true
+            case .dolby: !badge.isAudio
+            default: false
+            }
+        }
+        if !picture.isEmpty {
+            parts.append(Text(verbatim: picture.map(\.label).joined(separator: " ")))
+        }
+        guard let first = parts.first else { return nil }
+        return parts.dropFirst().reduce(first) { $0 + Text(verbatim: " · ") + $1 }
+    }
+
     private var scrubberRow: some View {
-        VStack(spacing: 8) {
+        // The times hang just under the playhead, which stands proud of the
+        // thin bar by most of the gap a spacing here would add.
+        VStack(spacing: 0) {
             ScrubBar(
                 model: model,
                 palette: palette,
-                leadingInset: 60,
-                trailingInset: 60
+                leadingInset: Self.horizontalMargin,
+                trailingInset: Self.horizontalMargin
             )
                 .frame(height: 44)
                 .frame(maxWidth: .infinity)
@@ -839,16 +879,21 @@ struct PlayerControls: View {
         }
     }
 
-    /// The track controls (Playback · Audio · Subtitles), at the trailing edge their
-    /// panels open from. An open options panel floats above the whole transport, so
-    /// the menu always sits above its own buttons.
+    /// The track controls (Playback · Audio · Subtitles · Version), at the trailing
+    /// edge their panels open from. An open options panel floats above the whole
+    /// transport, so the menu always sits above its own buttons.
+    ///
+    /// Round glass buttons, the Apple TV app's track controls. The one whose menu
+    /// is open keeps the focused look, since the menu has taken focus from it.
     ///
     /// Faded out — not removed — whenever the Info card is up (the card owns the
     /// screen then), so hiding it never reflows the scrub bar.
     private var trackControlButtons: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 22) {
             ForEach(model.trackControlCategories, id: \.self) { category in
-                PlayerControlButton(category.title, systemImage: category.icon, prominent: openPanel == category) {
+                PlayerTrackControlButton(
+                    title: category.title, systemImage: category.icon, highlighted: openPanel == category
+                ) {
                     toggle(category)
                 }
                 .accessibilityIdentifier("player-control-\(category.icon)")
@@ -973,7 +1018,7 @@ struct PlayerControls: View {
 
     /// The revealed card's inset from the screen on all three of its free edges.
     /// Equal to the side margin by definition, so the card reads as evenly framed
-    /// rather than 12pt tighter at the bottom than at the sides.
+    /// rather than tighter at the bottom than at the sides.
     private static var infoCardInset: CGFloat { horizontalMargin }
 
     /// Extra bottom padding under the card, on top of the cluster's own margin, to
@@ -989,8 +1034,8 @@ struct PlayerControls: View {
     ///
     /// The stack is permanently in its revealed arrangement, so parking has two jobs:
     /// return the tab to its resting height, and put the card off-screen. Writing
-    /// H = `InfoPanelView.cardHeight` (258), pad = `infoCardBottomPad` (12),
-    /// gap = `infoCardGap` (32), margin = `bottomMargin` (48), so lift = 302:
+    /// H = `InfoPanelView.cardHeight` (258), pad = `infoCardBottomPad` (32),
+    /// gap = `infoCardGap` (32), margin = `bottomMargin` (48), so lift = 322:
     ///
     ///   revealed  tab bottom = bottom − margin − pad − H − gap
     ///   parked    tab bottom = that + lift = bottom − margin        ✓ resting height
@@ -1021,12 +1066,12 @@ struct PlayerControls: View {
 
     /// Bottom tabs switch the shared card rather than opening a floating menu.
     private var tabRow: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 18) {
             Button {
                 toggle(.info)
             } label: {
                 Label("Info", systemImage: "info.circle")
-                    .labelStyle(.titleOnly)
+                    .labelStyle(PlayerTabLabelStyle())
             }
             .buttonStyle(PlayerTabButtonStyle(focused: focus == .button(.info), selected: openPanel == .info))
             .reportSubtitleControlsFrame(
@@ -1040,7 +1085,8 @@ struct PlayerControls: View {
 
             if isTabVisible(.chapters) {
                 Button { toggle(.chapters) } label: {
-                    Text(Category.chapters.title)
+                    Label(Category.chapters.title, systemImage: Category.chapters.icon)
+                        .labelStyle(PlayerTabLabelStyle())
                 }
                 .buttonStyle(PlayerTabButtonStyle(
                     focused: focus == .button(.chapters), selected: openPanel == .chapters
@@ -1062,7 +1108,7 @@ struct PlayerControls: View {
                     toggle(.cast)
                 } label: {
                     Label(Category.cast.title, systemImage: Category.cast.icon)
-                        .labelStyle(.titleOnly)
+                        .labelStyle(PlayerTabLabelStyle())
                 }
                 .buttonStyle(PlayerTabButtonStyle(focused: focus == .button(.cast), selected: openPanel == .cast))
                 .reportSubtitleControlsFrame(
@@ -1075,7 +1121,8 @@ struct PlayerControls: View {
             }
             if isTabVisible(.episodes) {
                 Button { toggle(.episodes) } label: {
-                    Text(Category.episodes.title)
+                    Label(Category.episodes.title, systemImage: Category.episodes.icon)
+                        .labelStyle(PlayerTabLabelStyle())
                 }
                 .buttonStyle(PlayerTabButtonStyle(
                     focused: focus == .button(.episodes), selected: openPanel == .episodes
@@ -1086,7 +1133,8 @@ struct PlayerControls: View {
             }
             if isTabVisible(.playlist) {
                 Button { toggle(.playlist) } label: {
-                    Text(Category.playlist.title)
+                    Label(Category.playlist.title, systemImage: Category.playlist.icon)
+                        .labelStyle(PlayerTabLabelStyle())
                 }
                 .buttonStyle(PlayerTabButtonStyle(
                     focused: focus == .button(.playlist), selected: openPanel == .playlist
@@ -1230,8 +1278,8 @@ struct PlayerControls: View {
                     category: panel, model: model, palette: palette, actions: actions,
                     subtitleScreen: $subtitleScreen, heightCache: $cachedPanelHeight, focus: $focus,
                     close: { openPanel = nil }, backRequest: panelBackRequest,
-                    maximumHeight: max(0, availableHeight - Self.horizontalMargin
-                        - (styleEditing ? Self.horizontalMargin : menuBottomInset)),
+                    maximumHeight: max(0, availableHeight
+                        - (styleEditing ? 2 * Self.horizontalMargin : menuTopInset + menuBottomInset)),
                     playbackScreen: $playbackScreen, audioScreen: $audioScreen
                 )
                 .reportSubtitleControlsFrame(
@@ -1244,7 +1292,7 @@ struct PlayerControls: View {
                 if styleEditing { Spacer(minLength: 0) }
             }
             .padding(.horizontal, Self.horizontalMargin)
-            .padding(.top, Self.horizontalMargin)
+            .padding(.top, styleEditing ? Self.horizontalMargin : menuTopInset)
             // Rest just above the track controls. Their top edge is MEASURED rather
             // than derived from the transport's height: the buttons are one row inside
             // it, and that row's height is set by the much taller title block beside
@@ -1257,6 +1305,21 @@ struct PlayerControls: View {
             .padding(.bottom, styleEditing ? Self.horizontalMargin : menuBottomInset)
             .transition(.scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity))
         }
+    }
+
+    /// How far a bottom-anchored menu's top may come to the top of its layer:
+    /// whatever keeps the menu `horizontalMargin` from the SCREEN's top edge.
+    ///
+    /// The layer is laid out in a box that already starts below the screen edge
+    /// — it ends at `controlsBottom` and is `availableHeight` tall, so its top
+    /// is their difference (~120pt on tvOS) — and padding that box by the full
+    /// margin again held every menu ~120pt short of the margin, which cut the
+    /// Subtitles list's last rows. Shrinking the inset rather than lengthening
+    /// the budget keeps the layer inside its box: a taller layer would grow the
+    /// ZStack and shift the whole cluster (see `optionsPanelLayer`).
+    private var menuTopInset: CGFloat {
+        guard controlsBottom > 0, availableHeight > 0 else { return Self.horizontalMargin }
+        return max(0, Self.horizontalMargin - (controlsBottom - availableHeight))
     }
 
     /// Distance from the bottom of the controls layer up to the top of the track
@@ -1541,6 +1604,9 @@ struct PlayerControls: View {
         var marqueeTitle: Bool = false
         var submenu: PlayerOptionsRowSpec?
         var isExternal: Bool = false
+        /// Secondary qualifiers set beside the title on the same line ("SDH",
+        /// "Forced"), where `subtitle` is a second line beneath it.
+        var detail: Text?
         var facts: Text?
         var titleLineLimit: Int? = 1
         var versionPresentation: MediaVersion.PickerPresentation?
@@ -1648,7 +1714,12 @@ struct PlayerControls: View {
     /// does not propagate through `.hidden()` on tvOS — verified on-device, the
     /// preference never fired so the labels never clamped or faded.
     static func measuredTimeWidth(_ string: String) -> CGFloat {
-        let pointSize = UIFont.preferredFont(forTextStyle: .callout).pointSize
+        measuredTimeWidth(string, pointSize: UIFont.preferredFont(forTextStyle: .callout).pointSize)
+    }
+
+    /// The same measurement at a fixed size, for labels that don't use the
+    /// callout style (the VOD timeline's `PlayerTimelineTimes.fontSize`).
+    static func measuredTimeWidth(_ string: String, pointSize: CGFloat) -> CGFloat {
         let font = UIFont.monospacedDigitSystemFont(ofSize: pointSize, weight: .semibold)
         let bounds = (string as NSString).size(withAttributes: [.font: font])
         return ceil(bounds.width)
@@ -1672,14 +1743,16 @@ extension PlayerControlsModel {
     var subtitleTrackListFocus: PlayerControls.FocusSlot {
         guard hasSelectableSubtitles else {
             if subtitleDownload.canSearch { return .download }
-            return subtitleStyleAdjustable || !secondarySubtitleOptions.isEmpty ? .edit : .button(.subtitles)
+            if subtitleStyleAdjustable { return .edit }
+            return secondarySubtitleOptions.isEmpty ? .button(.subtitles) : .dualSubtitles
         }
         return .row(subtitleOptions.firstIndex(where: \.isSelected) ?? 0)
     }
 
     /// The track controls the current engine/source can actually offer, in the
-    /// order the track row lays them out: Playback · Audio · **Subtitles** (Subtitles
-    /// nearest the trailing edge, where its panel opens from).
+    /// order the track row lays them out: Playback · Audio · Subtitles · Version —
+    /// the Apple TV app's order, the per-title tracks together and the rarely
+    /// used version choice last.
     ///
     /// Lives on the model rather than the view so `CustomPlayerContainer` can ask
     /// the same question before dropping focus into the row on an Up press — an
@@ -1689,9 +1762,6 @@ extension PlayerControlsModel {
     /// removed. `Category.sync` + `syncPane` are kept so it can be restored later.
     var trackControlCategories: [PlayerControls.Category] {
         var result: [PlayerControls.Category] = []
-        if versions.isAvailable {
-            result.append(.version)
-        }
         if !engineCapabilities.intersection([.playbackSpeed, .videoZoom]).isEmpty {
             result.append(.playback)
         }
@@ -1700,6 +1770,9 @@ extension PlayerControlsModel {
         }
         if hasSelectableSubtitles || subtitleDownload.canSearch {
             result.append(.subtitles)
+        }
+        if versions.isAvailable {
+            result.append(.version)
         }
         return result
     }

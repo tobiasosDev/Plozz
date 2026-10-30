@@ -11,7 +11,11 @@ final class EpisodeColumnPresentationTests: XCTestCase {
             spoilerSettings: .default
         )
 
-        XCTAssertEqual(presentation.titleLine, Text(verbatim: "E4 · The Hidden Room"))
+        // The number and runtime move to the line above the title, as the Apple
+        // TV app labels its episode rail; the title stands alone.
+        XCTAssertEqual(presentation.titleLine, Text(verbatim: "The Hidden Room"))
+        XCTAssertNotNil(presentation.eyebrowLine)
+        XCTAssertTrue(presentation.accessibilityLabel.hasPrefix("E4 · The Hidden Room"))
         XCTAssertEqual(presentation.metadataText, "45m")
         XCTAssertNil(presentation.progress)
         XCTAssertFalse(presentation.isWatched)

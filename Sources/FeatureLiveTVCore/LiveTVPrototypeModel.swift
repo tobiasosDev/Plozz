@@ -216,6 +216,13 @@ private final class LiveTVPrototypePreferencesState {
     var issue: LiveTVPreferencesIssue?
 }
 
+/// Session-only narrowing that isn't one of the saved browse filters.
+@MainActor
+@Observable
+private final class LiveTVPrototypeScopeState {
+    var recentOnly = false
+}
+
 @MainActor
 @Observable
 private final class LiveTVPrototypeGuideState {
@@ -326,6 +333,19 @@ public final class LiveTVPrototypeModel {
             refreshVisibleChannels()
         }
     }
+
+    /// Narrows the guide to the channels watched most recently, newest first.
+    /// A browsing choice like the query, so it is not saved; category counts
+    /// ignore it, keeping the category list steady while it is on.
+    public var recentOnly: Bool {
+        get { scope.recentOnly }
+        set {
+            guard newValue != scope.recentOnly else { return }
+            scope.recentOnly = newValue
+            refreshVisibleChannels(refreshCategoryCounts: false)
+        }
+    }
+    private let scope = LiveTVPrototypeScopeState()
 
     /// Whether the guide opens with a Recently watched row. Recents are still
     /// recorded while it is off, so turning it back on restores the row.
@@ -717,7 +737,11 @@ public final class LiveTVPrototypeModel {
             channelOverrides: channelOverrides, browse: browsePreferences, favoriteMultiviews: favoriteMultiviews,
             organization: organization
         )) else { return false }
-        refreshGuideChannels()
+        if recentOnly {
+            refreshVisibleChannels(refreshCategoryCounts: false)
+        } else {
+            refreshGuideChannels()
+        }
         return true
     }
 
@@ -966,6 +990,7 @@ public final class LiveTVPrototypeModel {
         country = nil
         playlistSourceID = nil
         favoritesOnly = false
+        recentOnly = false
         guideOnly = false
         isBatchingFilterChanges = false
         refreshVisibleChannels()
@@ -1165,6 +1190,7 @@ public final class LiveTVPrototypeModel {
         let favoritesOnly = favoritesOnly
         let favoriteIDs = favoriteIDs
         let guideOnly = guideOnly
+        let recentIDs = recentOnly ? Set(recentChannelIDs) : nil
         let sort = sort
         let channels = channels
 
@@ -1201,7 +1227,7 @@ public final class LiveTVPrototypeModel {
         let visibleChannels = candidates.compactMap {
             index -> (index: Int, rank: Int, number: Int, id: String, name: String)? in
             let channel = channels[index]
-            guard isEligible(channel) else { return nil }
+            guard isEligible(channel), recentIDs?.contains(channel.id) ?? true else { return nil }
             if !matchingCategoryNames.isEmpty {
                 for category in channel.categories where matchingCategoryNames.contains(category) {
                     visibleCategoryMatches.insert(category)
@@ -1338,7 +1364,7 @@ public final class LiveTVPrototypeModel {
     }
 
     private func refreshGuideChannels() {
-        let recentIDs = showsRecentChannels ? recentChannelIDs : []
+        let recentIDs = showsRecentChannels || recentOnly ? recentChannelIDs : []
         let retainedIDs = Set(recentIDs).union(favoriteOrder)
         let visibleByID = retainedIDs.isEmpty ? [:] : Dictionary(
             uniqueKeysWithValues: visibleChannels.lazy.filter { retainedIDs.contains($0.id) }.map { ($0.id, $0) }
@@ -1348,9 +1374,10 @@ public final class LiveTVPrototypeModel {
         let favoriteIDs = favoriteIDs
         let favorites = favoriteOrder.compactMap { visibleByID[$0] }
             + visibleChannels.filter { favoriteIDs.contains($0.id) && !orderedIDs.contains($0.id) }
-        let groups: [(LiveTVGuideSection, [LiveTVPrototypeChannel])] = [
-            (.recent, recent), (.favorites, favorites), (.channels, visibleChannels)
-        ]
+        // Narrowed to recents, the lineup is the Recently watched row alone.
+        let groups: [(LiveTVGuideSection, [LiveTVPrototypeChannel])] = recentOnly
+            ? [(.recent, recent)]
+            : [(.recent, recent), (.favorites, favorites), (.channels, visibleChannels)]
         var updated: [LiveTVGuideChannel] = []
         updated.reserveCapacity(recent.count + favorites.count + visibleChannels.count)
         for (section, channels) in groups {

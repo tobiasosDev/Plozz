@@ -15,6 +15,7 @@ import UIKit
 struct DetailExtrasView: View {
     let item: MediaItem
     @Environment(\.plozzShowsContentRatings) private var showsContentRatings
+    @Environment(\.locale) private var locale
     var selectedSource: MediaSourceRef? = nil
     var selectedVersion: MediaVersion? = nil
     /// Leading inset so the cast row and chip strips align with the hero text
@@ -104,6 +105,32 @@ struct DetailExtrasView: View {
             || externalAvailability?.isEmpty == false
     }
 
+    /// Billed cast, then the director, writers and producers, each once. Crew
+    /// carry their job as the caption an actor's character would take.
+    private var castAndCrew: [MediaPerson] {
+        let crew = item.people.compactMap { person -> MediaPerson? in
+            guard !person.isCast, let label = Self.crewLabel(for: person.kind) else { return nil }
+            var person = person
+            if person.role?.isEmpty ?? true {
+                var label = label
+                label.locale = locale
+                person.role = String(localized: label)   // l10n:content — MediaPerson caption sink; re-resolved with the live locale on every render
+            }
+            return person
+        }
+        var seen = Set<String>()
+        return (item.cast + crew).filter { seen.insert($0.id).inserted }
+    }
+
+    private static func crewLabel(for kind: String?) -> LocalizedStringResource? {
+        switch kind?.lowercased() {
+        case "director": LocalizedStringResource("Director", comment: "Caption under a crew member in the Cast & Crew row.")
+        case "writer": LocalizedStringResource("Writer", comment: "Caption under a crew member in the Cast & Crew row.")
+        case "producer": LocalizedStringResource("Producer", comment: "Caption under a crew member in the Cast & Crew row.")
+        default: nil
+        }
+    }
+
     private var showsExtras: Bool {
         guard onSelectExtra != nil else { return false }
         switch extrasState {
@@ -136,9 +163,25 @@ struct DetailExtrasView: View {
                     ))
                     .id("detail-extras-media")
                 }
-                // Above the cast: "what else is like this" is a browsing decision,
-                // and the viewer is making it now. Who was in it is reference
-                // material they look up afterwards.
+                // Who made it comes first, as in the Apple TV app; Related
+                // follows as the next thing to browse.
+                if !castAndCrew.isEmpty {
+                    CastRowView(
+                        title: LocalizedStringResource("Cast & Crew", comment: "Detail page row of actors followed by the director, writers and producers."),
+                        people: castAndCrew,
+                        leadingInset: leadingInset,
+                        onFocusEntered: onCastFocusEntered
+                    )
+                        // Detail pages use a fixed composition; profile display
+                        // density belongs to browse cards, not this cast rail.
+                        .environment(\.plozzMetrics, .standard)
+                        .modifier(SeriesCastRevealModifier(
+                            model: seriesRecedeModel,
+                            revealsWithoutBrowser: revealsSeriesCastWithoutBrowser,
+                            suppressesFocus: suppressesFocus
+                        ))
+                        .id("detail-extras-cast")
+                }
                 // Every section carries an EXPLICIT identity.
                 //
                 // `showsRelated` flips as Related resolves, which inserts or
@@ -162,22 +205,6 @@ struct DetailExtrasView: View {
                         suppressesFocus: suppressesFocus
                     ))
                     .id("detail-extras-related")
-                }
-                if !item.cast.isEmpty {
-                    CastRowView(
-                        people: item.cast,
-                        leadingInset: leadingInset,
-                        onFocusEntered: onCastFocusEntered
-                    )
-                        // Detail pages use a fixed composition; profile display
-                        // density belongs to browse cards, not this cast rail.
-                        .environment(\.plozzMetrics, .standard)
-                        .modifier(SeriesCastRevealModifier(
-                            model: seriesRecedeModel,
-                            revealsWithoutBrowser: revealsSeriesCastWithoutBrowser,
-                            suppressesFocus: suppressesFocus
-                        ))
-                        .id("detail-extras-cast")
                 }
                 DetailInformationSections(
                     item: item,

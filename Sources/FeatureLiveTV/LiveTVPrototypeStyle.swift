@@ -14,12 +14,16 @@ enum PrototypeLayout {
     #if os(iOS)
     static let rowGap = cellGap
     static let columnGap = cellGap
-    #else
-    static let rowGap = PlozzTheme.Spacing.medium
-    static let columnGap = PlozzTheme.Spacing.small
-    #endif
     static let rowInset = PlozzTheme.Spacing.medium
     static let logoRadius = PlozzTheme.Metrics.Radius.content
+    #else
+    // The TV guide is the Apple TV app's: 88-point rows a small gap apart,
+    // so four of them fit under the programme header.
+    static let rowGap = PlozzTheme.Spacing.small
+    static let columnGap = PlozzTheme.Spacing.medium
+    static let rowInset = PlozzTheme.Spacing.small
+    static let logoRadius = PlozzTheme.Spacing.xSmall
+    #endif
     /// Concentric with the logo plate on a TV and a tablet. A phone's short
     /// rows (`compactRowHeight`) turned that radius into a full capsule, so
     /// its cells get the TV's proportion instead: squarer, like the tvOS grid.
@@ -43,20 +47,38 @@ enum PrototypeLayout {
     static let controlInset = PlozzTheme.Spacing.xSmall
     static let controlGroupRadius = controlRadius + controlInset
     #if os(tvOS)
+    /// The Apple TV app's content keyline: header, chips and channels line up on it.
+    static let keyline: CGFloat = 80
     static let inset = PlozzTheme.Spacing.xLarge
-    static let stationSize: CGFloat = 96
+    static let stationSize: CGFloat = 64
     static let controlHeight: CGFloat = 56
-    static let guideFontSize: CGFloat = 26
+    static let guideFontSize: CGFloat = 24
+    static let detailFontSize: CGFloat = 19
     static let sectionFontSize: CGFloat = 22
+    /// The channel number's slot ahead of the logo in the station cell.
+    static let channelNumberWidth: CGFloat = 40
+    /// Station logos sit on a wide plate beside their number.
+    static let stationPlateAspect: CGFloat = 2.5
+    static let programPadding: CGFloat = 20
+    /// The programme header's fixed lines (see `PrototypeProgramHeader`), so
+    /// moving between programmes never moves the guide below it.
+    static let headerHeight: CGFloat = 352
     #else
     static let inset = PlozzTheme.Spacing.medium
     static let stationSize: CGFloat = 80
     static let controlHeight: CGFloat = 44
     static let guideFontSize: CGFloat = 16
+    static let detailFontSize: CGFloat = 13
     static let sectionFontSize: CGFloat = 14
+    static let stationPlateAspect: CGFloat = 1.75
+    static let programPadding = rowInset
     #endif
     static let rowHeight = stationSize + rowInset * 2
-    static let stationColumnWidth = stationSize * 1.75 + rowInset * 2
+    #if os(tvOS)
+    static let stationColumnWidth = channelNumberWidth + stationSize * stationPlateAspect + rowInset * 3
+    #else
+    static let stationColumnWidth = stationSize * stationPlateAspect + rowInset * 2
+    #endif
     static var guideShape: UnevenRoundedRectangle {
         #if os(tvOS)
         let bottom: CGFloat = 0
@@ -93,6 +115,7 @@ enum PrototypeLayout {
     static let toolbarGuideGap: CGFloat = sectionGap
     static let rulerGap: CGFloat = gap
     #endif
+    static let chipHeight: CGFloat = 50
     static let compactStationWidth: CGFloat = 88
     static let compactRowHeight: CGFloat = 64
 
@@ -230,13 +253,14 @@ struct PrototypeStationMark: View {
     var size: CGFloat = PrototypeLayout.stationSize
     var plateSize: CGSize? = nil
     var cornerRadius: CGFloat = PrototypeLayout.logoRadius
+    var insetOverride: CGFloat? = nil
 
     private var dimensions: CGSize {
         plateSize ?? CGSize(width: size * 1.75, height: size)
     }
 
     private var artworkInset: CGFloat {
-        plateSize == nil ? 6 : PrototypeLayout.stationArtworkInset
+        insetOverride ?? (plateSize == nil ? 6 : PrototypeLayout.stationArtworkInset)
     }
 
     var body: some View {
@@ -268,12 +292,13 @@ struct PrototypeButtonStyle: ButtonStyle {
     var selected = false
     var padded = true
     var surface: PrototypeButtonSurface = .standard
+    var tier: PrototypeProgramTier = .future
     var focusChanged: ((Bool) -> Void)?
 
     func makeBody(configuration: Configuration) -> some View {
         PrototypeButtonBody(
             configuration: configuration, selected: selected, padded: padded,
-            surface: surface, focusChanged: focusChanged
+            surface: surface, tier: tier, focusChanged: focusChanged
         )
     }
 }
@@ -282,11 +307,22 @@ enum PrototypeButtonSurface: Equatable {
     case standard, guide, station, program, control
 }
 
+/// Where a programme sits against the clock. The guide steps its cells from
+/// dim (aired) through raised (on now) so the present reads without a fill.
+enum PrototypeProgramTier: Equatable {
+    case past, now, future
+
+    init(start: Date, end: Date, now: Date) {
+        self = end <= now ? .past : (start <= now ? .now : .future)
+    }
+}
+
 private struct PrototypeButtonBody: View {
     let configuration: ButtonStyle.Configuration
     let selected: Bool
     let padded: Bool
     let surface: PrototypeButtonSurface
+    let tier: PrototypeProgramTier
     let focusChanged: ((Bool) -> Void)?
     @Environment(\.isFocused) private var focused
     @Environment(\.themePalette) private var palette
@@ -294,9 +330,16 @@ private struct PrototypeButtonBody: View {
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var solidFocus: Bool {
+        #if os(tvOS)
+        // Every focused guide cell is the Apple TV app's: solid, with dark ink.
+        focused
+        #else
         focused && surface != .station
             && ((surface != .guide && surface != .program) || reduceTransparency || contrast == .increased)
+        #endif
     }
+
+    private var emphasis: Double { reduceTransparency || contrast == .increased ? 1.5 : 1 }
 
     private var cornerRadius: CGFloat {
         switch surface {
@@ -312,9 +355,23 @@ private struct PrototypeButtonBody: View {
         if focused || selected { return palette.fill }
         switch surface {
         case .standard: return palette.cardSurface
-        case .guide, .station: return .clear
+        case .guide: return .clear
+        case .station:
+            #if os(tvOS)
+            return palette.primaryText.opacity(0.06 * emphasis)
+            #else
+            return .clear
+            #endif
         case .program:
+            #if os(tvOS)
+            switch tier {
+            case .past: return palette.primaryText.opacity(0.07 * emphasis)
+            case .now: return palette.primaryText.opacity(0.15 * emphasis)
+            case .future: return palette.primaryText.opacity(0.1 * emphasis)
+            }
+            #else
             return palette.fillSubtle.opacity(reduceTransparency || contrast == .increased ? 1 : 0.45)
+            #endif
         case .control: return .clear
         }
     }
@@ -395,9 +452,11 @@ struct PrototypeGuideSurface: View {
 }
 
 /// One glass underlay, not a glass layer per programme or a focus-dependent style.
+/// It can sit over the live preview, so it follows the player's glass setting:
+/// devices that can't afford glass over video get the blur-free frosted fill.
 struct PrototypeControlSurface: View {
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
-    @Environment(\.plozzReducePanelGlass) private var reduceGlass
+    @Environment(\.plozzReducePlayerGlass) private var reduceGlass
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: PrototypeLayout.controlGroupRadius, style: .continuous)
@@ -412,6 +471,75 @@ struct PrototypeControlSurface: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// The programme header's actions and the category chips. They sit over the
+/// programme art or the live preview, so at rest they are a flat see-through
+/// fill with a hairline edge, never glass: nothing samples the video behind
+/// them. Focus is the Apple TV's solid white with dark ink and a small lift.
+struct PrototypeHeaderButtonStyle: ButtonStyle {
+    enum Shape { case capsule, circle, chip }
+    var shape: Shape = .capsule
+    /// Watch Live: solid at rest too, the page's one filled action.
+    var prominent = false
+    /// A chosen chip keeps its fill when focus moves on.
+    var selected = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        PrototypeHeaderButtonBody(
+            configuration: configuration, shape: shape, prominent: prominent, selected: selected)
+    }
+}
+
+private struct PrototypeHeaderButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    let shape: PrototypeHeaderButtonStyle.Shape
+    let prominent: Bool
+    let selected: Bool
+    @Environment(\.isFocused) private var focused
+    @Environment(\.themePalette) private var palette
+    @Environment(\.plozzReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var solid: Bool { focused || prominent }
+
+    private var ink: Color {
+        if solid { return palette.onAccent }
+        return shape == .chip && !selected ? palette.secondaryText : palette.primaryText
+    }
+
+    var body: some View {
+        Group {
+            switch shape {
+            case .circle: surfaced(Circle())
+            case .capsule, .chip: surfaced(Capsule(style: .continuous))
+            }
+        }
+        .scaleEffect(configuration.isPressed ? 0.96 : (focused ? 1.06 : 1))
+        // A plain filled shape's shadow, only while lifted.
+        .shadow(color: .black.opacity(focused ? 0.4 : 0), radius: focused ? 16 : 0, y: focused ? 10 : 0)
+        // Not dimmed when disabled: the guide disables the header while it has
+        // focus. An action that can't run says so itself.
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: focused)
+    }
+
+    private func surfaced<S: InsettableShape>(_ outline: S) -> some View {
+        configuration.label
+            .foregroundStyle(ink)
+            .background {
+                if solid {
+                    outline.fill(palette.accent)
+                } else if shape != .chip || selected {
+                    if reduceTransparency {
+                        outline.fill(palette.cardSurface)
+                            .overlay { outline.strokeBorder(palette.cardBorder, lineWidth: 1) }
+                    } else {
+                        outline.fill(palette.primaryText.opacity(0.14)).plozzFrostedBorder(outline)
+                    }
+                }
+            }
+            .contentShape(outline)
     }
 }
 

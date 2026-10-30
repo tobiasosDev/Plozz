@@ -203,3 +203,155 @@ struct PrototypeBrowseSidebar: View {
         }
     }
 }
+
+/// What one of the guide's chips narrows it to.
+enum PrototypeGuideScope: Hashable {
+    case all, favorites, recent
+    case category(String)
+}
+
+extension LiveTVPrototypeModel {
+    /// Picks one chip: the chips are a single choice, so each clears the others.
+    func showScope(_ scope: PrototypeGuideScope) {
+        favoritesOnly = scope == .favorites
+        recentOnly = scope == .recent
+        if case .category(let name) = scope { category = name } else { category = nil }
+    }
+
+    func isShowing(_ scope: PrototypeGuideScope) -> Bool {
+        switch scope {
+        case .all: category == nil && !favoritesOnly && !recentOnly
+        case .favorites: favoritesOnly
+        case .recent: recentOnly
+        case .category(let name): category == name
+        }
+    }
+
+    /// The chip focus returns to: the narrowest choice in effect.
+    var currentScope: PrototypeGuideScope {
+        if let category { return .category(category) }
+        if recentOnly { return .recent }
+        return favoritesOnly ? .favorites : .all
+    }
+}
+
+#if os(tvOS)
+/// Focus within the chip row. The page owns it, so its automatic focus can
+/// prefer the chosen chip over the header above it.
+enum PrototypeChipFocus: Hashable {
+    case search
+    case scope(PrototypeGuideScope)
+}
+
+/// The guide's categories as the Apple TV app's chip row, led by Search.
+/// A chip narrows the guide at once and keeps focus here; Down returns to the
+/// guide where it was, Up reaches the programme header, and Left from the
+/// guide's channels comes back here.
+struct PrototypeCategoryChips: View {
+    @Bindable var model: LiveTVPrototypeModel
+    @Binding var active: Bool
+    let focusRequest: Int
+    var categoryFocusRequest = 0
+    let search: () -> Void
+    let select: (PrototypeGuideScope) -> Void
+    let focus: FocusState<PrototypeChipFocus?>.Binding
+    /// Focus is coming back from outside Live TV: only the chosen chip takes it.
+    var onlyChosen = false
+
+    private var scopes: [PrototypeGuideScope] {
+        var scopes: [PrototypeGuideScope] = [.all, .favorites]
+        // Offered once something was watched, unless the Recently watched row is off.
+        if (model.showsRecentChannels && !model.recentChannelIDs.isEmpty) || model.recentOnly {
+            scopes.append(.recent)
+        }
+        return scopes + model.browsingCategories.map { .category($0.name) }
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 12) {
+                    Button(action: search) {
+                        Label("Search", systemImage: "magnifyingglass")
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 24, weight: .semibold))
+                            .frame(width: PrototypeLayout.chipHeight, height: PrototypeLayout.chipHeight)
+                    }
+                    .buttonStyle(PrototypeHeaderButtonStyle(shape: .circle))
+                    .focused(focus, equals: .search)
+                    .disabled(onlyChosen)
+                    .accessibilityValue(model.query)
+                    .accessibilityIdentifier("live-tv-search")
+                    #if DEBUG
+                    .modifier(PrototypeBrowseLayoutObservation(element: "sidebar-search"))
+                    #endif
+                    ForEach(scopes, id: \.self) { scope in
+                        chip(scope)
+                            .id(PrototypeChipFocus.scope(scope))
+                    }
+                }
+                // On the guide's channel column.
+                .padding(.leading, PrototypeLayout.guideInset)
+            }
+            // Like a tvOS shelf: chips scroll to the screen edge, and the focused
+            // one lifts past the row instead of being cut off.
+            .scrollClipDisabled()
+            .scrollIndicators(.hidden)
+            .frame(height: PrototypeLayout.chipHeight)
+            .accessibilityIdentifier("live-tv-category-list")
+            .onChange(of: categoryFocusRequest) { _, request in
+                guard request > 0 else { return }
+                proxy.scrollTo(PrototypeChipFocus.scope(model.currentScope), anchor: .center)
+                focus.wrappedValue = .scope(model.currentScope)
+            }
+        }
+        .focusSection()
+        .onChange(of: focus.wrappedValue) { _, target in
+            if target != nil { active = true }
+        }
+        .onChange(of: focusRequest) { _, request in
+            guard request > 0 else { return }
+            focus.wrappedValue = .search
+        }
+    }
+
+    private func chip(_ scope: PrototypeGuideScope) -> some View {
+        let selected = model.isShowing(scope)
+        return Button { select(scope) } label: {
+            HStack(spacing: 10) {
+                if scope == .favorites {
+                    Image(systemName: "star.fill").font(.system(size: 20, weight: .semibold))
+                }
+                title(scope)
+            }
+            .font(.system(size: 23, weight: .semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 22)
+            .frame(height: PrototypeLayout.chipHeight)
+        }
+        .buttonStyle(PrototypeHeaderButtonStyle(shape: .chip, selected: selected))
+        .focused(focus, equals: .scope(scope))
+        .disabled(onlyChosen && scope != model.currentScope)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(identifier(scope))
+    }
+
+    @ViewBuilder private func title(_ scope: PrototypeGuideScope) -> some View {
+        switch scope {
+        case .all: Text("All channels")
+        case .favorites: Text("Favorites")
+        case .recent: Text("Recently watched")
+        case .category(let name): Text(verbatim: name)
+        }
+    }
+
+    private func identifier(_ scope: PrototypeGuideScope) -> String {
+        switch scope {
+        case .all: "live-tv-sidebar-category-all"
+        case .favorites: "live-tv-scope-favorites"
+        case .recent: "live-tv-scope-recent"
+        case .category(let name): "live-tv-sidebar-category-\(name)"
+        }
+    }
+}
+#endif

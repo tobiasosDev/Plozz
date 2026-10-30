@@ -185,7 +185,9 @@ final class HeroLogoPresentationHostedTests: XCTestCase {
             let image = UIGraphicsImageRenderer(bounds: fixture.window.bounds).image { _ in
                 fixture.window.drawHierarchy(in: fixture.window.bounds, afterScreenUpdates: true)
             }
-            let terms = ["The Hidden Room", "Across the stars", "The final signal"]
+            // "Episode 4" heads the caption and the synopsis gives up its third
+            // line for it, so the caption keeps the rail's height.
+            let terms = ["Episode 4", "The Hidden Room", "Across the stars", "An explorer"]
             let frames = try textInkFrames(in: image, terms: terms)
             let currentArtwork = try XCTUnwrap(redBounds(in: fixture.window))
             if step == 0 {
@@ -199,7 +201,7 @@ final class HeroLogoPresentationHostedTests: XCTestCase {
                 XCTAssertGreaterThan(frame.minY, currentArtwork.maxY)
                 XCTAssertLessThan(
                     frame.maxY, currentArtwork.minY + SeriesEpisodeBrowserLayout.episodeRailHeight,
-                    "All three caption lines must fit the existing rail."
+                    "Every caption line must fit the existing rail."
                 )
             }
             XCTAssertEqual(currentArtwork.width, try XCTUnwrap(artwork).width, accuracy: 1)

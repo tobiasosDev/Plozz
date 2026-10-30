@@ -275,7 +275,7 @@ struct DetailHeroView: View, Equatable {
     /// to the hero top" correction (see ``onHeroActionFocused``); the per-button
     /// bool focus states above still own their local colour/behaviour tweaks.
     private enum HeroRowAction: Hashable {
-        case play, trailer, watchlist, watched, refresh, more, request, parent
+        case play, trailer, watchlist, watched, refresh, version, more, request, parent
     }
 
     /// The action-row control that currently holds focus, or `nil` when focus is
@@ -367,6 +367,8 @@ struct DetailHeroView: View, Equatable {
     /// the colour scheme into account — otherwise its white fill vanishes against
     /// the light unfocused button in light mode.
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.locale) private var locale
+    @Environment(\.plozzMediaSourceIdentities) private var mediaSourceIdentities
 
     @State private var presentationCache = HeroPresentationCache()
     /// A backdrop for this page that is deliberately NOT the one Home is showing,
@@ -798,9 +800,30 @@ struct DetailHeroView: View, Equatable {
     }
 
     private static let creditColumnWidth: CGFloat = 440
+    /// "Movie" / "TV Show", leading the line under the title as in the Apple TV
+    /// app. Resolved here because the line is one joined `String`.
+    private var heroKindLabel: String? {
+        // An episode page leads with its own breadcrumb, not its show's type. A
+        // series page focused on an episode still reads as the show.
+        guard !presentsEpisodeStill else { return nil }
+        return HeroForegroundModelBuilder.kindLabel(for: backdropItem ?? item).map { resource in
+            var resource = resource
+            resource.locale = locale
+            return String(localized: resource)   // l10n:content — joined into the metadata line; re-resolved on every render with the live app locale
+        }
+    }
+
+    /// "Jellyfin · Living Room": the server the selected source plays from.
+    private var heroSourceLine: String? {
+        let accountID = selectedSourceAccountID ?? item.sourceAccountID
+        guard let identity = accountID.flatMap({ mediaSourceIdentities[$0] }) else { return nil }
+        return identity.provider.displayName + " · " + identity.serverName
+    }
+
     private var showsCreditColumn: Bool {
         !presentsEpisodeStill
-            && (!starringCastValues.isEmpty || !directorValues.isEmpty || !animeStudioValues.isEmpty)
+            && (!starringCastValues.isEmpty || !directorValues.isEmpty || !animeStudioValues.isEmpty
+                || heroSourceLine != nil)
     }
 
     var body: some View {
@@ -924,6 +947,7 @@ struct DetailHeroView: View, Equatable {
             // under the title; ratings and capability badges follow as one chip
             // row, and the description comes last.
             let factParts = comps
+            let kindParts = heroKindLabel.map { [$0] } ?? []
             let showRatings = !heroRatings.isEmpty || heroFamilyGuidanceAge != nil
 
             // Line 1: content-rating certificate + genres. Same hoisting as the
@@ -935,7 +959,7 @@ struct DetailHeroView: View, Equatable {
                         MediaBadgeChip(badge: badge)
                     }
                     if !genreParts.isEmpty || !factParts.isEmpty {
-                        Text((genreParts + factParts).joined(separator: "  ·  "))
+                        Text((kindParts + genreParts + factParts).joined(separator: "  ·  "))
                             .font(.system(size: PlozzTypography.heroMetadata.scaled(by: textScale).pointSize, weight: .medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -1011,6 +1035,14 @@ struct DetailHeroView: View, Equatable {
                     if (playTitle != nil && onPlay != nil) || showsPlayPlaceholder {
                         playButton(title: playTitle ?? "Play", action: onPlay)
                     }
+                    // The Apple TV app's order: what you do with the title
+                    // (save it, mark it) before the trailer and the overflow.
+                    if let heroWatchlistAction {
+                        watchlistButton(action: heroWatchlistAction)
+                    }
+                    if let heroWatchedAction {
+                        watchedButton(action: heroWatchedAction)
+                    }
                     if let onPlayTrailer {
                         Button(action: onPlayTrailer) {
                             trailerButtonLabel
@@ -1019,17 +1051,14 @@ struct DetailHeroView: View, Equatable {
                         .focused($heroActionRowFocus, equals: .trailer)
                         .accessibilityIdentifier("detail-hero-trailer")
                     }
-                    if let heroWatchlistAction {
-                        watchlistButton(action: heroWatchlistAction)
-                    }
-                    if let heroWatchedAction {
-                        watchedButton(action: heroWatchedAction)
-                    }
                     // The breadcrumb above the title carries this on an episode
                     // page; the icon button is the fallback for any other hero
                     // that gains a parent.
                     if !presentsEpisodeStill, let heroParentNavigationAction {
                         parentNavigationButton(action: heroParentNavigationAction)
+                    }
+                    if showsVersionPill {
+                        versionPill()
                     }
                     if showsMoreMenu {
                         moreMenu()
@@ -1137,6 +1166,12 @@ struct DetailHeroView: View, Equatable {
                         DetailHeroCreditLine(
                             label: "Based on",
                             values: [sourceMaterial]
+                        )
+                    }
+                    if let heroSourceLine {
+                        DetailHeroCreditLine(
+                            label: LocalizedStringResource("From", comment: "Detail hero credit label before the server a title plays from, e.g. From Jellyfin · Living Room."),
+                            values: [heroSourceLine]
                         )
                     }
                 }
@@ -1620,8 +1655,41 @@ struct DetailHeroView: View, Equatable {
     /// hosting the title, or more than one playable version on the active server.
     private var showsMoreMenu: Bool {
         (serverChoices.count > 1 && onSelectSource != nil)
-            || (versions.count > 1 && onSelectVersion != nil)
             || heroMenuActions.contains(.browseFiles)
+    }
+
+    private var showsVersionPill: Bool {
+        versions.count > 1 && onSelectVersion != nil
+    }
+
+    /// "Version  4K Remux": the file Play will use, named beside the actions as
+    /// the concept shows it, opening the same picker the context menu does.
+    private func versionPill() -> some View {
+        let selected = versions.first(where: { $0.id == selectedVersionID }) ?? versions.first
+        let name = selected.flatMap {
+            MediaVersion.PickerPresentation($0, locale: locale).titleWithoutBadges ?? $0.name
+        }
+        return Button {
+            cancelPendingPrimaryAction()
+            isVersionPickerPresented = true
+        } label: {
+            HStack(spacing: 12 * textScale) {
+                Text(LocalizedStringResource(
+                    "detail.hero.versionPill", defaultValue: "Version",
+                    comment: "Detail hero button before the selected file's name, e.g. Version 4K Remux. Opens the version picker."
+                ))
+                    .opacity(0.62)
+                if let name {
+                    Text(verbatim: name)
+                        .lineLimit(1)
+                }
+            }
+            .font(.system(size: 26 * textScale, weight: .semibold))
+            .frame(maxWidth: 420 * textScale)
+        }
+        .modifier(HeroActionButtonStyle(prominent: false))
+        .focused($heroActionRowFocus, equals: .version)
+        .accessibilityIdentifier("detail-hero-version")
     }
 
     /// A single subtle trailing "…" menu that folds BOTH the cross-server picker

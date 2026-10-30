@@ -136,9 +136,20 @@ final class HeroForegroundModelTests: XCTestCase {
 
     // MARK: - metadataText
 
-    func testMetadataTextJoinsYearAndGenresWithHeroSeparator() {
-        let text = Builder.metadataText(for: movie(year: 2021, genres: ["Action", "Drama"]))
-        XCTAssertEqual(text, "2021  ·  Action  ·  Drama")
+    func testMetadataTextReadsKindGenresThenYearLikeTheAppleTVApp() {
+        let item = movie(year: 2021, genres: ["Action", "Drama"])
+        XCTAssertEqual(Builder.metadataText(for: item), "Action  ·  Drama  ·  2021")
+        XCTAssertEqual(Builder.metadataText(for: item, kindLabel: "Movie"), "Movie  ·  Action  ·  Drama  ·  2021")
+    }
+
+    func testKindLabelNamesFilmsAndShowsOnly() {
+        XCTAssertNotNil(Builder.kindLabel(for: movie()))
+        var episode = movie()
+        episode.kind = .episode
+        XCTAssertNotNil(Builder.kindLabel(for: episode), "An episode slide stands for its show.")
+        var collection = movie()
+        collection.kind = .collection
+        XCTAssertNil(Builder.kindLabel(for: collection))
     }
 
     func testMetadataTextIsNilWhenNoComponents() {
@@ -146,9 +157,9 @@ final class HeroForegroundModelTests: XCTestCase {
         XCTAssertNil(Builder.metadataText(for: bare))
     }
 
-    func testMetadataTextCapsGenresAtThree() {
+    func testMetadataTextCapsGenresAtTwo() {
         let item = movie(year: nil, genres: ["A", "B", "C", "D", "E"])
-        XCTAssertEqual(Builder.metadataText(for: item), "A  ·  B  ·  C")
+        XCTAssertEqual(Builder.metadataText(for: item), "A  ·  B")
     }
 
     // MARK: - seasonEpisodeButtonText

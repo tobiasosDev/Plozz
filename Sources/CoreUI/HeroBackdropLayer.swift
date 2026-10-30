@@ -234,6 +234,8 @@ public extension View {
 /// same as the detail hero's original backdrop.
 public struct HeroBackdropLayer<Video: View>: View {
     @Environment(\.plozzArtworkPolicy) private var artworkPolicy
+    @Environment(\.gradientBackgroundsEnabled) private var gradientBackgroundsEnabled
+    @Environment(\.themePalette) private var palette
     #if os(tvOS)
     @Environment(\.detailEntranceSession) private var detailEntrance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -331,6 +333,37 @@ public struct HeroBackdropLayer<Video: View>: View {
     }
 
     public var body: some View {
+        dissolvedSurface
+            .offset(y: verticalOffset)
+            // Break out of the tvOS overscan safe area so the backdrop spans the full
+            // screen edge to edge — across the top too, otherwise the top overscan
+            // inset shows through as a black bar above the artwork. Skipped when the
+            // caller tiles several cells (the Home hero filmstrip) and applies the
+            // breakout once at the container instead.
+            .modifier(OverscanBreakout(enabled: ignoresOverscan))
+    }
+
+    /// On a flat page the bottom dissolve is painted in the page colour instead
+    /// of masking the surface. Over the palette's solid background the two are
+    /// pixel-identical, but a mask over the backdrop and its trailer costs an
+    /// offscreen pass on every presented video frame, which an A10X Apple TV
+    /// cannot spare. A gradient page shows through the dissolve, so it keeps the mask.
+    @ViewBuilder
+    private var dissolvedSurface: some View {
+        if gradientBackgroundsEnabled {
+            surface.mask(dissolveMask)
+        } else {
+            surface.overlay {
+                paintedDissolve.allowsHitTesting(false)
+            }
+            // The mask also clipped what the trailer and scrim draw past the
+            // backdrop's bounds; a plain rectangular clip keeps that without an
+            // offscreen pass.
+            .clipped()
+        }
+    }
+
+    private var surface: some View {
         FallbackAsyncImage(
             references: references,
             maxAspectRatio: 3.0,
@@ -364,14 +397,6 @@ public struct HeroBackdropLayer<Video: View>: View {
         // below). Empty today — no layout or visual effect on the image-only path.
         .overlay { backgroundVideo() }
         .overlay(scrim)
-        .mask(dissolveMask)
-        .offset(y: verticalOffset)
-        // Break out of the tvOS overscan safe area so the backdrop spans the full
-        // screen edge to edge — across the top too, otherwise the top overscan
-        // inset shows through as a black bar above the artwork. Skipped when the
-        // caller tiles several cells (the Home hero filmstrip) and applies the
-        // breakout once at the container instead.
-        .modifier(OverscanBreakout(enabled: ignoresOverscan))
     }
 
     /// Details have no rail: retain the softer upper corner for every navigation
@@ -419,6 +444,20 @@ public struct HeroBackdropLayer<Video: View>: View {
             edgePeak: 0.55,
             edges: [.leading, .bottom],
             sideDarkeningStart: 0.34
+        )
+    }
+
+    /// `dissolveMask` inverted into page colour: where the mask kept `a` of the
+    /// backdrop, this paints the page at `1 - a`.
+    private var paintedDissolve: some View {
+        LinearGradient(
+            stops: [
+                .init(color: palette.backgroundBase.opacity(0), location: 0.0),
+                .init(color: palette.backgroundBase.opacity(0), location: dissolveStart),
+                .init(color: palette.backgroundBase, location: 1.0)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
         )
     }
 

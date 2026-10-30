@@ -3,15 +3,18 @@ import SwiftUI
 import CoreModels
 import CoreUI
 
-/// The Search screen: a `.searchable` field over a sectioned poster grid of
-/// results (Movies / TV Shows / Episodes), with the standard loading, empty and
-/// error states.
+/// The Search screen: a `.searchable` field with title completions over one
+/// horizontal poster row per kind of result (Movies / TV Shows / Episodes), as
+/// the TV app lays out its results, with the standard loading, empty and error
+/// states.
 public struct SearchView: View {
     @State private var viewModel: SearchViewModel
     private let spoilerSettings: SpoilerSettings
     private let onSelect: (MediaItem) -> Void
 
     @Environment(\.plozzMetrics) private var metrics
+    @Environment(\.plozzCardStyle) private var cardStyle
+    @Environment(\.plozzMediaSourceIdentities) private var sourceIdentities
     @Environment(\.plozzPinnedSidebarInteraction) private var pinnedSidebarInteraction
     @FocusState private var focusedResultID: String?
 
@@ -29,7 +32,16 @@ public struct SearchView: View {
     public var body: some View {
         content
             .environment(\.plozzCardCaptionView, .search)
+            // Results mix servers, so each caption names the one it plays from.
+            .environment(\.plozzCardCaptionSourceNames, sourceIdentities)
+            .environment(\.plozzCardCaptionLeading, true)
             .searchable(text: $viewModel.query, prompt: "Search movies, shows, and episodes")
+            // tvOS draws these as the TV app's chip row under the keyboard.
+            .searchSuggestions {
+                ForEach(viewModel.suggestions, id: \.self) { suggestion in
+                    Text(verbatim: suggestion).searchCompletion(suggestion)
+                }
+            }
             .task(id: viewModel.query) { await viewModel.search() }
             .onChange(of: focusedResultID, initial: true) { _, resultID in
                 pinnedSidebarInteraction?.setSearchResultsFocused(resultID != nil)
@@ -66,35 +78,14 @@ public struct SearchView: View {
     }
 
     private func results(_ sections: [SearchSection]) -> some View {
-        // Shared dense "Browse" wall — identical column count and gutters to the
-        // library grid (both from the live density metrics), so Search and
-        // Library read as the same surface and scale together.
-        let columns = metrics.posterColumns
-        return ScrollView {
+        ScrollView {
             LazyVStack(alignment: .leading, spacing: metrics.rowSpacing) {
                 ForEach(sections) { section in
                     VStack(alignment: .leading, spacing: metrics.sectionTitleSpacing) {
                         Text(section.title)
-                            .font(.system(size: metrics.sectionHeaderFontSize, weight: .bold))
+                            .font(.system(size: metrics.sectionHeaderFontSize, weight: .semibold))
                             .padding(.leading, PlozzTheme.Metrics.screenPadding)
-
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: metrics.gridSpacing) {
-                            ForEach(section.items) { item in
-                                PosterCardView(
-                                    item: item,
-                                    style: .poster,
-                                    spoilerSettings: spoilerSettings,
-                                    statusCue: SearchSection.availabilityCue(for: item)
-                                ) {
-                                    onSelect(item)
-                                }
-                                .focused($focusedResultID, equals: item.stablePresentationID)
-                            }
-                        }
-                        .padding(.horizontal, PlozzTheme.Metrics.screenPadding)
-                        // Give focus room so the lifted card isn't clipped.
-                        .padding(.vertical, metrics.sectionTitleSpacing)
-                        .focusSection()
+                        resultRow(section)
                     }
                 }
             }
@@ -103,6 +94,39 @@ public struct SearchView: View {
         // Never clip a focused card's lift, shadow or border.
         .scrollClipDisabled()
         .scrollsTopNavigation()
+    }
+
+    /// One horizontal row of a section's results. Each card is as wide as a
+    /// column of the shared poster wall, so Search and Library posters match
+    /// and scale together with the density setting.
+    private func resultRow(_ section: SearchSection) -> some View {
+        ScrollView(.horizontal) {
+            LazyHStack(alignment: .top, spacing: metrics.gridSpacing) {
+                ForEach(section.items) { item in
+                    PosterCardView(
+                        item: item,
+                        style: .poster,
+                        spoilerSettings: spoilerSettings,
+                        statusCue: SearchSection.availabilityCue(for: item)
+                    ) {
+                        onSelect(item)
+                    }
+                    .containerRelativeFrame(
+                        .horizontal, count: metrics.posterGridColumns, spacing: metrics.gridSpacing
+                    )
+                    .focused($focusedResultID, equals: item.stablePresentationID)
+                }
+            }
+            // Line the visible artwork up with the section title, not the
+            // card's transparent focus margin.
+            .padding(.leading, metrics.cardRowLeadingPadding(PlozzTheme.Metrics.screenPadding, cardStyle: cardStyle))
+            .padding(.trailing, PlozzTheme.Metrics.screenPadding)
+            // Give focus room so the lifted card isn't clipped.
+            .padding(.vertical, metrics.sectionTitleSpacing)
+        }
+        .scrollIndicators(.hidden)
+        .scrollClipDisabled()
+        .focusSection()
     }
 }
 

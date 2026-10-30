@@ -24,7 +24,8 @@ final class LiveTVSkeletonLayoutTests: XCTestCase {
             )
             let frame = layout.contentFrame.offsetBy(dx: safeArea.leading, dy: safeArea.top)
             XCTAssertEqual(frame.minY, 140)
-            XCTAssertEqual(frame.minX, 96)
+            // The channels sit on the bar's keyline, the guide surface its inset before.
+            XCTAssertEqual(frame.minX, 96 - PrototypeLayout.guideInset)
             XCTAssertEqual(frame.maxX, 1840)
             XCTAssertEqual(layout.bounds.offsetBy(dx: safeArea.leading, dy: safeArea.top),
                            CGRect(x: 0, y: 0, width: 1920, height: 1080))

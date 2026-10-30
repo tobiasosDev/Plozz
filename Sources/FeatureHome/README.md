@@ -662,21 +662,31 @@ records on both platforms; error dialogs, playback routing and timeouts are unch
   top inset across Recommended, Browse, Collections, and Playlists (a transparent
   `Group` would attach the inset to each replaceable content branch).
   Library pages discard the native container's top-bar inset and reserve only
-  screen-safe spacing plus clearance for the native sidebar's visible page button.
+  screen-safe spacing. As in the TV app, the mode tabs are a capsule segmented
+  control centred on the row of the native sidebar's page button ("‹ Movies"),
+  with Filter and Sort at the trailing end of that row; a page without mode tabs
+  keeps its title below the page button instead. A root top tab bar keeps its
+  clearance. `LibraryHeaderRowLayout` moves the centred control aside only when
+  it would overlap the title or the trailing controls.
   The outer focus host and Recommended content both break out at the trailing
   edge so artwork reaches the screen edge; headers and grids retain their safe
-  margins, including the custom pinned rail's foreground inset. Home is unchanged.
-  The mode container, Showcase details and row headings, scan banner, and visible
-  grid-card surfaces share one keyline across Recommended, Browse, Collections,
-  and Playlists. There is no grid-only sidebar offset. Both grid implementations
+  margins, including the custom pinned rail's foreground inset, which also
+  shifts the centre of the mode control. Home is unchanged.
+  Showcase details and row headings, the scan banner, and visible grid-card
+  surfaces share one keyline across Recommended, Browse, Collections, and
+  Playlists. There is no grid-only sidebar offset. Both grid implementations
   use `cardRowLeadingPadding`, as Home rows do, to compensate for invisible
   borderless-card margins rather than aligning padded slots. Framed cards align
   their outer surface. Switching pages must not move or resize the navigation.
-  Focus changes a tab's contrast, not its size, preserving the container's even
-  6pt inner padding. Pressed feedback remains unchanged.
-  Sort sits on that same top navigation line alongside Filter and file browsing.
-  Filter and Sort form a compact pair. Alphabet navigation stays on the
-  scrolling rail; there is no separate Jump to letter button.
+  White marks where the viewer is: the focused tab while focus is in the
+  control, otherwise the selected tab, with dark ink. The selected tab keeps a
+  faint tint while focus is on another tab. Focus changes a tab's contrast, not
+  its size, preserving the container's even 6pt inner padding. The capsule is a
+  frosted fill, not a Material, since it sits on a flat page.
+  Sort sits on that same top navigation line alongside Filter and file browsing,
+  as frosted pills that turn white under focus. Filter and Sort form a compact
+  pair. Alphabet navigation stays on the scrolling rail; there is no separate
+  Jump to letter button.
   Without mode tabs, the library/share display name occupies the left of the
   same header, with controls on the right; it does not add a focus target.
   A persistent tvOS focus owner encloses the header and grid, preserving

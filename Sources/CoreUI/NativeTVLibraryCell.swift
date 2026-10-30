@@ -382,30 +382,33 @@ public final class NativeTVLibraryCell: UICollectionViewCell, DetailTransitionFo
         caption.isHidden = environment.plozzCardCaptionsHidden
         let metrics = environment.plozzMetrics
         let palette = environment.themePalette
-        let color = UIColor(isFocused ? palette.primaryText : palette.secondaryText)
         let scrolls = isFocused && !caption.isHidden && !environment.accessibilityReduceMotion
         caption.semanticContentAttribute =
             environment.layoutDirection == .rightToLeft
             ? .forceRightToLeft : .forceLeftToRight
         if let item {
+            // The TV app's library caption: a leading-aligned title over dimmed
+            // metadata, at rest and under focus alike.
             caption.title.configure(
                 text: item.posterCaptionTitle(spoilerSettings: spoilerSettings).resolve(locale: environment.locale),
                 font: .systemFont(ofSize: metrics.cardTitleFontSize, weight: .semibold),
-                color: color, scrolls: scrolls
+                color: UIColor(palette.primaryText), scrolls: scrolls, centersShortText: false
             )
             caption.subtitle.configure(
                 text: item.posterCaptionSubtitle() ?? " ",
                 font: .systemFont(ofSize: metrics.cardSubtitleFontSize),
-                color: color, scrolls: scrolls
+                color: UIColor(palette.secondaryText), scrolls: scrolls, centersShortText: false
             )
         } else {
             caption.title.configurePlaceholder(
                 font: .systemFont(ofSize: metrics.cardTitleFontSize, weight: .semibold),
-                color: UIColor(palette.fill), widthFraction: 0.7, height: (16 * metrics.scale).rounded()
+                color: UIColor(palette.fill), widthFraction: 0.7, height: (16 * metrics.scale).rounded(),
+                centered: false
             )
             caption.subtitle.configurePlaceholder(
                 font: .systemFont(ofSize: metrics.cardSubtitleFontSize),
-                color: UIColor(palette.fill), widthFraction: 0.45, height: (13 * metrics.scale).rounded()
+                color: UIColor(palette.fill), widthFraction: 0.45, height: (13 * metrics.scale).rounded(),
+                centered: false
             )
         }
         caption.setFocused(

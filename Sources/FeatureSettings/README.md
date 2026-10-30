@@ -629,11 +629,28 @@ watch history and planning-list behavior are documented in
   indicator previews. White remains the default; changes update the previews
   immediately and persist/transfer per profile. Narrow mobile layouts scroll
   horizontally instead of wrapping or shrinking the 44pt controls.
-- `SettingsView` / `SettingsWorkspace` — tvOS shows one centered page at a time.
-  The root contains profile identity and the category list, without a preview pane.
-  Categories and ordinary descendants share `SettingsFormMetrics.pageWidth`;
-  entering and returning fades between those equally sized pages with a short
-  directional movement, without resizing or sliding across the screen.
+- `SettingsView` / `SettingsWorkspace` — tvOS shows one page at a time. The
+  root is split like tvOS Settings: `SettingsRootLayout` puts a non-focusable
+  preview of the focused category (gradient icon tile, its description and who
+  it applies to) on the leading side and a 940pt list on the trailing side.
+  The root page layer stays the stack's ordinary centred column; the list is
+  drawn at the trailing margin with an offset and the preview beside it, sized
+  from the viewport the stack reports (`settingsPageViewport`). The list's
+  scroll view stops one focus outset short of the title-safe edge, where a
+  scroll view adapts to the safe area and shifted under the top bar. There is
+  no "Settings" title in the list: with one, re-entering Settings from the
+  profile picker's cog left focus on the top bar.
+  Only `SettingsRootPreview` observes the focused category, so moving through
+  the list re-renders the preview alone, instantly and without transitions.
+  Where a pinned sidebar leaves too little room, the preview is dropped, the
+  list centres and rows keep their explanatory subtitles. Root rows are
+  separate rounded cards (`settingsRowCards`): the group surface at rest, the
+  inverted focus card grown slightly past it. Trailing values are only those
+  already in memory (theme, navigation style, counts, On/Off). The household
+  rows follow an "Everyone" caption.
+  Categories and ordinary descendants share `SettingsFormMetrics.pageWidth`,
+  centred; entering and returning fades between pages with a short
+  directional movement, without resizing.
   Back from a category restores its selected row and retained scroll position;
   Back from a child returns one page. Playback initially owns focus, not a second pane.
   The remembered category only restores navigation: native focus owns the row's
@@ -641,10 +658,6 @@ watch history and planning-list behavior are documented in
   or any other root control must not leave an inactive category highlighted.
   The avatar/name switches profiles; the adjacent
   Edit action uses the same `ProfileActionsList` as the profile picker.
-  Profile and Everyone headers share title weight/size, icon width, label gap
-  and content insets so their icons and names align. Everyone's scope glyph sits
-  inside a circle the same size as the profile avatar. The separators beneath
-  these two headers span the full card; category-row separators stay text-aligned.
   `SettingsFormLayout` groups related controls into one vertical form, retaining
   child pages for longer editors. Single-control preferences such as Language
   use one compact label-and-control row without an extra heading or explanatory
@@ -687,7 +700,8 @@ watch history and planning-list behavior are documented in
   Music, so they remain visible before discovery or while a server is offline.
   Profile categories start with Playback, Subtitles,
   Live TV and Libraries, then Appearance, Screens & Navigation, Trackers and Language.
-  Appearance, Screens & Navigation and Trackers retain concise explanatory subtitles.
+  Each category's description is in the root preview; without the preview,
+  Appearance, Screens & Navigation and Trackers show concise subtitles instead.
   Artwork remains profile-owned; Metadata Providers remains shared under Everyone.
   Kids profiles retain their existing parental authorization and household restrictions.
   About is a compact

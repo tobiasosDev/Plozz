@@ -28,6 +28,12 @@ so audio keeps playing as the user navigates the rest of the app.
 - **Mini-player & Now Playing** — `MiniPlayerView` + `NowPlayingView`
   observe the **same** injected `AudioPlaybackController` instance from
   the environment.
+  Now Playing's backdrop is the album art blurred once into a 96-point bitmap
+  (`NowPlayingBackdrop`), never a live blur or an animated mesh, so the
+  backdrop costs nothing between track changes. Its glass controls and scrub track
+  fall back to frosted/flat surfaces under Reduce Transparency and the
+  player-glass reduction (Apple TV HD and 4K first generation). The controls
+  stay up while playback is paused.
 - **Artwork** — `MusicArtworkImage` + `MusicCard` render through
   `CoreUI.FallbackAsyncImage`. Server art is always tried first; if it's
   missing, `MusicArtworkFallback` produces an async closure that asks

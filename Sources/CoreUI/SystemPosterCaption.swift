@@ -22,15 +22,20 @@ struct SystemPosterCaption: UIViewRepresentable {
         let direction: UISemanticContentAttribute = context.environment.layoutDirection == .rightToLeft
             ? .forceRightToLeft : .forceLeftToRight
         if view.semanticContentAttribute != direction { view.semanticContentAttribute = direction }
+        // A leading caption reads as the TV app's: a primary title over dimmed
+        // metadata, focused or not.
+        let leading = context.environment.plozzCardCaptionLeading
         view.title.configure(
             text: title.resolve(locale: context.environment.locale),
             font: .systemFont(ofSize: metrics.cardTitleFontSize, weight: .semibold),
-            color: color, scrolls: scrolls
+            color: leading ? UIColor(palette.primaryText) : color, scrolls: scrolls,
+            centersShortText: !leading
         )
         view.subtitle.configure(
             text: subtitle ?? (reservesSubtitleSpace ? " " : ""),
             font: .systemFont(ofSize: metrics.cardSubtitleFontSize),
-            color: color, scrolls: scrolls
+            color: leading ? UIColor(palette.secondaryText) : color, scrolls: scrolls,
+            centersShortText: !leading
         )
         view.setProviderBadge(
             providerKind, transport: mediaShareTransport, size: metrics.cardTitleFontSize,
@@ -252,7 +257,9 @@ public final class NativePosterCaptionLine: UIView {
         if changesLayout { setNeedsLayout() }
     }
 
-    func configurePlaceholder(font: UIFont, color: UIColor, widthFraction: CGFloat, height: CGFloat) {
+    func configurePlaceholder(
+        font: UIFont, color: UIColor, widthFraction: CGFloat, height: CGFloat, centered: Bool = true
+    ) {
         label.text = nil
         label.font = font
         label.isHidden = true
@@ -261,6 +268,7 @@ public final class NativePosterCaptionLine: UIView {
         scrolls = false
         placeholderWidthFraction = widthFraction
         placeholderHeight = height
+        centersShortText = centered
         placeholder.backgroundColor = color
         placeholder.isHidden = false
         setNeedsLayout()
@@ -280,11 +288,14 @@ public final class NativePosterCaptionLine: UIView {
         super.layoutSubviews()
         if let fraction = placeholderWidthFraction {
             let width = (bounds.width * fraction).rounded()
+            let x = centersShortText
+                ? (bounds.width - width) / 2
+                : (effectiveUserInterfaceLayoutDirection == .rightToLeft ? bounds.width - width : 0)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             layer.mask = nil
             placeholder.frame = CGRect(
-                x: (bounds.width - width) / 2, y: (lineHeight - placeholderHeight) / 2,
+                x: x, y: (lineHeight - placeholderHeight) / 2,
                 width: width, height: placeholderHeight
             )
             placeholder.layer.cornerRadius = placeholderHeight / 2

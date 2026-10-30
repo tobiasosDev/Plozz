@@ -262,6 +262,7 @@ struct HomeHeroView: View {
     /// way `Text` does; it is not the eager, resolve-once-and-freeze pattern the
     /// l10n guard forbids elsewhere.
     @Environment(\.locale) private var locale
+    @Environment(\.plozzMediaSourceIdentities) private var mediaSourceIdentities
 
     #if DEBUG
     /// Debug-only live override for the hero foreground renderer, so the two
@@ -1251,6 +1252,11 @@ struct HomeHeroView: View {
             resolvedScheduleLine = nil
         }
         let slideIndex = items.firstIndex(where: { $0.id == item.id }) ?? index
+        let kindLabel = HeroForegroundModelBuilder.kindLabel(for: item).map { resource in
+            var resource = resource
+            resource.locale = locale
+            return String(localized: resource)   // l10n:content — UILabel boundary; resolved with the live app locale on every render
+        }
         return HeroForegroundModelBuilder.model(
             item: item,
             overviewVisible: true,
@@ -1264,6 +1270,8 @@ struct HomeHeroView: View {
             slideCount: items.count,
             slideIndex: slideIndex,
             scheduleLine: resolvedScheduleLine,
+            kindLabel: kindLabel,
+            sourceProvider: mediaSourceIdentities.identity(for: item)?.provider,
             dotsAutoAdvance: dotsAutoAdvance,
             dotsDwellStart: dotsDwellStart,
             dotsDwellDuration: dotsDwellDuration,

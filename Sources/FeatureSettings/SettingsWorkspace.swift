@@ -227,24 +227,8 @@ enum SettingsWorkspaceHeaderMetrics {
     static let iconSize: CGFloat = 52
     static let titleFont: Font = .system(size: 36, weight: .bold)
     static let labelSpacing = PlozzTheme.Spacing.medium
-    static let outerInset = SettingsFormMetrics.groupInset
     static let controlInset = PlozzTheme.Spacing.xSmall
-    static let contentInset = outerInset + controlInset
     static let profileLabelHeight: CGFloat = 84
-}
-
-struct SettingsWorkspaceScopeBadge: View {
-    let syncEnabled: Bool
-    @Environment(\.themePalette) private var palette
-
-    var body: some View {
-        Image(systemName: syncEnabled ? "person.2" : "appletv")
-            .font(.system(size: SettingsWorkspaceHeaderMetrics.iconSize / 2))
-            .frame(width: SettingsWorkspaceHeaderMetrics.iconSize,
-                   height: SettingsWorkspaceHeaderMetrics.iconSize)
-            .background(Circle().fill(palette.fillSubtle))
-            .overlay(Circle().strokeBorder(palette.cardBorder, lineWidth: 1))
-    }
 }
 
 struct SettingsWorkspaceProfileHeader: View {
@@ -255,7 +239,9 @@ struct SettingsWorkspaceProfileHeader: View {
     @Environment(SettingsNavigationModel.self) private var navigation
 
     var body: some View {
-        HStack(spacing: 12) {
+        // The root's first card: switching is the row itself; editing keeps its
+        // own button beside it, so both stay one press away.
+        HStack(spacing: SettingsRowCardMetrics.focusOutset + PlozzTheme.Spacing.small) {
             Button(action: onSwitch) {
                 SettingsWorkspaceProfileLabel(profile: profile)
             }
@@ -272,7 +258,6 @@ struct SettingsWorkspaceProfileHeader: View {
             }
         }
         .disabled(navigation.focusInDetail || navigation.restoringSidebar || navigation.enteringDetail)
-        .padding(SettingsWorkspaceHeaderMetrics.outerInset)
     }
 }
 

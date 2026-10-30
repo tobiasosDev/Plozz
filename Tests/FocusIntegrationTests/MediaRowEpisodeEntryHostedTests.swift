@@ -216,7 +216,10 @@ final class MediaRowEpisodeEntryHostedTests: XCTestCase {
             XCTAssertEqual(focusedY - initialY, reduceMotion ? 0 : push, accuracy: 2,
                            "\(style): the title itself must move down by the reserved clearance.")
             if !loading {
-                _ = try recognizedText("A secret behind the door", in: screenshot(window))
+                // The synopsis now sits under "Episode 4" and the title, where the
+                // simulator's text recognition garbles the end of the small
+                // secondary line ("A secret penina une aoor."); its start reads.
+                _ = try recognizedText("A secret", in: screenshot(window))
             }
             capture(window, system: system, name: "episode-caption-focused-\(style)-\(loading)-\(reduceMotion)")
 
@@ -250,7 +253,7 @@ final class MediaRowEpisodeEntryHostedTests: XCTestCase {
         try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
         let observation = try XCTUnwrap(request.results?.first {
             $0.topCandidates(1).first?.string.contains(value) == true
-        }, "Missing rendered text: \(value)")
+        }, "Missing rendered text: \(value) in \((request.results ?? []).compactMap { $0.topCandidates(1).first?.string })")
         let bounds = observation.boundingBox
         return CGRect(
             x: bounds.minX * image.size.width, y: (1 - bounds.maxY) * image.size.height,
@@ -346,8 +349,9 @@ final class MediaRowEpisodeEntryHostedTests: XCTestCase {
                     separator: " ")
                 XCTAssertEqual(
                     copy.contains("The Hidden Room"), visible, "\(style) / \(preference) / \(override): \(copy)")
+                // The designation reads "Episode 4" on the line above the title.
                 XCTAssertEqual(
-                    copy.contains("E4"), visible, "\(style): the episode designation belongs to the caption.")
+                    copy.contains("Episode 4"), visible, "\(style): the episode designation belongs to the caption.")
                 let attachment = XCTAttachment(image: rendered)
                 attachment.name = "detail-episode-labels-\(style)-\(preference)-\(override)"
                 attachment.lifetime = .keepAlways

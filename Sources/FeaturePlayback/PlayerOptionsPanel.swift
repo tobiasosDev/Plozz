@@ -54,6 +54,9 @@ struct PlayerOptionsPanel: View {
     /// Which menu `bodyHeight` was last measured for: a first measurement snaps,
     /// a later one within the same menu (tracks ↔ Style) animates.
     @State private var measuredFor: Category?
+    /// Whether the Dual Subtitles screen was opened from the track list rather
+    /// than from inside the Style editor, so Back returns to where it came from.
+    @State private var dualOpenedFromTracks = false
 
     init(
         category: Category, model: PlayerControlsModel, palette: ThemePalette,
@@ -122,7 +125,7 @@ struct PlayerOptionsPanel: View {
             .onChange(of: model.subtitleStyleAdjustable) { _, _ in reconcileSubtitleScreen() }
             .onChange(of: backRequest) { _, _ in
                 if category == .subtitles, subtitleScreen != .tracks {
-                    openSubtitleScreen(subtitleScreen.parent)
+                    openSubtitleScreen(subtitleBackTarget)
                 } else if category == .playback, playbackScreen != .options {
                     openPlaybackScreen(playbackScreen.parent)
                 } else if category == .audio, audioScreen != .options {
@@ -260,18 +263,30 @@ struct PlayerOptionsPanel: View {
         }
     }
 
-    /// The tallest a scrollable list (track list / Audio / Speed / Sync) may grow
+    /// The tallest a scrollable list (Audio / Speed / Sync / Download) may grow
     /// before it clamps + scrolls. Style screens use the remaining host viewport.
-    private static let panelBodyMaxHeight: CGFloat = 440
+    static let panelBodyMaxHeight: CGFloat = 440
 
-    static func bodyHeightLimit(maximumHeight: CGFloat, headerHeight: CGFloat, styleFamily: Bool) -> CGFloat {
+    /// The Subtitles track list's own, taller cap: it also carries the Dual
+    /// Subtitles, Sync, Style and Download rows under its tracks, and the Apple
+    /// TV app shows such a menu whole — a film's handful of tracks plus all four
+    /// settings fit (~10 rows) before it scrolls.
+    static let trackListBodyMaxHeight: CGFloat = 620
+
+    static func bodyHeightLimit(
+        maximumHeight: CGFloat, headerHeight: CGFloat, styleFamily: Bool, cap: CGFloat = panelBodyMaxHeight
+    ) -> CGFloat {
         guard maximumHeight.isFinite, headerHeight.isFinite else { return 0 }
         let available = max(0, maximumHeight - max(0, headerHeight) - PlozzFrostedSurface.dividerHeight)
-        return styleFamily ? available : min(panelBodyMaxHeight, available)
+        return styleFamily ? available : min(cap, available)
     }
 
     private var maximumBodyHeight: CGFloat {
-        Self.bodyHeightLimit(maximumHeight: maximumHeight, headerHeight: headerHeight, styleFamily: styleEditing)
+        Self.bodyHeightLimit(
+            maximumHeight: maximumHeight, headerHeight: headerHeight, styleFamily: styleEditing,
+            cap: category == .subtitles && subtitleScreen == .tracks
+                ? Self.trackListBodyMaxHeight : Self.panelBodyMaxHeight
+        )
     }
 
     /// The floating options panel for every non-info category. A *single*
@@ -307,7 +322,10 @@ struct PlayerOptionsPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             panelHeader(for: category)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
-            frostAwareDivider
+            // A screen's own title is a header bar, set off by a rule; a menu's
+            // top level has only a quiet section label (see `panelHeader`), which
+            // reads as part of the list beneath it.
+            if hasBackControl(for: category) { frostAwareDivider }
             morphingBody(category: category) { panelBodyContent(for: category) }
         }
         // Hard-swap the panel chrome + content on the tracks↔Style flip instead of
@@ -465,25 +483,32 @@ struct PlayerOptionsPanel: View {
         }
     }
 
-    /// Header of the floating panel: the screen title, plus — on the Subtitles
-    /// track list — a trailing ✎ Edit (appearance) button, and — on a Subtitles
-    /// sub-screen — a leading Back chevron.
+    /// Whether the open screen is a sub-screen, whose header leads with Back.
+    private func hasBackControl(for category: Category) -> Bool {
+        (category == .subtitles && subtitleScreen != .tracks)
+            || (category == .playback && playbackScreen != .options)
+            || (category == .audio && audioScreen != .options)
+    }
+
+    /// Header of the floating panel. A menu's top level gets a small secondary
+    /// section label ("Subtitles"), the Apple TV app's menus; a sub-screen gets
+    /// its title with a leading Back chevron, so it mirrors the other menus
+    /// rather than floating inside the scrollable content. (The Subtitles track
+    /// list's Sync and Style entries are rows of the list now, not header chips.)
     @ViewBuilder
     private func panelHeader(for category: Category) -> some View {
-        HStack(spacing: 14) {
-            // On a Subtitles sub-screen (Style / Download), the Back control lives
-            // in the header — leading the title — so it mirrors the other menus
-            // rather than floating inside the scrollable content.
-            if (category == .subtitles && subtitleScreen != .tracks)
-                || (category == .playback && playbackScreen != .options)
-                || (category == .audio && audioScreen != .options) {
+        let title = Text(Self.headerTitle(
+            for: category, subtitleScreen: subtitleScreen, playbackScreen: playbackScreen, audioScreen: audioScreen
+        ))
+        if hasBackControl(for: category) {
+            HStack(spacing: 14) {
                 Button {
                     if category == .playback {
                         openPlaybackScreen(playbackScreen.parent)
                     } else if category == .audio {
                         openAudioScreen(.options)
                     } else {
-                        openSubtitleScreen(subtitleScreen.parent)
+                        openSubtitleScreen(subtitleBackTarget)
                     }
                 } label: {
                     Image(systemName: "chevron.backward")
@@ -494,59 +519,28 @@ struct PlayerOptionsPanel: View {
                 // Pull the chip past the header gutter so it hugs the panel's
                 // leading edge, concentric with the rounded corner.
                 .padding(.leading, -10)
+                title
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                Spacer(minLength: 12)
             }
-            Text(Self.headerTitle(
-                for: category, subtitleScreen: subtitleScreen, playbackScreen: playbackScreen, audioScreen: audioScreen
-            ))
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(Color.primary)
-            Spacer(minLength: 12)
-            if category == .subtitles && subtitleScreen == .tracks {
-                // Timing (Sync) chip — only when the app's overlay owns the active
-                // subtitle, so the app-side offset can actually shift it. Sits left
-                // of Style; opens a compact delay screen. Icon-only (clock) so the
-                // header fits the title plus both chips.
-                if model.subtitleDelayAdjustable {
-                    Button {
-                        openSubtitleScreen(.sync)
-                    } label: {
-                        Image(systemName: "clock")
-                            .accessibilityLabel("Subtitle Sync")
-                    }
-                    .buttonStyle(PlozzPanelHeaderButtonStyle())
-                    .focusEffectDisabled()
-                    .focused($focus, equals: .subSync)
-                }
-                if model.subtitleStyleAdjustable {
-                    Button {
-                        openSubtitleScreen(.style)
-                    } label: {
-                        Label("Style", systemImage: "paintpalette")
-                    }
-                    .buttonStyle(PlozzPanelHeaderButtonStyle())
-                    .focusEffectDisabled()
-                    .focused($focus, equals: .edit)
-                    .padding(.trailing, -10)
-                } else if offersDualSubtitles && !model.secondarySubtitleOptions.isEmpty {
-                    Button {
-                        openSubtitleScreen(.styleDual)
-                    } label: {
-                        Label("Dual Subtitles", systemImage: "captions.bubble")
-                    }
-                    .buttonStyle(PlozzPanelHeaderButtonStyle())
-                    .focusEffectDisabled()
-                    .focused($focus, equals: .edit)
-                    .padding(.trailing, -10)
-                }
-            }
+            .padding(.horizontal, 28)
+            .padding(.top, 18)
+            .padding(.bottom, 18)
+            // Group the header as a focus section so directional focus can reach it
+            // from anywhere below — e.g. pressing Up from the right (+) chip of the
+            // sync stepper lands on Back even though nothing is geometrically above it.
+            .plozzFocusSection()
+        } else {
+            title
+                .font(.footnote.weight(.semibold))
+                .plozzForeground(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // In line with the rows' selection column below.
+                .padding(.horizontal, 30)
+                .padding(.top, 24)
+                .accessibilityAddTraits(.isHeader)
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 18)
-        .padding(.bottom, 18)
-        // Group the header as a focus section so directional focus can reach it
-        // from anywhere below — e.g. pressing Up from the right (+) chip of the
-        // sync stepper lands on Back even though nothing is geometrically above it.
-        .plozzFocusSection()
     }
 
     static func headerTitle(
@@ -614,10 +608,13 @@ struct PlayerOptionsPanel: View {
     }
 
     /// The Subtitles track list: one full-width column of selectable tracks
-    /// (incl. "Off"), then a trailing "Search for subtitles…" row. Full width so
-    /// a rich label ("Spanish (SDH, PGS)") never truncates.
+    /// (incl. "Off"), then — under a rule — a row for each subtitle setting that
+    /// applies (Dual Subtitles, Subtitle Sync, Style), each showing its current
+    /// value, and a trailing "Download Subtitles…" row. Full width so a rich
+    /// label ("Spanish  SDH · PGS") never truncates.
     @ViewBuilder
     private var subtitlePane: some View {
+        let valueRows = subtitleValueRows
         VStack(alignment: .leading, spacing: 2) {
             let rows = Self.subtitleRows(model: model, actions: actions)
             if rows.isEmpty {
@@ -625,16 +622,71 @@ struct PlayerOptionsPanel: View {
             } else {
                 PlayerMenuRowStack(rows: rows, palette: palette, focus: $focus)
             }
-            // The divider sets the download row apart; with nothing to download
-            // it would only be a line under the last track.
-            if model.subtitleDownload.canSearch {
+            // The rule sets the settings apart from the tracks; with nothing
+            // below it, it would only be a line under the last track.
+            if !valueRows.isEmpty || model.subtitleDownload.canSearch {
                 frostAwareDivider
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
+            }
+            ForEach(valueRows, id: \.row.slot) { entry in
+                PlayerOptionsRow(
+                    row: entry.row, palette: palette, focus: $focus,
+                    reservesMarkColumn: true, focusSlot: entry.focus
+                )
+            }
+            if model.subtitleDownload.canSearch {
                 downloadEntryRow
             }
         }
         .padding(.horizontal, 14)
+    }
+
+    /// The track list's setting rows, each opening its own screen: Dual
+    /// Subtitles (when a second line is possible), Subtitle Sync (when the
+    /// app's overlay draws the active subtitle, so its offset can move it) and
+    /// Style (when the subtitle can be restyled at all). Their focus slots are
+    /// named rather than numbered — the tracks above already use `.row(n)`.
+    private var subtitleValueRows: [(row: PlayerOptionsRowSpec, focus: FocusSlot)] {
+        var rows: [(row: PlayerOptionsRowSpec, focus: FocusSlot)] = []
+        if offersDualSubtitles, !model.secondarySubtitleOptions.isEmpty {
+            // On/Off, as the Style editor's own Dual Subtitles row says it: a
+            // track name would wrap this row beside its title.
+            let showsSecond = model.secondarySubtitleOptions.contains {
+                $0.isSelected && $0.id != PlayerTrackOption.offID
+            }
+            rows.append((PlayerOptionsRowSpec(
+                slot: 0, title: "Dual Subtitles",
+                kind: .submenu(
+                    summary: showsSecond ? Text("On") : Text("Off"),
+                    open: { openSubtitleScreen(.styleDual) }
+                )
+            ), .dualSubtitles))
+        }
+        if model.subtitleDelayAdjustable {
+            rows.append((PlayerOptionsRowSpec(
+                slot: 1, title: "Subtitle Sync",
+                kind: .submenu(
+                    summary: Text(verbatim: PlayerControls.delayLabel(model.subtitleDelaySeconds)),
+                    open: { openSubtitleScreen(.sync) }
+                )
+            ), .subSync))
+        }
+        if model.subtitleStyleAdjustable {
+            let style = SystemCaptionStyle.shared.resolved(model.subtitleStyle)
+            rows.append((PlayerOptionsRowSpec(
+                slot: 2, title: "Style",
+                kind: .submenu(
+                    // Size, then edge — the two things that change how a subtitle
+                    // reads from the sofa ("100% · Shadow").
+                    summary: Text(style.fontScale, format: .percent.precision(.fractionLength(0)))
+                        + Text(verbatim: " · ")
+                        + Text(SubtitleStyleEditorValues.edgeName(style)),
+                    open: { openSubtitleScreen(.style) }
+                )
+            ), .edit))
+        }
+        return rows
     }
 
     /// "Looked through them all, found nothing → get more." Kept at the END of
@@ -649,9 +701,15 @@ struct PlayerOptionsPanel: View {
                 actions.searchRemoteSubtitles(nil)
             }
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "square.and.arrow.down").font(.body)
-                Text("Download subtitles…").font(.body).lineLimit(1)
+            HStack(spacing: PlayerMenuRowMark.spacing) {
+                PlayerMenuRowMark(isSelected: false, accent: palette.accent)
+                Text(LocalizedStringResource(
+                    "player.subtitles.downloadRow",
+                    defaultValue: "Download Subtitles…",
+                    comment: "Last row of the in-player subtitle list; opens a search for subtitle files to download."
+                ))
+                .font(.body)
+                .lineLimit(1)
                 Spacer(minLength: 8)
             }
             .padding(.horizontal, 16)
@@ -742,10 +800,36 @@ struct PlayerOptionsPanel: View {
         if available != subtitleScreen { openSubtitleScreen(available) }
     }
 
+    /// Where Back goes from the open Subtitles screen: its parent, except that
+    /// Dual Subtitles opened from the track list returns there rather than to
+    /// the Style editor it also lives in.
+    private var subtitleBackTarget: SubtitleScreen {
+        subtitleScreen == .styleDual && dualOpenedFromTracks ? .tracks : subtitleScreen.parent
+    }
+
+    /// The track-list row that opened `screen`, so coming back lands on it —
+    /// focus returns to where the viewer left, as it does when a menu closes.
+    /// `nil` when that row is not on the list now (focus then takes the list's
+    /// usual target).
+    private func trackListRow(openedFrom screen: SubtitleScreen) -> FocusSlot? {
+        let slot: FocusSlot
+        switch screen {
+        case .download: slot = .download
+        case .sync: slot = .subSync
+        case .styleDual where dualOpenedFromTracks: slot = .dualSubtitles
+        case .tracks: return nil
+        default: slot = .edit
+        }
+        if slot == .download { return model.subtitleDownload.canSearch ? slot : nil }
+        return subtitleValueRows.contains { $0.focus == slot } ? slot : nil
+    }
+
     private func openSubtitleScreen(_ screen: SubtitleScreen) {
         let screen = Self.availableSubtitleScreen(
             screen, model: model, offersDualSubtitles: offersDualSubtitles
         )
+        let previous = subtitleScreen
+        if screen == .styleDual, previous != .styleDual { dualOpenedFromTracks = previous == .tracks }
         // Entering the Style editor from the (non-style) track list flips the body
         // from the compact list cap to the larger Style viewport. At this point
         // `bodyHeight` still holds the track list's full measured content height,
@@ -778,8 +862,11 @@ struct PlayerOptionsPanel: View {
         // same update; a synchronous @FocusState write races it and the engine wins —
         // landing on the header Back chip instead of the intended row (e.g. Font at
         // the top of the Style editor). `preferredFocus` already encodes the
-        // correct target for every sub-screen, so reuse it.
-        restoreFocus(preferredFocus)
+        // correct target for every sub-screen, so reuse it — except on the way
+        // back to the track list, which lands on the row that was left.
+        let returning = screen == .tracks ? trackListRow(openedFrom: previous) : nil
+        if screen == .tracks { dualOpenedFromTracks = false }
+        restoreFocus(returning ?? preferredFocus)
     }
 
     private func emptyRow(_ text: String) -> some View {
@@ -799,11 +886,14 @@ struct PlayerOptionsPanel: View {
             TrackRow(
                 id: index,
                 header: nil,
-                title: option.title,
+                // The name, with its qualifiers ("SDH", "Forced") set beside it
+                // in secondary type rather than in parentheses.
+                title: option.baseTitle ?? option.title,
                 subtitle: nil,
                 isSelected: option.isSelected,
                 isToggle: false,
                 isExternal: option.isExternal,
+                detail: option.qualifiers,
                 action: { actions.selectSubtitle(option.id) }
             )
         }

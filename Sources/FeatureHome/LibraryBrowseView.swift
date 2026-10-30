@@ -175,7 +175,7 @@ public struct LibraryBrowseView: View {
     private var libraryContent: some View {
         // Shared dense "Browse" wall — flexible columns from the live density
         // metrics so each glass tile stretches to fill its column and the wall
-        // scales with the UI-density setting, with six columns at default density.
+        // scales with the UI-density setting, with seven columns at default density.
         let columns = viewModel.gridStyle == .landscape
             ? Array(metrics.libraryPosterColumns.prefix(max(1, metrics.libraryPosterColumns.count / 2)))
             : metrics.libraryPosterColumns
@@ -229,7 +229,8 @@ public struct LibraryBrowseView: View {
             NativeLibraryScrollingHeader(
                 scrollTarget: nativeScrollTarget,
                 content: navigationHeader
-                    .padding(.vertical, PlozzTheme.Spacing.large)
+                    .padding(.top, sharesSidebarPageButtonRow ? 0 : PlozzTheme.Spacing.large)
+                    .padding(.bottom, PlozzTheme.Spacing.large)
             )
             .padding(.top, headerTopClearance)
             .onGeometryChange(for: CGFloat.self) { geometry in
@@ -367,11 +368,28 @@ public struct LibraryBrowseView: View {
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
             .first(where: \.isKeyWindow)?.safeAreaInsets.top ?? 60
-        // Keep the scrolling header below native root navigation, not behind its controls.
+        // Keep the scrolling header below native root navigation, not behind its
+        // controls. The centred mode control shares the sidebar page button's row
+        // instead, as in the TV app; a leading title would sit under that button.
+        if sharesSidebarPageButtonRow {
+            return overscan + Self.sidebarPageButtonCentre - LibraryHeaderMetrics.rowHeight / 2
+        }
         let hasNativeHeader = navigationStyle == .sidebar || (isNavigationRoot && navigationStyle == .tabBar)
         return overscan + (hasNativeHeader ? 60 : 0)
     }
+
+    private var sharesSidebarPageButtonRow: Bool {
+        navigationStyle == .sidebar && showsContentModeControl
+    }
+
+    /// How far below the overscan inset the native sidebar page button's centre
+    /// sits; the header row centres on it.
+    static let sidebarPageButtonCentre: CGFloat = 20
     #endif
+
+    private var showsContentModeControl: Bool {
+        viewModel.availableContentModes.count > 1
+    }
 
     private var recommendedContent: some View {
         ContentStateView(
@@ -648,39 +666,50 @@ public struct LibraryBrowseView: View {
     private var railRevealThreshold: Int { max(1, metrics.libraryPosterColumns.count) * 2 }
 
     /// Keep the selected mode's focus target mounted while the grid is replaced.
+    ///
+    /// The mode control is centred on the row, as the TV app centres its
+    /// segmented control; the query pills sit at the trailing edge of that row.
     private var navigationHeader: some View {
-        HStack {
-            if viewModel.availableContentModes.count > 1 {
+        LibraryHeaderRowLayout(spacing: PlozzTheme.Spacing.large) {
+            if showsContentModeControl {
                 LibraryContentModeControl(viewModel: viewModel)
-                    .layoutPriority(1)
+                    .layoutValue(key: LibraryHeaderSlot.self, value: .center)
             } else {
                 title
                     .font(.largeTitle.bold())
-                    .layoutPriority(1)
             }
-            Spacer(minLength: PlozzTheme.Spacing.large)
-            if viewModel.contentMode != .recommended {
-                if let library = viewModel.fileBrowserLibrary {
-                    LibraryFileBrowseButton(library: library, onSelect: onSelect)
-                }
-            }
-            if !viewModel.availableSortFields.isEmpty {
-                BrowseQueryControls {
-                    if viewModel.showsFilterMenu {
-                        LibraryFilterMenu(
-                            filters: viewModel.filters, capabilities: viewModel.queryCapabilities, facets: viewModel.queryFacets,
-                            isLoading: viewModel.facetsLoading, hasError: viewModel.facetsError != nil,
-                            onChange: { value in Task { await viewModel.setFilters(value) } },
-                            onLoadFacets: { await viewModel.loadQueryFacetsIfNeeded() },
-                            onRetry: { Task { await viewModel.loadQueryFacetsIfNeeded(retry: true) } }
-                        )
+            HStack(spacing: PlozzTheme.Spacing.medium) {
+                if viewModel.contentMode != .recommended {
+                    if let library = viewModel.fileBrowserLibrary {
+                        LibraryFileBrowseButton(library: library, onSelect: onSelect)
+                            #if os(tvOS)
+                            .buttonStyle(BrowseQueryPillButtonStyle())
+                            #endif
                     }
-                    sortControl
-                        .fixedSize(horizontal: true, vertical: false)
-                        .layoutPriority(1)
+                }
+                if !viewModel.availableSortFields.isEmpty {
+                    BrowseQueryControls {
+                        if viewModel.showsFilterMenu {
+                            LibraryFilterMenu(
+                                filters: viewModel.filters, capabilities: viewModel.queryCapabilities,
+                                facets: viewModel.queryFacets,
+                                isLoading: viewModel.facetsLoading, hasError: viewModel.facetsError != nil,
+                                onChange: { value in Task { await viewModel.setFilters(value) } },
+                                onLoadFacets: { await viewModel.loadQueryFacetsIfNeeded() },
+                                onRetry: { Task { await viewModel.loadQueryFacetsIfNeeded(retry: true) } }
+                            )
+                        }
+                        sortControl
+                            .fixedSize(horizontal: true, vertical: false)
+                            .layoutPriority(1)
+                    }
                 }
             }
+            .layoutValue(key: LibraryHeaderSlot.self, value: .trailing)
         }
+        #if os(tvOS)
+        .frame(minHeight: LibraryHeaderMetrics.rowHeight)
+        #endif
         .lineLimit(1)
         .padding(.leading, contentLeadingPadding)
         .padding(.trailing, HomeLayout.horizontalPadding)
@@ -753,14 +782,84 @@ public struct LibraryBrowseView: View {
     }
 }
 
+enum LibraryHeaderMetrics {
+    /// The header row's height: the TV app's 62-point segmented capsule, which
+    /// is also the height of the sidebar page button it shares a row with.
+    static let rowHeight: CGFloat = 62
+    static let segmentHeight: CGFloat = 50
+    static let capsulePadding: CGFloat = 6
+}
+
+enum LibraryHeaderSlot: LayoutValueKey {
+    enum Role { case leading, center, trailing }
+    static let defaultValue = Role.leading
+}
+
+/// Places a leading title, a centred control and trailing controls on one row.
+/// The title and the centred control keep their ideal widths; the trailing
+/// controls get the rest, so a long filter summary falls back to its count
+/// rather than crowding the tabs. The centred control stays centred unless that
+/// would overlap a neighbour; then it moves aside.
+struct LibraryHeaderRowLayout: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let natural = sizes.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, subviews.count - 1))
+        return CGSize(width: proposal.width ?? natural, height: sizes.map(\.height).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        func ideal(_ role: LibraryHeaderSlot.Role) -> CGFloat {
+            subviews.filter { $0[LibraryHeaderSlot.self] == role }
+                .reduce(0) { $0 + $1.sizeThatFits(.unspecified).width }
+        }
+        let reserved = ideal(.leading) + ideal(.center)
+        let gaps = spacing * CGFloat(max(0, subviews.count - 1))
+        var trailingEdge = bounds.maxX
+        for subview in subviews where subview[LibraryHeaderSlot.self] == .trailing {
+            let available = max(0, bounds.width - reserved - gaps)
+            let size = subview.sizeThatFits(ProposedViewSize(width: available, height: nil))
+            let width = min(size.width, bounds.width)
+            subview.place(
+                at: CGPoint(x: bounds.maxX - width, y: bounds.midY), anchor: .leading,
+                proposal: ProposedViewSize(width: width, height: size.height)
+            )
+            trailingEdge = bounds.maxX - width - (width > 0 ? spacing : 0)
+        }
+        var leadingEdge = bounds.minX
+        for subview in subviews where subview[LibraryHeaderSlot.self] == .leading {
+            let available = max(0, trailingEdge - bounds.minX)
+            let size = subview.sizeThatFits(ProposedViewSize(width: available, height: nil))
+            let width = min(size.width, available)
+            subview.place(
+                at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading,
+                proposal: ProposedViewSize(width: width, height: size.height)
+            )
+            leadingEdge = bounds.minX + width + (width > 0 ? spacing : 0)
+        }
+        for subview in subviews where subview[LibraryHeaderSlot.self] == .center {
+            let available = max(0, trailingEdge - leadingEdge)
+            let size = subview.sizeThatFits(.unspecified)
+            let width = min(size.width, available)
+            let centred = bounds.midX - width / 2
+            let x = min(max(centred, leadingEdge), trailingEdge - width)
+            subview.place(
+                at: CGPoint(x: x, y: bounds.midY), anchor: .leading,
+                proposal: ProposedViewSize(width: width, height: size.height)
+            )
+        }
+    }
+}
+
 private struct LibraryContentModeControl: View {
     let viewModel: LibraryBrowseViewModel
+    @FocusState private var focusedMode: LibraryContentMode?
     @Environment(\.themePalette) private var palette
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
-    @Environment(\.gradientBackgroundsEnabled) private var gradientBackgroundsEnabled
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             ForEach(viewModel.availableContentModes, id: \.self) { mode in
                 let isSelected = viewModel.contentMode == mode
                 Button {
@@ -771,21 +870,25 @@ private struct LibraryContentModeControl: View {
                         .lineLimit(1)
                 }
                 .buttonStyle(LibraryContentSegmentStyle(
-                    isSelected: isSelected
+                    isSelected: isSelected, controlHasFocus: focusedMode != nil
                 ))
+                .focused($focusedMode, equals: mode)
                 .accessibilityValue(isSelected ? Text("Selected") : Text(verbatim: ""))
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .accessibilityIdentifier("library-content-mode-\(mode.rawValue)")
             }
         }
-        .padding(6)
+        .padding(LibraryHeaderMetrics.capsulePadding)
         .background {
-            // Over the flat page a Material only blurs the same colour back, so
-            // the raised fill draws the identical capsule without a blur pass.
-            if reduceTransparency || !gradientBackgroundsEnabled {
-                Capsule().fill(palette.raised.fill)
+            // The flat page only lends a blur its own colour back, so the frosted
+            // fill draws the TV app's glass capsule without a blur pass.
+            let capsule = Capsule(style: .continuous)
+            if reduceTransparency {
+                capsule.fill(palette.raised.fill)
             } else {
-                Capsule().fill(.regularMaterial)
+                capsule.fill(.clear)
+                    .plozzFrostedBackground(capsule, raised: true)
+                    .plozzFrostedBorder(capsule)
             }
         }
         .fixedSize(horizontal: true, vertical: false)
@@ -795,37 +898,45 @@ private struct LibraryContentModeControl: View {
     }
 }
 
+/// White marks where you are: the focused segment while focus is in the
+/// control, the selected one once focus has left it.
 private struct LibraryContentSegmentStyle: ButtonStyle {
     let isSelected: Bool
+    let controlHasFocus: Bool
 
     func makeBody(configuration: Configuration) -> some View {
-        SegmentBody(configuration: configuration, isSelected: isSelected)
+        SegmentBody(configuration: configuration, isSelected: isSelected, controlHasFocus: controlHasFocus)
     }
 
     private struct SegmentBody: View {
         let configuration: ButtonStyle.Configuration
         let isSelected: Bool
+        let controlHasFocus: Bool
         @Environment(\.isFocused) private var isFocused
         @Environment(\.colorScheme) private var colorScheme
         @Environment(\.themePalette) private var palette
 
+        private var isInverted: Bool { isFocused || (isSelected && !controlHasFocus) }
+
         var body: some View {
             configuration.label
                 .font(.body)
-                .foregroundStyle(isFocused
-                    ? (colorScheme == .dark ? Color.black : .white)
+                .foregroundStyle(isInverted
+                    ? (colorScheme == .dark ? palette.backgroundBase : .white)
                     : (isSelected ? palette.primaryText : palette.secondaryText))
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 26)
+                .frame(minHeight: LibraryHeaderMetrics.segmentHeight)
                 .background {
-                    Capsule()
-                        .fill(isFocused
+                    Capsule(style: .continuous)
+                        .fill(isInverted
                             ? (colorScheme == .dark ? Color.white : .black)
                             : palette.primaryText.opacity(isSelected ? 0.18 : 0))
                 }
+                // Focus changes contrast, not size, keeping the capsule's even
+                // inner padding around the focused segment.
                 .scaleEffect(configuration.isPressed ? 0.97 : 1)
                 .animation(.easeOut(duration: 0.16), value: isFocused)
-                .animation(.easeOut(duration: 0.16), value: isSelected)
+                .animation(.easeOut(duration: 0.16), value: isInverted)
                 .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
         }
     }

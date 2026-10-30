@@ -4,9 +4,10 @@ import SwiftUI
 /// Fitted, theme-aware focus style for in-player options-menu rows.
 ///
 /// The default tvOS focus effect on a `.plain` button is oversized for these
-/// compact rows. This mirrors the Settings drill-in rows instead: on focus the
-/// row gets a rounded highlight sized to the row itself (white in dark mode,
-/// black in light mode, with the opposite foreground) rather than a big system halo. Deliberately *no* drop
+/// compact rows. Instead, on focus the row becomes a capsule sized to the row
+/// itself (white in dark mode, black in light mode, with the opposite
+/// foreground) and lifts slightly — the Apple TV app's menus — rather than a
+/// big system halo. Deliberately *no* drop
 /// shadow — a soft shadow forces a per-frame offscreen blur recomposited over
 /// the Dolby Vision / HDR video behind the panel, which drops frames on Apple TV
 /// (the same problem we removed from the panel container).
@@ -20,6 +21,8 @@ struct PlayerMenuRowButtonStyle: ButtonStyle {
 }
 
 private struct PlayerMenuRowBody: View {
+    /// Half a single-line row's height, so that row is a capsule.
+    static let focusCornerRadius: CGFloat = 29
     let configuration: ButtonStyle.Configuration
     @Environment(\.isFocused) private var isFocused
     @Environment(\.colorScheme) private var colorScheme
@@ -34,17 +37,19 @@ private struct PlayerMenuRowBody: View {
             .environment(\.playerMenuRowFocusForeground, focusForeground)
             .foregroundStyle(isFocused ? AnyShapeStyle(focusForeground) : AnyShapeStyle(.primary))
             .background(
-                // Concentric focus card: inset 4 within the row (which already sits
-                // 14 from the panel edge) → an 18 gutter on every side, matching the
-                // header chips. With the panel's 32 corner, a 14 radius (32 − 18)
-                // makes the card corners share a centre with the panel's, and the
-                // equal gutter keeps an edge row equidistant from top/bottom/left/
-                // right. Text stays anchored by the row's own padding so titles still
-                // line up under the section header.
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                // The focus capsule: inset 4 within the row (which already sits 14
+                // from the panel edge) → an 18 gutter on every side, so an edge row
+                // stays equidistant from top/bottom/left/right. A single-line row is
+                // shorter than twice the radius, so it draws as a true capsule; a
+                // two-line row keeps rounded ends instead of a pill. Text stays
+                // anchored by the row's own padding so titles still line up.
+                RoundedRectangle(cornerRadius: Self.focusCornerRadius, style: .continuous)
                     .fill(isFocused ? focusFill : Color.clear)
                     .padding(.horizontal, 4)
             )
+            // A small lift, like every focused control on tvOS. A transform, so it
+            // costs nothing per frame once settled.
+            .scaleEffect(isFocused ? 1.03 : 1)
             .opacity(configuration.isPressed ? 0.9 : 1)
             // Switch color + fill INSTANTLY on focus change. An animated fade
             // lingers as a ghost card when navigating away and, over moving

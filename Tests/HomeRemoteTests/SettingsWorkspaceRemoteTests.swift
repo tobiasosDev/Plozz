@@ -42,7 +42,8 @@ final class SettingsWorkspaceRemoteTests: XCTestCase {
         try focus(section("playback", in: app), in: app)
         XCTAssertEqual(profile.frame, initialProfile)
         XCTAssertEqual(name.frame, initialName)
-        try focus(section("language", in: app), in: app)
+        // A row deep enough that the list must scroll the navigation away.
+        try focus(section("help", in: app), in: app)
         XCTAssertFalse(app.buttons["top-navigation-settings"].isHittable)
         capture("settings-top-navigation-scrolled-away", in: app)
         XCUIRemote.shared.press(.menu)
@@ -607,15 +608,17 @@ final class SettingsWorkspaceRemoteTests: XCTestCase {
         defer { capture("settings-menus-final", in: app) }
         let language = section("language", in: app)
         try focus(language, in: app)
-        let menuWidth = language.frame.width
-        XCTAssertGreaterThan(menuWidth, 800)
+        XCTAssertGreaterThan(language.frame.width, 800)
         capture("settings-language-whole-row", in: app)
         try focus(section("playback", in: app), in: app)
         XCUIRemote.shared.press(.select)
         let audio = app.buttons["Preferred audio language"]
         try focus(audio, in: app)
         XCTAssertTrue(hasFocus(audio))
-        XCTAssertEqual(audio.frame.width, menuWidth, accuracy: 1)
+        // The root list is its own column beside the preview, so category pages'
+        // menu rows share their page's width rather than the root row's.
+        let menuWidth = audio.frame.width
+        XCTAssertGreaterThan(menuWidth, 800)
         XCTAssertEqual(audio.value as? String, "Original")
         capture("settings-audio-whole-row", in: app)
         XCUIRemote.shared.press(.select)
@@ -677,7 +680,7 @@ final class SettingsWorkspaceRemoteTests: XCTestCase {
         XCTAssertTrue(app.buttons["settings-profile-edit"].exists)
         XCTAssertFalse(app.buttons["settings-group-language"].exists,
                        "Categories must not preview a second page beside the list.")
-        assertCenteredSettingsColumn(in: app)
+        assertSettingsRootColumn(in: app)
         capture("01-playback", in: app)
         XCTAssertFalse(section("general", in: app).exists)
         XCTAssertFalse(section("customizeHome", in: app).exists)
@@ -2621,15 +2624,15 @@ final class SettingsWorkspaceRemoteTests: XCTestCase {
         let profile = app.staticTexts["settings-profile-name"]
         let everyone = app.staticTexts["settings-everyone-name"]
         XCTAssertTrue(profile.exists && everyone.exists, app.debugDescription)
-        XCTAssertEqual(profile.frame.minX, everyone.frame.minX, accuracy: 2)
-        XCTAssertEqual(profile.frame.height, everyone.frame.height, accuracy: 2)
         XCTAssertLessThanOrEqual(profile.frame.height, 46)
+        // Everyone is a caption over the household's cards, not a second
+        // identity header; its reach is in the preview beside the list.
+        XCTAssertLessThan(everyone.frame.height, profile.frame.height)
+        XCTAssertGreaterThan(everyone.frame.minY, profile.frame.maxY)
         let avatar = app.descendants(matching: .any).matching(identifier: "settings-profile-avatar").firstMatch
-        let scope = app.descendants(matching: .any).matching(identifier: "settings-everyone-icon").firstMatch
-        XCTAssertTrue(avatar.exists && scope.exists, app.debugDescription)
-        XCTAssertEqual(avatar.frame.width, scope.frame.width, accuracy: 1)
-        XCTAssertEqual(avatar.frame.height, scope.frame.height, accuracy: 1)
-        XCTAssertEqual(scope.frame.width, 52, accuracy: 1)
+        XCTAssertTrue(avatar.exists, app.debugDescription)
+        XCTAssertEqual(avatar.frame.width, 52, accuracy: 1)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "settings-everyone-icon").firstMatch.exists)
         capture("aligned-settings-headers", in: app)
         try focus(section("servers", in: app), in: app)
         capture("everyone-circular-badge-and-divider", in: app)
@@ -2851,7 +2854,7 @@ final class SettingsWorkspaceRemoteTests: XCTestCase {
         )
         XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 4), .completed,
                        "Native focus did not return from \(route). \(app.debugDescription)")
-        assertCenteredSettingsColumn(in: app)
+        assertSettingsRootColumn(in: app)
     }
 
     private func waitForEnabled(_ element: XCUIElement) {
@@ -2872,6 +2875,21 @@ final class SettingsWorkspaceRemoteTests: XCTestCase {
         )
         XCTAssertEqual(XCTWaiter.wait(for: [aligned], timeout: 5), .completed,
                        "The shared Back button and title must form one horizontal header. \(app.debugDescription)")
+    }
+
+    /// The root's rows form one column on the trailing side, beside the
+    /// focused category's preview (alone where a pinned sidebar leaves no room).
+    /// Measured on a row: the scroll view's own frame may extend into the
+    /// safe area while its content stays put.
+    private func assertSettingsRootColumn(in app: XCUIApplication) {
+        let row = section("playback", in: app)
+        guard row.waitForExistence(timeout: 5) else {
+            XCTFail("No Settings root list. \(app.debugDescription)")
+            return
+        }
+        XCTAssertEqual(row.frame.width, 912, accuracy: 1, "The root rows keep one column width.")
+        XCTAssertLessThanOrEqual(row.frame.maxX, app.frame.maxX - 80 - 14 + 1,
+                                 "The rows and their focus outset stay inside the side margin.")
     }
 
     private func assertCenteredSettingsColumn(in app: XCUIApplication) {

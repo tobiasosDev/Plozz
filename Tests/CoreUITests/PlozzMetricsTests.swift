@@ -66,7 +66,7 @@ final class PlozzMetricsTests: XCTestCase {
             }
         }
         XCTAssertEqual(PlozzTheme.Metrics.portraitRowVisibleCards, 6.25)
-        XCTAssertEqual(PlozzMetrics.standard.libraryPosterColumns.count, 6)
+        XCTAssertEqual(PlozzMetrics.standard.libraryPosterColumns.count, 7)
         XCTAssertEqual(PlozzMetrics.standard.posterWidth, 280)
     }
 
@@ -347,10 +347,10 @@ final class PlozzMetricsTests: XCTestCase {
         }
     }
 
-    func testLibraryDefaultUsesSixColumnsWithoutChangingOtherDensityPresets() {
+    func testLibraryGridSharesThePosterWallColumnsAtEveryDensity() {
         for density in UIDensity.allCases {
             let metrics = PlozzMetrics(density: density)
-            XCTAssertEqual(metrics.libraryPosterColumns.count, density == .standard ? 6 : density.posterGridColumns)
+            XCTAssertEqual(metrics.libraryPosterColumns.count, density.posterGridColumns)
             XCTAssertEqual(metrics.posterColumns.count, density.posterGridColumns)
         }
     }

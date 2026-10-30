@@ -36,10 +36,8 @@ public struct LiveTVLoadingSkeleton: View {
                     } guide: {
                         VStack(spacing: PrototypeLayout.toolbarGuideGap) {
                             #if os(tvOS)
-                                if layout.sidebarWidth == 0 {
-                                    PrototypeLoadingToolbar().frame(
-                                        height: PrototypeLayout.controlHeight + 2 * PrototypeLayout.controlInset)
-                                }
+                                // Where the category chips will be.
+                                PrototypeLoadingToolbar().frame(height: PrototypeLayout.chipHeight)
                             #endif
                             PrototypeGuideSkeleton()
                         }

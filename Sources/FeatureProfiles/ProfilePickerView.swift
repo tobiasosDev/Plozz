@@ -29,8 +29,6 @@ public struct ProfilePickerView: View {
     private let onOpenSettings: (() -> Void)?
     private let showsPINLock: (Profile) -> Bool
 
-    @Environment(\.themePalette) private var palette
-
     public init(
         profiles: [Profile],
         activeProfileID: String?,
@@ -62,38 +60,20 @@ public struct ProfilePickerView: View {
     @FocusState private var focus: PickerFocus?
 
     /// The profile the focus is currently within, whichever of its two controls
-    /// holds it. Drives the background wash. `nil` while focus is on an Add tile
-    /// or before focus settles.
+    /// holds it. Reveals that column's Edit button.
     private var focusedProfileID: String? {
         switch focus {
         case let .profile(id), let .edit(id): return id
         default: return nil
         }
     }
-    /// The profile the background has actually *committed* to. Updated only after
-    /// focus rests on a tile for `backgroundSettleDelay`, so sweeping across tiles
-    /// (1 → 2 → 3) skips the in-between profiles entirely — the wash only fades to
-    /// where you land and pause, never to the ones you pass through.
-    @State private var settledProfileID: String?
-    /// Per-profile resolved colors (instant base + progressive photo extraction).
-    @State private var palettes = ProfileBackgroundPalettes()
 
-    /// How long focus must rest on a tile before the background fades to it.
-    private let backgroundSettleDelay: Duration = .milliseconds(300)
     /// Guards the one-time programmatic initial focus so later re-renders don't
     /// keep yanking focus back to the default tile.
     @State private var didSetInitialFocus = false
-
-    /// The profile whose colors the background should currently show. Before
-    /// focus settles (i.e. at startup) it is pinned to the **default-focused**
-    /// profile — the last-active one if there is one, else the first tile — which
-    /// is exactly the tile tvOS opens focus on. Because the opening focus and the
-    /// opening wash agree, the background never flashes a different profile's
-    /// color before settling. Once focus rests on a tile, that tile drives it.
-    private var backgroundProfile: Profile? {
-        let id = settledProfileID ?? defaultFocusID
-        return profiles.first { $0.id == id } ?? profiles.first
-    }
+    /// The row's visible width, so a household that fits is centred rather
+    /// than left-aligned in its scroll view.
+    @State private var rowViewportWidth: CGFloat = 0
 
     /// The tile that should hold focus when the picker first appears: the
     /// last-active profile (so resuming is a single click), falling back to the
@@ -101,26 +81,6 @@ public struct ProfilePickerView: View {
     private var defaultFocusID: String? {
         activeProfileID ?? profiles.first?.id
     }
-
-    /// Resolve the *settled* (else default) tile's center into unit coordinates
-    /// of the background, so the colored glow pools around the icon the wash has
-    /// committed to. Deliberately driven by `settledProfileID`, **not** the live
-    /// `focusedProfileID`: if the glow chased raw focus it would animate its
-    /// full-screen mask center on every focus move, stacking overlapping 0.6s
-    /// transitions and re-rendering the whole background as you sweep across
-    /// tiles — the source of the rapid-focus lag. Tracking the settled profile
-    /// instead means a fast sweep does zero background work; the glow only eases
-    /// to where you land and pause, which is the intended "settle-then-fade"
-    /// behaviour. Falls back to centre before any tile is measured.
-    private func focalPoint(centers: [String: Anchor<CGPoint>], proxy: GeometryProxy) -> UnitPoint {
-        let id = settledProfileID ?? defaultFocusID
-        guard let id, let anchor = centers[id] else { return .center }
-        let point = proxy[anchor]
-        let size = proxy.size
-        guard size.width > 0, size.height > 0 else { return .center }
-        return UnitPoint(x: point.x / size.width, y: point.y / size.height)
-    }
-
 
     /// Each column's own Edit button, directly beneath its avatar.
     ///
@@ -136,9 +96,9 @@ public struct ProfilePickerView: View {
             onEdit(profile)
         } label: {
             Text("Edit")
-                .font(.callout.weight(.semibold))
+                .font(.system(size: 21, weight: .semibold))
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(ProfilePickerPillStyle())
         .focused($focus, equals: .edit(profile.id))
         .opacity(isRevealed ? 1 : 0)
         // Unreachable when hidden, so the focus engine can't land on an
@@ -148,10 +108,11 @@ public struct ProfilePickerView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 48) {
+        VStack(spacing: 36) {
             Text(title)
-                .font(.system(size: 56, weight: .bold))
-                .foregroundStyle(palette.primaryText)
+                .font(.system(size: 54, weight: .bold))
+                .tracking(-0.8)
+                .foregroundStyle(ProfilePickerLayout.titleInk)
 
             // One horizontal run rather than a wrapping grid. Profiles are a
             // short list you scan left-to-right, and a single row keeps the
@@ -161,14 +122,11 @@ public struct ProfilePickerView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: ProfilePickerLayout.tileSpacing) {
                     ForEach(profiles) { profile in
-                        VStack(spacing: 20) {
+                        VStack(spacing: 14) {
                             ProfileTile(profile: profile, showsLock: showsPINLock(profile)) {
                                 onSelect(profile)
                             }
                             .focused($focus, equals: .profile(profile.id))
-                            .anchorPreference(key: TileCentersKey.self, value: .center) {
-                                [profile.id: $0]
-                            }
 
                             if let onEditProfile {
                                 editButton(for: profile, onEdit: onEditProfile)
@@ -183,74 +141,65 @@ public struct ProfilePickerView: View {
                         AddProfileTile(
                             title: "Add Profile",
                             systemImage: "plus",
-                            isProminent: true,
                             action: onAddProfile
                         )
                         .focused($focus, equals: .add)
                     }
+                    // Kept as its own tile: it is the only way to create a profile
+                    // that is restricted from its first second (see
+                    // `onAddKidsProfile`), and the add flow has no Kids step.
                     if let onAddKidsProfile {
                         AddProfileTile(
                             title: KidsProfileCopy.addTile,
                             systemImage: "figure.and.child.holdinghands",
-                            isProminent: false,
                             action: onAddKidsProfile
                         )
                         .focused($focus, equals: .addKids)
                     }
                 }
+                .frame(minWidth: max(0, rowViewportWidth - ProfilePickerLayout.rowPadding * 2))
                 .padding(.horizontal, ProfilePickerLayout.rowPadding)
-                // Room for the focus halo + lift, which would otherwise be
+                // Room for the focus lift and shadow, which would otherwise be
                 // clipped by the scroll view's bounds.
                 .padding(.vertical, 40)
             }
             .scrollClipDisabled()
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowViewportWidth = $0 }
             .focusSection()
 
             if let onCancel {
-                Button("Cancel", action: onCancel)
-                    .padding(.top, 8)
-                    .focusSection()
+                Button(action: onCancel) {
+                    Text("Cancel").font(.system(size: 24, weight: .semibold))
+                }
+                .buttonStyle(ProfilePickerPillStyle())
+                .padding(.top, 8)
+                .focusSection()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.vertical, 80)
-        .overlay(alignment: .topTrailing) {
-            if let onOpenSettings {
-                HStack {
-                    Spacer()
+        .overlay(alignment: .top) {
+            HStack(alignment: .center) {
+                ProfilePickerBrand()
+                Spacer()
+                if let onOpenSettings {
                     Button(action: onOpenSettings) {
-                        Label("Settings", systemImage: "gearshape")
+                        Label("Settings", systemImage: "gearshape.fill")
                             .labelStyle(.iconOnly)
+                            .font(.system(size: 30, weight: .semibold))
+                            .frame(width: 66, height: 66)
                     }
-                    .plozzGlassPillButton(shape: .circle)
-                    .buttonBorderShape(.circle)
+                    .buttonStyle(ProfilePickerPillStyle(shape: .circle))
                     .accessibilityIdentifier("profile-picker-settings")
                 }
-                .padding(.horizontal, ProfilePickerLayout.rowPadding)
-                .padding(.top, 32)
-                .focusSection()
             }
-        }
-        .backgroundPreferenceValue(TileCentersKey.self) { centers in
-            GeometryReader { proxy in
-                ProfileBackgroundGradient(
-                    profile: backgroundProfile,
-                    focal: focalPoint(centers: centers, proxy: proxy)
-                )
-            }
+            .padding(.horizontal, ProfilePickerLayout.chromeInset)
+            .padding(.top, 56)
+            // Full width, so Up from any tile reaches the gear.
+            .focusSection()
             .ignoresSafeArea()
         }
-        .environment(palettes)
-        .task(id: focusedProfileID) {
-            // Debounce: wait for focus to rest before committing the background.
-            // If focus moves again the task is cancelled and restarted, so the
-            // profiles you sweep past never get a chance to fade in — only the
-            // one you actually pause on does. Focusing the "Add" tile (nil) keeps
-            // the last settled wash rather than snapping away.
-            guard let id = focusedProfileID else { return }
-            do { try await Task.sleep(for: backgroundSettleDelay) } catch { return }
-            settledProfileID = id
-        }
+        .background { ProfileBackgroundGradient() }
         .onAppear {
             prefetchAvatars()
             setInitialFocusIfNeeded()
@@ -302,23 +251,11 @@ private enum PickerFocus: Hashable {
     case addKids
 }
 
-/// Collects each profile tile's center point (as an `Anchor`) keyed by profile
-/// id, so the background can look up the focused tile's position and pool its
-/// color glow there.
-private struct TileCentersKey: PreferenceKey {
-    static let defaultValue: [String: Anchor<CGPoint>] = [:]
-    static func reduce(value: inout [String: Anchor<CGPoint>], nextValue: () -> [String: Anchor<CGPoint>]) {
-        value.merge(nextValue()) { _, new in new }
-    }
-}
-
 /// A single selectable profile tile: a circular avatar with the name beneath it.
 ///
-/// At rest the tile has **no background** — just the avatar and name. On focus a
-/// circular liquid-glass surface (the same focused "card" treatment used across
-/// the app, reused via `plozzGlassCard`) blooms behind the avatar with 24pt of
-/// clearance so it reads as a round halo, and the whole tile lifts with a gentle
-/// scale + shadow. The name sits *below* the glass, never inside it. A custom
+/// At rest the tile has **no background** — just the avatar and name. On focus
+/// the avatar lifts (scale + deeper shadow) and gains a white ring, the tvOS
+/// profile-picker treatment; the name sits below and never scales. A custom
 /// `ButtonStyle` owns focus (with the system focus effect disabled) so there's
 /// exactly one focus indicator.
 ///
@@ -347,9 +284,9 @@ private struct ProfileTile: View {
 /// Focus treatment shared by the profile and "Add" tiles. Owning focus in a
 /// `ButtonStyle` — rather than a `.plain` button with a manual overlay — keeps
 /// tvOS from also painting its own focus plate, so the tile shows a single,
-/// fully custom indicator. The focus scale is applied to the *photo only*
-/// (inside `FocusGlassAvatar`); here we just add momentary press feedback to the
-/// avatar so the name and active dot keep a constant size.
+/// fully custom indicator. The focus scale is applied to the *avatar only*
+/// (inside `ProfilePickerAvatarSlot`); here we just pass the press state down
+/// so the name keeps a constant size.
 private struct ProfileTileButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -357,25 +294,73 @@ private struct ProfileTileButtonStyle: ButtonStyle {
     }
 }
 
-/// A fixed-size avatar slot that shows the shared liquid-glass focus surface as a
-/// **circle** around its content (with `focusPadding` of clearance) only when
-/// focused — no background at rest. On focus the *photo* gently scales up toward
-/// the halo while the glass stays put; the surrounding text is unaffected. The
-/// focused size is always reserved, so focusing never nudges the grid; the glass
-/// simply fades in with a soft lift.
-private struct FocusGlassAvatar<Content: View>: View {
-    @ViewBuilder var content: () -> Content
+/// A fixed-size avatar slot. On focus the avatar, its badge and its shadow
+/// scale up together and a white ring appears just outside the circle. The
+/// focused size is always reserved, so focusing never nudges the row. The
+/// shadow belongs to a plain filled circle behind the avatar, not to the
+/// avatar's content.
+private struct ProfilePickerAvatarSlot<Avatar: View, Badge: View>: View {
+    /// Off for translucent content, which the shadow's disc would show through.
+    var castsShadow = true
+    @ViewBuilder var avatar: () -> Avatar
+    @ViewBuilder var badge: () -> Badge
     @Environment(\.isFocused) private var isFocused
     @Environment(\.profileTilePressed) private var isPressed
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var scale: CGFloat {
+        guard isFocused else { return 1 }
+        return isPressed ? ProfilePickerLayout.focusScale * 0.97 : ProfilePickerLayout.focusScale
+    }
 
     var body: some View {
-        CircularFocusHalo(
-            isFocused: isFocused,
-            isPressed: isPressed,
-            diameter: ProfilePickerLayout.avatarSize,
-            focusPadding: ProfilePickerLayout.focusPadding,
-            avatar: content
-        )
+        let diameter = ProfilePickerLayout.avatarSize
+        ZStack {
+            if castsShadow {
+                Circle()
+                    .fill(ProfilePickerLayout.titleInk)
+                    .frame(width: diameter - 4, height: diameter - 4)
+                    .shadow(
+                        color: ProfilePickerLayout.titleInk.opacity(isFocused ? 0.38 : 0.25),
+                        radius: isFocused ? 30 : 20, y: isFocused ? 34 : 18
+                    )
+            }
+            avatar()
+                .frame(width: diameter, height: diameter)
+                .clipShape(Circle())
+            Circle()
+                .strokeBorder(Color.white.opacity(0.85), lineWidth: ProfilePickerLayout.ringWidth)
+                .frame(
+                    width: diameter + ProfilePickerLayout.ringWidth * 2,
+                    height: diameter + ProfilePickerLayout.ringWidth * 2
+                )
+                .opacity(isFocused ? 1 : 0)
+            badge()
+                .frame(width: diameter, height: diameter, alignment: .bottomTrailing)
+        }
+        .scaleEffect(scale)
+        .frame(width: ProfilePickerLayout.slot, height: ProfilePickerLayout.slot)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: isFocused)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isPressed)
+    }
+}
+
+/// The white lock badge on a PIN-protected profile's avatar. Replaces the
+/// inline lock beside the name on this screen; the tile's accessibility value
+/// still announces the lock.
+private struct ProfileLockBadge: View {
+    var body: some View {
+        Image(systemName: "lock.fill")
+            .font(.system(size: 22, weight: .semibold))
+            .foregroundStyle(ProfilePickerLayout.titleInk)
+            .frame(width: 52, height: 52)
+            .background {
+                Circle()
+                    .fill(Color.white.opacity(0.92))
+                    .shadow(color: ProfilePickerLayout.titleInk.opacity(0.25), radius: 8, y: 6)
+            }
+            .padding(2)
+            .accessibilityHidden(true)
     }
 }
 
@@ -397,38 +382,36 @@ private struct ProfileTileLabel: View {
     let showsLock: Bool
 
     @Environment(\.isFocused) private var isFocused
-    @Environment(\.themePalette) private var palette
 
     var body: some View {
-        VStack(spacing: 12) {
-            FocusGlassAvatar {
+        VStack(spacing: 14) {
+            ProfilePickerAvatarSlot {
                 ProfileAvatarView(profile: profile, size: ProfilePickerLayout.avatarSize)
+            } badge: {
+                if showsLock { ProfileLockBadge() }
             }
 
-            ProfileNameLabel(profile: profile, showsLock: showsLock)
+            ProfileNameLabel(profile: profile, showsLock: false)
                 .font(ProfilePickerLayout.nameFont)
-                .foregroundStyle(isFocused ? palette.primaryText : palette.secondaryText)
+                .foregroundStyle(isFocused ? ProfilePickerLayout.focusedNameInk : ProfilePickerLayout.nameInk)
                 .lineLimit(1)
         }
     }
 }
 
-/// A trailing "create something" tile. Two of these can appear — an ordinary
-/// profile and a Kids Profile — mirroring how YouTube offers "Add account" and
-/// "Add a kid account" side by side rather than hiding the distinction behind a
-/// toggle. Only rendered when the caller passes the matching closure; the launch
-/// picker shows neither.
+/// A trailing "create something" tile: one frosted circle with a glyph. Two of
+/// these can appear — an ordinary profile and a Kids Profile — mirroring how
+/// YouTube offers "Add account" and "Add a kid account" side by side rather
+/// than hiding the distinction behind a toggle. Only rendered when the caller
+/// passes the matching closure; the launch picker shows neither.
 private struct AddProfileTile: View {
     let title: LocalizedStringResource
     let systemImage: String
-    /// The plain "Add Profile" tile is the primary action and gets the solid
-    /// treatment; the kid variant is deliberately quieter so it doesn't compete.
-    let isProminent: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            AddProfileTileLabel(title: title, systemImage: systemImage, isProminent: isProminent)
+            AddProfileTileLabel(title: title, systemImage: systemImage)
         }
         .plozzCardFocusButtonStyle(
             ProfileTileButtonStyle(), cornerRadius: ProfilePickerLayout.avatarSize / 2,
@@ -441,80 +424,111 @@ private struct AddProfileTile: View {
 private struct AddProfileTileLabel: View {
     let title: LocalizedStringResource
     let systemImage: String
-    let isProminent: Bool
 
     @Environment(\.isFocused) private var isFocused
-    @Environment(\.themePalette) private var palette
 
     var body: some View {
-        VStack(spacing: 12) {
-            FocusGlassAvatar {
+        VStack(spacing: 14) {
+            ProfilePickerAvatarSlot(castsShadow: false) {
                 ZStack {
-                    if isProminent {
-                        Circle().fill(isFocused ? Color.white : palette.primaryText.opacity(0.9))
-                    } else {
-                        Circle()
-                            .strokeBorder(
-                                palette.secondaryText.opacity(isFocused ? 0.9 : 0.5),
-                                style: StrokeStyle(lineWidth: 4, dash: [12, 10])
-                            )
-                    }
+                    // A translucent fill over the static background, not a
+                    // blur: a backdrop sample of a still gradient only
+                    // reproduces the gradient.
+                    Circle().fill(Color.white.opacity(isFocused ? 0.5 : 0.28))
+                    Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 1.5)
                     Image(systemName: systemImage)
-                        .font(.system(size: isProminent ? 102 : 88, weight: .semibold))
-                        .foregroundStyle(
-                            isProminent
-                                ? (isFocused ? Color.black : palette.settingsBackground)
-                                : (isFocused ? palette.primaryText : palette.secondaryText)
-                        )
+                        .font(.system(size: 64, weight: .regular))
+                        .foregroundStyle(ProfilePickerLayout.titleInk)
                 }
+            } badge: {
+                EmptyView()
             }
 
-            VStack(spacing: 8) {
-                Text(title)
-                    .font(ProfilePickerLayout.nameFont)
-                    .foregroundStyle(isFocused ? palette.primaryText : palette.secondaryText)
-                    .lineLimit(1)
-
-                // Keep the same vertical rhythm as a profile tile's dot slot.
-                Circle().fill(.clear).frame(width: 10, height: 10)
-            }
+            Text(title)
+                .font(ProfilePickerLayout.nameFont)
+                .foregroundStyle(isFocused ? ProfilePickerLayout.focusedNameInk : ProfilePickerLayout.nameInk)
+                .lineLimit(1)
         }
+    }
+}
+
+/// The picker's small controls (Edit, Cancel, the Settings gear): a light
+/// translucent pill over the static background, solid white when focused.
+private struct ProfilePickerPillStyle: ButtonStyle {
+    enum Shape { case capsule, circle }
+    var shape: Shape = .capsule
+
+    func makeBody(configuration: Configuration) -> some View {
+        PillBody(configuration: configuration, shape: shape)
+    }
+
+    private struct PillBody: View {
+        let configuration: ButtonStyle.Configuration
+        let shape: Shape
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(ProfilePickerLayout.titleInk)
+                .padding(.horizontal, shape == .capsule ? 22 : 0)
+                .frame(minHeight: 44)
+                .background {
+                    switch shape {
+                    case .capsule: Capsule().fill(fill).shadow(color: shadow, radius: 12, y: 8)
+                    case .circle: Circle().fill(fill).shadow(color: shadow, radius: 12, y: 8)
+                    }
+                }
+                .contentShape(shape == .capsule ? AnyShape(Capsule()) : AnyShape(Circle()))
+                .scaleEffect(isFocused ? (configuration.isPressed ? 1.04 : 1.1) : 1)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isFocused)
+        }
+
+        private var fill: Color { isFocused ? .white : .white.opacity(0.5) }
+        private var shadow: Color { ProfilePickerLayout.titleInk.opacity(isFocused ? 0.3 : 0) }
+    }
+}
+
+/// The Plozz mark and name, top-leading like the tvOS profile picker.
+private struct ProfilePickerBrand: View {
+    var body: some View {
+        HStack(spacing: 14) {
+            Image("PlozzLogo")
+                .resizable()
+                .interpolation(.none)
+                .scaledToFit()
+                .frame(width: 56, height: 56)
+            Text(verbatim: "Plozz")   // l10n:content — app name
+                .font(.system(size: 30, weight: .bold))
+                .foregroundStyle(ProfilePickerLayout.titleInk)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: "Plozz"))
     }
 }
 
 /// Shared layout constants so a profile tile and the "Add Profile" tile size
 /// identically.
 private enum ProfilePickerLayout {
-    /// Deliberately large: the avatar IS the target on this screen, and a 10-foot
-    /// UI can afford it.
-    ///
-    /// Sized so five still fit without scrolling, which is the common household
-    /// count. tvOS reserves ~60pt of title-safe inset per side, leaving ~1800 of
-    /// a 1920 screen, and everything below has to live inside that:
-    ///
-    ///     5×(256 + 2×24) + 4×36 + 2×40 = 1520 + 144 + 80 = 1744
-    ///
-    /// The halo's clearance is NOT the place to find room — shrinking it made
-    /// the focus ring read as a thin rim instead of a halo. The gaps and the row
-    /// inset give way first; past that, growing the avatar trades the fifth tile
-    /// for size. Change these together rather than one at a time.
-    static let avatarSize: CGFloat = 256
-    /// Clearance between the avatar and the circular focus glass — the visible
-    /// "padding" the focus halo adds around the avatar when selected.
-    ///
-    /// This is what makes focus read as a *halo* rather than an outline, so it
-    /// scales with the avatar instead of absorbing the layout budget.
-    static let focusPadding: CGFloat = 24
-    /// The reserved avatar-slot size (avatar + focus clearance on each side).
-    static let slot: CGFloat = avatarSize + focusPadding * 2
-    /// Sized against the avatar so five still fit without scrolling; the slack
-    /// the smaller avatar frees goes back into breathing room rather than being
-    /// hoarded.
-    static let tileSpacing: CGFloat = 36
+    /// The avatar IS the target on this screen, so it stays large; the tvOS
+    /// picker's 190pt keeps six tiles (four profiles plus both Add tiles)
+    /// comfortably inside the title-safe area.
+    static let avatarSize: CGFloat = 190
+    static let focusScale: CGFloat = 1.14
+    static let ringWidth: CGFloat = 4
+    /// The reserved avatar-slot size: the focused avatar plus its ring.
+    static let slot: CGFloat = 228
+    /// With the reserved slot, this leaves the concept's 64pt between resting
+    /// avatars.
+    static let tileSpacing: CGFloat = 26
     /// Row inset, inside the tvOS title-safe area.
     static let rowPadding: CGFloat = 40
-    /// Deliberately generous for a 10-foot screen: the name is read at a glance
-    /// from a sofa, and it's the only text on the tile.
-    static let nameFont: Font = .system(size: 34, weight: .semibold)
+    /// The logo and Settings gear sit on the 80pt side margins.
+    static let chromeInset: CGFloat = 80
+    static let nameFont: Font = .system(size: 28, weight: .semibold)
+    /// Dark ink for the light background, independent of the app theme.
+    static let titleInk = Color(red: 0.078, green: 0.149, blue: 0.239)
+    static let nameInk = Color(red: 0.102, green: 0.180, blue: 0.278)
+    static let focusedNameInk = Color(red: 0.043, green: 0.102, blue: 0.173)
 }
 #endif

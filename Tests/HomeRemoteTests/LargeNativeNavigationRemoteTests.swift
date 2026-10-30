@@ -41,6 +41,50 @@ final class LargeNativeNavigationRemoteTests: XCTestCase {
         #endif
     }
 
+    /// The native sidebar counterpart of `testProfileRapidHorizontalNavigation`:
+    /// the same cadence through the first libraries and back, recording which
+    /// pages the traversal presented rather than asserting that none were.
+    func testProfileRapidVerticalNavigation() throws {
+        #if targetEnvironment(simulator)
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "com.thatcube.Plozz.FocusHost")
+        let attach = ProcessInfo.processInfo.environment["PLOZZ_PERFORMANCE_ATTACH"] == "1"
+        if attach {
+            XCTAssertEqual(app.state, .runningForeground)
+        } else {
+            app.launchArguments = [
+                "--large-native-navigation-fixture", "--native-vertical-navigation",
+                "--real-library-pages", "--trace-tab-transitions"
+            ]
+            app.launch()
+        }
+        defer { if !attach { app.terminate() } }
+        XCTAssertTrue(app.buttons["large-navigation-content"].waitForExistence(timeout: 15))
+        XCUIRemote.shared.press(.menu)
+        Thread.sleep(forTimeInterval: 1)
+        var durations: [TimeInterval] = []
+        for _ in 0..<3 {
+            let start = ProcessInfo.processInfo.systemUptime
+            for _ in 0..<12 { XCUIRemote.shared.press(.down) }
+            for _ in 0..<12 { XCUIRemote.shared.press(.up) }
+            durations.append(ProcessInfo.processInfo.systemUptime - start)
+        }
+        Thread.sleep(forTimeInterval: 1)
+        let journal = app.staticTexts["native-tab-transition-journal"].label
+        let presented = Set(journal.split(separator: "\n").filter { $0.hasSuffix(":didAppear") }
+            .map { $0.dropLast(":didAppear".count) })
+        print("VERTICAL_NAVIGATION_PRESENTED \(presented.count) \(presented.sorted())")
+        let evidence = XCTAttachment(string: "Remote round-trip seconds: \(durations)\n"
+            + "Presented pages: \(presented.sorted())\n" + journal)
+        evidence.name = "Rapid vertical navigation"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+        capture("Rapid vertical navigation", in: app)
+        #else
+        throw XCTSkip("Synthetic navigation fixtures run only on an owned simulator.")
+        #endif
+    }
+
     func testHorizontalSelectPresentsEachDestinationOnce() throws {
         try exerciseTransitions(sceneStorage: false)
     }

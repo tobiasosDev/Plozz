@@ -33,11 +33,16 @@ struct HeroForegroundModel: Equatable {
     /// cached image (the CoreUI background-removal logo pipeline is internal), so a
     /// slide with a logo shows the image, otherwise the title text.
     let logoURL: URL?
-    /// The dotted metadata line (year · runtime · genres), pre-joined with the
-    /// hero's `  ·  ` separator, or `nil` when the slide has none.
+    /// The dotted metadata line (kind · genres · year, the Apple TV app's order),
+    /// pre-joined with the hero's `  ·  ` separator, or `nil` when the slide has none.
     let metadataText: String?
     /// Content-rating badge text (e.g. `TV-14`), or `nil`.
     let ratingBadgeText: String?
+    /// The server the slide plays from, drawn as a brand mark leading the
+    /// metadata line, or `nil` when the item has no known account.
+    var sourceProvider: ProviderKind? = nil
+    /// Outlined spec chips trailing the metadata line ("4K", "Dolby Vision", "5.1").
+    var qualityBadges: [String] = []  // l10n:content — technical spec/brand names, never translated
     /// The air-schedule badge above the title ("New episode every Wednesday"), or
     /// `nil` when the slide isn't a series with something truthful to say.
     let scheduleLine: String?
@@ -140,18 +145,38 @@ enum HeroForegroundModelBuilder {
         var requestSystemImage: String? = nil
     }
 
-    /// The `  ·  `-joined metadata line for a slide, or `nil` when empty.
-    static func metadataText(for item: MediaItem) -> String? {
-        var parts: [String] = []
+    /// The `  ·  `-joined metadata line for a slide, or `nil` when empty. Reads
+    /// like the Apple TV app: what it is, up to two genres, then the year.
+    static func metadataText(for item: MediaItem, kindLabel: String? = nil) -> String? {
+        var parts: [String] = kindLabel.map { [$0] } ?? []
+        parts.append(
+            contentsOf: GenreDisplayFormatter.displayNames(
+                for: Array(item.genres.prefix(2))
+            )
+        )
         if let productionYear = item.productionYear {
             parts.append(String(productionYear))
         }
-        parts.append(
-            contentsOf: GenreDisplayFormatter.displayNames(
-                for: Array(item.genres.prefix(3))
-            )
-        )
         return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
+    }
+
+    /// The word naming what a slide is ("Movie", "TV Show"), or `nil` for kinds
+    /// the line should not label. An episode slide stands for its show.
+    static func kindLabel(for item: MediaItem) -> LocalizedStringResource? {
+        switch item.kind {
+        case .movie:
+            LocalizedStringResource("Movie", comment: "Hero metadata line: the slide is a film. Followed by genres and year.")
+        case .series, .season, .episode:
+            LocalizedStringResource("TV Show", comment: "Hero metadata line: the slide is a series. Followed by genres and year.")
+        default:
+            nil
+        }
+    }
+
+    /// Up to three spec chips for the metadata line: resolution, dynamic range,
+    /// then audio, as the item's own media info reports them.
+    static func qualityBadges(for item: MediaItem) -> [String] {
+        Array(item.technicalBadges.filter { $0.style != .sdr }.map(\.label).prefix(3))
     }
 
     /// Hero certification label. Missing list-record metadata remains absent until
@@ -288,6 +313,8 @@ enum HeroForegroundModelBuilder {
         slideCount: Int,
         slideIndex: Int,
         scheduleLine: String? = nil,
+        kindLabel: String? = nil,
+        sourceProvider: ProviderKind? = nil,
         dotsAutoAdvance: Bool = false,
         dotsDwellStart: Date? = nil,
         dotsDwellDuration: Double = 0,
@@ -311,8 +338,10 @@ enum HeroForegroundModelBuilder {
             itemID: item.id,
             title: titleText(for: item, maskedTitle: maskedTitle),
             logoURL: item.logoURL,
-            metadataText: metadataText(for: item),
+            metadataText: metadataText(for: item, kindLabel: kindLabel),
             ratingBadgeText: showsContentRatings ? ratingBadgeText(for: item) : nil,
+            sourceProvider: sourceProvider,
+            qualityBadges: qualityBadges(for: item),
             scheduleLine: scheduleLine,
             overview: overviewVisible
                 ? HeroContentPolicy.homeDescription(for: presentation)?.overviewPlainText

@@ -43,12 +43,18 @@ final class ProfileAvatarImageTests: XCTestCase {
         let avatar = ProfileAvatarView(profile: profile, size: 32, rendersAsImage: true)
         let image = try render(avatar.nativeFallbackImage)
         try assertCircle(image)
-        let background = try pixel(image, x: 16, y: 3)
+        // A still gradient lit from the top-left: the tile colour at the far
+        // edge, lifted toward white near the highlight.
         let color = ProfileTileColor.paletteRGB[0]
-        XCTAssertEqual(background[0], color.r * 255, accuracy: 2)
-        XCTAssertEqual(background[1], color.g * 255, accuracy: 2)
-        XCTAssertEqual(background[2], color.b * 255, accuracy: 2)
-        XCTAssertEqual(background[3], 255, accuracy: 2)
+        let edge = try pixel(image, x: 26, y: 26)
+        XCTAssertEqual(edge[0], color.r * 255, accuracy: 3)
+        XCTAssertEqual(edge[1], color.g * 255, accuracy: 3)
+        XCTAssertEqual(edge[2], color.b * 255, accuracy: 3)
+        XCTAssertEqual(edge[3], 255, accuracy: 2)
+        let highlight = try pixel(image, x: 6, y: 10)
+        XCTAssertGreaterThan(highlight[1], color.g * 255 + 40)
+        XCTAssertGreaterThanOrEqual(highlight[0], color.r * 255 - 2)
+        XCTAssertEqual(highlight[3], 255, accuracy: 2)
     }
 
     func testEmojiFallbackKeepsNeutralOrChosenBackground() throws {

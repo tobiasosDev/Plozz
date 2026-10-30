@@ -44,6 +44,12 @@ final class HeroForegroundUIView: UIView {
     private let titleLabel = UILabel()
     private let ratingLabel = PaddedLabel()
     private let metadataLabel = UILabel()
+    /// The server brand mark leading the metadata line, as a cached bitmap so
+    /// trailer frames and the paging gauge never re-render it.
+    private let sourceBadge = UIImageView()
+    private var sourceBadgeProvider: ProviderKind?
+    /// Outlined spec chips ("4K", "5.1") trailing the metadata line, reused across slides.
+    private var qualityLabels: [PaddedLabel] = []
     private let overviewLabel = UILabel()
     /// The air-schedule badge above the logo ("New episode every Wednesday").
     private let scheduleLabel = PaddedLabel()
@@ -150,8 +156,9 @@ final class HeroForegroundUIView: UIView {
     private let activeDotWidth: CGFloat = 30
     private let dotSpacing: CGFloat = 12
     // The wordmark's own box is shared with the detail hero — see `HeroLogoLayout`.
-    private let dotsGlassHPad: CGFloat = 0
-    private let dotsGlassVPad: CGFloat = 0
+    // The dots sit in a flat frosted capsule, the Apple TV app's page control.
+    private let dotsGlassHPad: CGFloat = 14
+    private let dotsGlassVPad: CGFloat = 9
     private let bottomMargin: CGFloat = 24
 
     /// Total height of the paging-dot glass capsule (dot + vertical padding), used to
@@ -176,6 +183,9 @@ final class HeroForegroundUIView: UIView {
         ratingLabel.isHidden = true
 
         metadataLabel.numberOfLines = 1
+        sourceBadge.contentMode = .scaleAspectFit
+        sourceBadge.isHidden = true
+        sourceBadge.isAccessibilityElement = false
 
         // Chrome matched to the flat idle pill rather than the detail hero's
         // material: this renderer exists because live blur re-samples the moving
@@ -209,7 +219,7 @@ final class HeroForegroundUIView: UIView {
         updateRasterizationScale()
         applyThemeColors()
 
-        for v in [logoImageView, titleLabel, ratingLabel, metadataLabel,
+        for v in [logoImageView, titleLabel, ratingLabel, metadataLabel, sourceBadge,
                   overviewLabel, scheduleLabel, ratingsHost.view!, pillsContainer, dotsContainer] {
             addSubview(v)
         }
@@ -233,6 +243,9 @@ final class HeroForegroundUIView: UIView {
         ratingLabel.insets = UIEdgeInsets(top: 0, left: 11 * scale, bottom: 0, right: 11 * scale)
         ratingLabel.fixedHeight = 36 * scale
         ratingLabel.invalidateIntrinsicContentSize()
+        qualityLabels.forEach(styleQualityChip)
+        // The brand mark is sized at creation; rebuild it at the new scale.
+        sourceBadgeProvider = nil
         scheduleLabel.font = .systemFont(ofSize: PlozzTypography.heroSchedule.scaled(by: scale).pointSize, weight: .semibold)
         scheduleLabel.insets = UIEdgeInsets(top: 0, left: 18 * scale, bottom: 0, right: 18 * scale)
         scheduleLabel.fixedHeight = 52 * scale
@@ -294,8 +307,15 @@ final class HeroForegroundUIView: UIView {
 
         scheduleLabel.textColor = primary
         scheduleLabel.backgroundColor = HeroForegroundGlass.flatFill()
+        dotsContainer.backgroundColor = HeroForegroundGlass.flatFill()
+        dotsContainer.layer.borderWidth = 1
+        dotsContainer.layer.borderColor = HeroForegroundGlass.flatBorder().resolvedColor(with: traitCollection).cgColor
         let resolvedPrimary = primary.resolvedColor(with: traitCollection)
         ratingLabel.layer.borderColor = resolvedPrimary.withAlphaComponent(0.65).cgColor
+        for chip in qualityLabels {
+            chip.textColor = primary
+            chip.layer.borderColor = resolvedPrimary.withAlphaComponent(0.65).cgColor
+        }
         scheduleLabel.layer.borderColor = HeroForegroundGlass.flatBorder()
             .resolvedColor(with: traitCollection).cgColor
         let shadow = traitCollection.userInterfaceStyle == .light ? UIColor.white : UIColor.black
@@ -305,6 +325,50 @@ final class HeroForegroundUIView: UIView {
         // A monochrome wordmark is recoloured to the scheme foreground, so a
         // light/dark switch must re-tint it (and re-evaluate the halo colour).
         applyLogoTintAndHalo()
+    }
+
+    // MARK: - Source badge and spec chips
+
+    private func applySourceBadge(_ provider: ProviderKind?) {
+        sourceBadge.isHidden = provider == nil
+        guard let provider, provider != sourceBadgeProvider else { return }
+        sourceBadgeProvider = provider
+        sourceBadge.image = ProviderBrandMarkBitmap.image(
+            provider: provider, size: 31 * textScale,
+            scale: traitCollection.displayScale > 0 ? traitCollection.displayScale : 1
+        )
+    }
+
+    private func applyQualityBadges(_ badges: [String]) {
+        while qualityLabels.count < badges.count {
+            let chip = PaddedLabel()
+            chip.textAlignment = .center
+            chip.lineBreakMode = .byClipping
+            // Static chrome, like the certificate chip: no backdrop, drawn once.
+            chip.layer.shouldRasterize = true
+            chip.layer.rasterizationScale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 1
+            styleQualityChip(chip)
+            let primary = HeroForegroundGlass.primaryInk()
+            chip.textColor = primary
+            chip.layer.borderColor = primary.resolvedColor(with: traitCollection).withAlphaComponent(0.65).cgColor
+            addSubview(chip)
+            qualityLabels.append(chip)
+        }
+        for (offset, chip) in qualityLabels.enumerated() {
+            let text = offset < badges.count ? badges[offset] : nil
+            chip.text = text
+            chip.isHidden = text == nil
+        }
+    }
+
+    private func styleQualityChip(_ chip: PaddedLabel) {
+        let scale = textScale
+        chip.font = .systemFont(ofSize: 18 * scale, weight: .bold)
+        chip.layer.borderWidth = 2 * scale
+        chip.layer.cornerRadius = 6 * scale
+        chip.insets = UIEdgeInsets(top: 0, left: 8 * scale, bottom: 0, right: 8 * scale)
+        chip.fixedHeight = 30 * scale
+        chip.invalidateIntrinsicContentSize()
     }
 
     // MARK: - Imperative apply
@@ -339,6 +403,8 @@ final class HeroForegroundUIView: UIView {
 
         metadataLabel.text = model.metadataText
         metadataLabel.isHidden = (model.metadataText ?? "").isEmpty
+        applySourceBadge(model.sourceProvider)
+        applyQualityBadges(model.qualityBadges)
 
         scheduleLabel.text = model.scheduleLine
         scheduleLabel.isHidden = (model.scheduleLine ?? "").isEmpty
@@ -608,6 +674,7 @@ final class HeroForegroundUIView: UIView {
     private var fadeViews: [UIView] {
         [logoImageView, titleLabel, ratingLabel, metadataLabel,
          overviewLabel, scheduleLabel, ratingsHost.view!, pillsContainer]
+            + qualityLabels + [sourceBadge]
     }
 
     private func applyFade(metadataVisible: Bool, slideChanged: Bool) {
@@ -687,17 +754,36 @@ final class HeroForegroundUIView: UIView {
         }
 
         // Metadata line.
-        if !metadataLabel.isHidden || !ratingLabel.isHidden {
+        let visibleQuality = qualityLabels.filter { !$0.isHidden }
+        let showsSourceBadge = !sourceBadge.isHidden
+        if !metadataLabel.isHidden || !ratingLabel.isHidden || !visibleQuality.isEmpty || showsSourceBadge {
             let h: CGFloat = 36 * textScale
+            let gap = 16 * textScale
             var x = leading
+            if showsSourceBadge {
+                let side = h * 0.86
+                sourceBadge.frame = CGRect(x: x, y: y - h + (h - side) / 2, width: side, height: side)
+                x += side + 12 * textScale
+            }
             if !ratingLabel.isHidden {
                 var rSize = ratingLabel.intrinsicContentSize
                 rSize.width = min(rSize.width, min(240, maxWidth * 0.5))
                 ratingLabel.frame = CGRect(x: x, y: y - h + (h - rSize.height) / 2, width: rSize.width, height: rSize.height)
-                x += rSize.width + 16 * textScale
+                x += rSize.width + gap
             }
+            let chipsWidth = visibleQuality.reduce(CGFloat(0)) { $0 + $1.intrinsicContentSize.width + 10 * textScale }
             if !metadataLabel.isHidden {
-                metadataLabel.frame = CGRect(x: x, y: y - h, width: maxWidth - (x - leading), height: h)
+                let available = max(0, maxWidth - (x - leading) - chipsWidth)
+                let fitted = min(available, ceil(metadataLabel.sizeThatFits(
+                    CGSize(width: .greatestFiniteMagnitude, height: h)).width))
+                metadataLabel.frame = CGRect(x: x, y: y - h, width: fitted, height: h)
+                x += fitted + gap
+            }
+            for chip in visibleQuality {
+                let size = chip.intrinsicContentSize
+                guard x + size.width <= leading + maxWidth else { chip.frame = .zero; continue }
+                chip.frame = CGRect(x: x, y: y - h + (h - size.height) / 2, width: size.width, height: size.height)
+                x += size.width + 10 * textScale
             }
             y -= h + columnSpacing
         }
@@ -799,7 +885,8 @@ final class HeroForegroundUIView: UIView {
         // Centre the capsule across the hero width, matching the SwiftUI hero.
         let glassX = (bounds.width - glassWidth) / 2
         dotsContainer.frame = CGRect(x: glassX, y: bottom - glassHeight, width: glassWidth, height: glassHeight)
-        dotsContainer.layer.cornerRadius = 0
+        dotsContainer.layer.cornerRadius = glassHeight / 2
+        dotsContainer.layer.cornerCurve = .continuous
 
         let morph = animateDotsMorph
         animateDotsMorph = false

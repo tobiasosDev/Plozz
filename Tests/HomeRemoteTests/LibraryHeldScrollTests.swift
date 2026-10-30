@@ -21,6 +21,7 @@ final class LibraryHeldScrollTests: XCTestCase {
                         .matching(identifier: "library-content-mode").firstMatch
                     XCTAssertTrue(bar.waitForExistence(timeout: 15), app.debugDescription)
                     let originalFrame = bar.frame
+                    var keyline: CGFloat?
                     for (mode, title) in [
                         ("recommended", "A: Library item 000"), ("titles", "A: Library item 000"),
                         ("collections", "Collection item 0"), ("playlists", "Playlist item 0")
@@ -41,9 +42,16 @@ final class LibraryHeldScrollTests: XCTestCase {
                         attachment.name = "library-visible-keyline-\(context)"
                         attachment.lifetime = .keepAlways
                         add(attachment)
-                        print("LIBRARY_VISIBLE_KEYLINE \(context) navigation=\(bar.frame.minX) card=\(visibleLeft)")
-                        XCTAssertEqual(visibleLeft, bar.frame.minX, accuracy: 1,
+                        print("LIBRARY_VISIBLE_KEYLINE \(context) navigation=\(bar.frame.midX) card=\(visibleLeft)")
+                        // The mode control is centred between the content keyline and
+                        // the trailing safe margin, as in the TV app, so the rendered
+                        // card surface — not its padded slot — fixes that centre.
+                        XCTAssertEqual(bar.frame.midX, (visibleLeft + app.frame.width - 80) / 2, accuracy: 1,
                                        "Align the rendered card surface, not its invisible padded slot: \(context)")
+                        if let keyline {
+                            XCTAssertEqual(visibleLeft, keyline, accuracy: 1, "Every mode shares one keyline: \(context)")
+                        }
+                        keyline = keyline ?? visibleLeft
                     }
                     app.terminate()
                 }
@@ -93,8 +101,8 @@ final class LibraryHeldScrollTests: XCTestCase {
                 screenshot.lifetime = .keepAlways
                 add(screenshot)
 
-                XCTAssertEqual(bar.frame.minX, heading.frame.minX, accuracy: 1,
-                               "Align the mode container to Showcase without moving the shared content.")
+                XCTAssertEqual(bar.frame.midX, (heading.frame.minX + app.frame.width - 80) / 2, accuracy: 1,
+                               "Centre the mode container on the Showcase content without moving it.")
                 let description = app.staticTexts["showcase-description"]
                 XCTAssertTrue(description.waitForExistence(timeout: 5), app.debugDescription)
                 XCTAssertEqual(description.frame.minX, heading.frame.minX, accuracy: 1,
@@ -435,20 +443,25 @@ final class LibraryHeldScrollTests: XCTestCase {
         }
         let initial = try XCTUnwrap(focusedIndex(in: app), "The initial card must receive actual focus.")
         if preloaded {
-            let horizontal: XCUIRemote.Button = initial % 6 == 5 ? .left : .right
+            // The standard-density library grid shows seven posters per row.
+            let columns = 7
+            let horizontal: XCUIRemote.Button = initial % columns == columns - 1 ? .left : .right
             XCUIRemote.shared.press(horizontal)
             XCTAssertEqual(focusedIndex(in: app), initial + (horizontal == .right ? 1 : -1))
             XCUIRemote.shared.press(horizontal == .right ? .left : .right)
             XCTAssertEqual(focusedIndex(in: app), initial)
             XCUIRemote.shared.press(.down)
-            XCTAssertEqual(focusedIndex(in: app), initial + 6)
+            XCTAssertEqual(focusedIndex(in: app), initial + columns)
             XCUIRemote.shared.press(.up)
             XCTAssertEqual(focusedIndex(in: app), initial)
         }
         let before = try scrollPosition(in: app)
         XCTAssertGreaterThan(before.viewport, 0)
 
-        XCUIRemote.shared.press(.down, forDuration: 5)
+        // Seven columns leave the 500-item fixture 72 rows; a five-second hold
+        // now reaches its last row, where Down has no card below. Stop
+        // mid-library, still dozens of rows past the initial cards.
+        XCUIRemote.shared.press(.down, forDuration: 4)
 
         let after = try scrollPosition(in: app)
         let peakCells = try XCTUnwrap(Int(app.staticTexts["library-peak-cells"].label))
