@@ -773,8 +773,11 @@ struct PrototypeProgramHeader: View {
                             .frame(width: 260 * program.progress(at: now))
                     }
                     .accessibilityHidden(true)
-                Text("\(duration(program.end.timeIntervalSince(now))) left",
-                     comment: "Time remaining in the programme airing now. The argument is a duration such as 33 min.")
+                Text(LocalizedStringResource(
+                    "liveTV.header.timeLeft",
+                    defaultValue: "\(duration(program.end.timeIntervalSince(now))) left",
+                    comment: "Time remaining in the programme airing now. The argument is a duration such as 33 min."
+                ))
             }
             .font(.system(size: 22, weight: .medium))
             .foregroundStyle(palette.secondaryText)
@@ -971,7 +974,9 @@ struct PrototypeLiveBadge: View {
     var compact = false
 
     var body: some View {
-        Text("LIVE", comment: "Badge on a channel or programme airing now.")
+        Text(LocalizedStringResource(
+            "liveTV.badge.live", defaultValue: "LIVE", comment: "Badge on a channel or programme airing now."
+        ))
             .font(.system(size: compact ? 15 : 17, weight: .bold))
             .kerning(0.7)
             .foregroundStyle(.white)

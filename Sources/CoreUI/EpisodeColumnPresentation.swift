@@ -92,14 +92,22 @@ public struct EpisodeColumnPresentation: Equatable, Sendable, CustomDebugStringC
                 // The number moves to the eyebrow, so the title stands alone.
                 titleLine = title.isEmpty ? Text("Episode \(number)") : Text(verbatim: title)
                 if let runtime {
+                    // Semantic keys: the number is the episode's index, not a
+                    // count, so the line has no plural forms.
                     eyebrowLine = item.cardRuntimeIsRemaining
-                        ? Text("Episode \(number) · \(runtime) left",
-                               comment: "Episode card label above the title: episode number and time remaining, e.g. Episode 3 · 12m left.")
-                        : Text("Episode \(number) · \(runtime)",
-                               comment: "Episode card label above the title: episode number and runtime, e.g. Episode 3 · 45m.")
+                        ? Text(LocalizedStringResource(
+                            "episodeCard.eyebrow.remaining", defaultValue: "Episode \(number) · \(runtime) left",
+                            comment: "Episode card label above the title: episode number and time remaining, e.g. Episode 3 · 12m left."
+                        ))
+                        : Text(LocalizedStringResource(
+                            "episodeCard.eyebrow.runtime", defaultValue: "Episode \(number) · \(runtime)",
+                            comment: "Episode card label above the title: episode number and runtime, e.g. Episode 3 · 45m."
+                        ))
                 } else {
-                    eyebrowLine = Text("Episode \(number)",
-                                       comment: "Episode card label above the title when the runtime is unknown.")
+                    eyebrowLine = Text(LocalizedStringResource(
+                        "episodeCard.eyebrow.number", defaultValue: "Episode \(number)",
+                        comment: "Episode card label above the title when the runtime is unknown."
+                    ))
                 }
             } else {
                 titleLine = Text(verbatim: plain)

@@ -1674,7 +1674,10 @@ struct DetailHeroView: View, Equatable {
             isVersionPickerPresented = true
         } label: {
             HStack(spacing: 12 * textScale) {
-                Text("Version", comment: "Detail hero button before the selected file's name, e.g. Version 4K Remux. Opens the version picker.")
+                Text(LocalizedStringResource(
+                    "detail.hero.versionPill", defaultValue: "Version",
+                    comment: "Detail hero button before the selected file's name, e.g. Version 4K Remux. Opens the version picker."
+                ))
                     .opacity(0.62)
                 if let name {
                     Text(verbatim: name)
