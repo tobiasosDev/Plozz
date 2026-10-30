@@ -494,7 +494,7 @@ private struct ProviderChoiceTile: View {
 
     /// Media Share keeps its product name; the caption names the transports
     /// so the generic name still says what it connects to.
-    private var caption: String? {
+    private var caption: String? {  // l10n:content — transport protocol names (SMB · WebDAV · NFS), never translated
         guard provider == .mediaShare else { return nil }
         return [MediaShareTransportKind.smb, .webDAV, .nfs].map(\.badgeLabel).joined(separator: " · ")
     }
