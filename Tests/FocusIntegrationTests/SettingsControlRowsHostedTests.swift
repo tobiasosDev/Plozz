@@ -160,35 +160,6 @@ final class SettingsControlRowsHostedTests: XCTestCase {
         }
     }
 
-    func testEveryoneBadgeUsesTheProfileAvatarSizeAndCircularOutline() throws {
-        for syncEnabled in [false, true] {
-            for palette in [ThemePalette.dark, .light] {
-                let renderer = ImageRenderer(content:
-                    SettingsWorkspaceScopeBadge(syncEnabled: syncEnabled)
-                        .environment(\.themePalette, palette)
-                )
-                let reference = ImageRenderer(content:
-                    Circle().fill(Color.white)
-                        .frame(width: SettingsWorkspaceHeaderMetrics.iconSize,
-                               height: SettingsWorkspaceHeaderMetrics.iconSize)
-                )
-                renderer.scale = 1
-                reference.scale = 1
-                let image = try XCTUnwrap(renderer.cgImage)
-                let outline = try XCTUnwrap(reference.cgImage)
-                XCTAssertEqual(image.width, 52)
-                XCTAssertEqual(image.height, 52)
-                let actual = try pixels(image)
-                let expected = try pixels(outline)
-                for index in stride(from: 3, to: actual.count, by: 4) where expected[index] == 0 {
-                    XCTAssertEqual(actual[index], 0, "The glyph and border must stay within the circular badge.")
-                }
-                XCTAssertGreaterThan(actual[(26 * image.width + 1) * 4 + 3], 0)
-                XCTAssertGreaterThan(actual[(1 * image.width + 26) * 4 + 3], 0)
-            }
-        }
-    }
-
     func testGroupedControlHelperAndDividerShareTheTextKeyline() throws {
         for direction in [LayoutDirection.leftToRight, .rightToLeft] {
             let renderer = ImageRenderer(content:

@@ -33,6 +33,7 @@ public struct SettingsView: View {
     private var developerMode: DeveloperModeModel { .shared }
     @State private var showDeveloperUnlockedAlert = false
     @Environment(\.themePalette) private var palette
+    @Environment(\.plozzNavigationStyle) private var navigationStyle
     @Environment(AppLanguageSettingsModel.self) private var appLanguage
     @Environment(CardStyleSettingsModel.self) private var cardStyle
     @Environment(LibraryPresentationSettingsModel.self) private var libraryPresentation
@@ -369,52 +370,15 @@ public struct SettingsView: View {
 
     public var body: some View {
         SettingsWorkspace(navigation: navigation) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    // The active profile's own container comes FIRST. Almost
-                    // everything anyone opens Settings to change is in here —
-                    // playback, appearance, trackers — while the device-shared
-                    // section is servers and profile management, which is setup
-                    // you do once. Ordering by "what belongs to the whole Apple
-                    // TV" put the rarely-touched half at the top and pushed the
-                    // rest below it. Switching profiles swaps everything inside
-                    // this container at once.
-                    profileContainer
-
-                    // Then what every profile shares, regardless of who is using
-                    // it — unless a Kids Profile is active, in which case the
-                    // whole section is withheld. Every destructive control in the
-                    // app lives in there (remove server, delete profile, sign out
-                    // of everything), and a child's profile is deliberately left
-                    // unlocked, so without this the lock on the grown-ups'
-                    // profiles could simply be routed around.
-                    // The parent-controlled group sits between the child's own
-                    // settings and the withheld household section.
-                    if showsParentalControlsSection {
-                        parentalControlsSection
-                    }
-
-                    // No household section on a Kids Profile. There used to be a
-                    // card here explaining its absence, but it was a second
-                    // "Kids Profile" heading that did nothing — and once
-                    // Parental Controls exists, a missing shared section needs no
-                    // caption.
-                    if !activeProfile.isKids {
-                        everyoneSection
-                    }
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("About").settingsSectionHeader()
-                            .padding(.horizontal, SettingsFormMetrics.headingInset)
-                        aboutAndSignOut
-                    }
-                }
-                .padding(.horizontal, SettingsFormMetrics.pageInset)
-                .padding(.top, SettingsFormMetrics.pageTopInset)
-                .padding(.bottom, SettingsFormMetrics.pageBottomInset)
+            SettingsRootLayout {
+                rootList
+            } preview: {
+                SettingsRootPreview(
+                    navigation: navigation,
+                    profileName: activeProfile.name,
+                    everyoneScope: SettingsCopy.everyoneScope(syncEnabled: syncEnabled, deviceName: Self.deviceName)
+                )
             }
-            .scrollClipDisabled()
-            .scrollsTopNavigation(onReturnToTop: { navigation.select(.playback) })
         } detail: { route in
             destination(for: route)
         }
@@ -441,21 +405,74 @@ public struct SettingsView: View {
         }
     }
 
+    /// The root's list column: the profile's own settings, then the
+    /// household's, each row its own card.
+    ///
+    /// No "Settings" title above the cards: the navigation already names the
+    /// page, and with a title in this list, re-entering Settings from the
+    /// profile picker's cog left focus on the top bar instead of Playback
+    /// (testTopBarProfilePickerCogReturnsToActiveProfileSettings).
+    private var rootList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                // The active profile's own container comes FIRST. Almost
+                // everything anyone opens Settings to change is in here —
+                // playback, appearance, trackers — while the device-shared
+                // section is servers and profile management, which is setup
+                // you do once. Ordering by "what belongs to the whole Apple
+                // TV" put the rarely-touched half at the top and pushed the
+                // rest below it. Switching profiles swaps everything inside
+                // this container at once.
+                profileContainer
+
+                // Then what every profile shares, regardless of who is using
+                // it — unless a Kids Profile is active, in which case the
+                // whole section is withheld. Every destructive control in the
+                // app lives in there (remove server, delete profile, sign out
+                // of everything), and a child's profile is deliberately left
+                // unlocked, so without this the lock on the grown-ups'
+                // profiles could simply be routed around.
+                // The parent-controlled group sits between the child's own
+                // settings and the withheld household section.
+                if showsParentalControlsSection {
+                    parentalControlsSection
+                }
+
+                // No household section on a Kids Profile. There used to be a
+                // card here explaining its absence, but it was a second
+                // "Kids Profile" heading that did nothing — and once
+                // Parental Controls exists, a missing shared section needs no
+                // caption.
+                if !activeProfile.isKids {
+                    everyoneSection
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("About").settingsSectionHeader()
+                        .padding(.horizontal, SettingsFormMetrics.headingInset)
+                    aboutAndSignOut
+                }
+            }
+            // Room for the focused card's outset; `SettingsRootLayout` keeps
+            // the trailing one outside the scroll view.
+            .padding(.leading, SettingsRowCardMetrics.focusOutset)
+            .padding(.top, SettingsFormMetrics.pageTopInset)
+            .padding(.bottom, SettingsFormMetrics.pageBottomInset)
+        }
+        .scrollClipDisabled()
+        .scrollsTopNavigation(onReturnToTop: { navigation.select(.playback) })
+    }
+
     // MARK: - Profile container (header + all settings this profile owns)
 
-    /// One visual container that wraps the active profile's identity AND
-    /// every setting it saves. The profile header is the *top* of the same
-    /// card the rows are nested in — so it reads as "the profile owns these."
+    /// The active profile's identity, then every setting it saves. The profile
+    /// row leads the run of cards, so it reads as "the profile owns these."
     private var profileContainer: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: SettingsRowCardMetrics.spacing) {
             profileHeaderInline
-            PlozzDivider()
             profileOwnedRows
-                .padding(SettingsFormMetrics.groupInset)
         }
-        .environment(\.settingsFormTextInset, SettingsRowMetrics.horizontalPadding)
-        .environment(\.settingsFormRowsFlushLeading, false)
-        .settingsGroupSurface(cornerRadius: PlozzTheme.Metrics.mediumCardCornerRadius)
+        .environment(\.settingsRowCards, true)
     }
 
     /// Whether this profile shows a separate parent-controlled group.
@@ -530,30 +547,34 @@ public struct SettingsView: View {
     /// Categories inside the active profile's panel; household setup stays separate.
     @ViewBuilder
     private var profileOwnedRows: some View {
-        SettingsControlRows(dividerLeadingInset: SettingsRowMetrics.iconTitleInset) {
-            ForEach(ProfileSettingsCategory.allCases) { category in
-                switch category {
-                case .libraries:
-                    if showsParentalControlsSection {
-                        sectionRow(KidsProfileCopy.nameAndAvatar, icon: "person.crop.circle",
-                                   route: .profileAppearance(profileID: activeProfile.id))
-                    } else {
-                        SettingsLibrariesRow(
-                            accounts: accounts,
-                            isAccountIncluded: isAccountIncludedInActiveProfile
-                        )
-                    }
-                case .language:
-                    AppLanguagePicker(model: appLanguage, isCategoryRow: true)
-                default:
-                    sectionRow(category.title, icon: category.symbol,
-                               subtitle: category.summary.map { Text($0) }, route: category.settingsRoute)
+        ForEach(ProfileSettingsCategory.allCases) { category in
+            switch category {
+            case .libraries:
+                if showsParentalControlsSection {
+                    sectionRow(KidsProfileCopy.nameAndAvatar, icon: "person.crop.circle",
+                               route: .profileAppearance(profileID: activeProfile.id))
+                } else {
+                    SettingsLibrariesRow(
+                        accounts: accounts,
+                        isAccountIncluded: isAccountIncludedInActiveProfile
+                    )
                 }
+            case .language:
+                AppLanguagePicker(model: appLanguage, isCategoryRow: true)
+            default:
+                SettingsRootCategoryRow(
+                    category: category, route: category.settingsRoute, value: categoryValue(category)
+                )
             }
-            // The profile's own PIN gate. Belongs to the profile (it travels with
-            // it to every device), so it sits here rather than in the shared
-            // section — even though "who can open this" reads like a household
-            // concern, the lock is a property of this one profile.
+        }
+    }
+
+    /// Current values that are already in memory; nothing is fetched for them.
+    private func categoryValue(_ category: ProfileSettingsCategory) -> Text? {
+        switch category {
+        case .appearance: Text(theme.theme.displayName)
+        case .screensNavigation: Text(navigationStyle.displayName)
+        default: nil
         }
     }
 
@@ -571,27 +592,18 @@ public struct SettingsView: View {
     /// reach, so flipping Sync never appears to move a row into another scope.
     @ViewBuilder
     private var everyoneSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // "Identity on top", mirroring the profile card's avatar header. The
-            // glyph tracks reach the same way the subtitle does: people when these
-            // settings span the user's devices, a lone Apple TV when they don't.
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: SettingsWorkspaceHeaderMetrics.labelSpacing) {
-                    SettingsWorkspaceScopeBadge(syncEnabled: syncEnabled)
-                        .accessibilityIdentifier("settings-everyone-icon")
-                    Text(SettingsCopy.everyone)
-                        .font(SettingsWorkspaceHeaderMetrics.titleFont)
-                        .accessibilityIdentifier("settings-everyone-name")
-                }
-                Text(SettingsCopy.everyoneScope(syncEnabled: syncEnabled, deviceName: Self.deviceName))
-                    .font(.caption)
-                    .plozzForeground(.secondary)
-            }
-            .padding(SettingsWorkspaceHeaderMetrics.contentInset)
+        VStack(alignment: .leading, spacing: SettingsRowCardMetrics.spacing) {
+            // A caption over the household's cards. Their reach (this Apple TV,
+            // or every device when synced) is in the preview beside the list.
+            Text(SettingsCopy.everyone)
+                .font(.system(size: 22, weight: .semibold))
+                .plozzForeground(.secondary)
+                .padding(.horizontal, SettingsRowCardMetrics.contentInset + SettingsRowMetrics.horizontalPadding)
+                .padding(.bottom, 2)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("settings-everyone-name")
 
-            PlozzDivider()
-
-            SettingsControlRows(dividerLeadingInset: SettingsRowMetrics.iconTitleInset) {
+            Group {
                 // Shared server sign-ins (the household's full inventory). The
                 // list screen opens with a prominent Add Server button.
                 sectionRow("Servers", icon: "externaldrive.connected.to.line.below",
@@ -639,11 +651,8 @@ public struct SettingsView: View {
                            route: .metadata)
                 }
             }
-            .padding(SettingsFormMetrics.groupInset)
+            .environment(\.settingsRowCards, true)
         }
-        .environment(\.settingsFormTextInset, SettingsRowMetrics.horizontalPadding)
-        .environment(\.settingsFormRowsFlushLeading, false)
-        .settingsGroupSurface(cornerRadius: PlozzTheme.Metrics.mediumCardCornerRadius)
     }
 
     /// About info + Attributions entry + Sign Out, rendered INLINE at the
@@ -1339,6 +1348,22 @@ public struct SettingsView: View {
         value: Text? = nil, subtitle: Text? = nil, route: SettingsRoute
     ) -> some View {
         SettingsSectionButton(title: Text(title), icon: icon, value: value, subtitle: subtitle, route: route)
+    }
+}
+
+/// A profile category on the root. Its explanatory summary moves to the
+/// preview beside the list when there is room for one.
+private struct SettingsRootCategoryRow: View {
+    let category: ProfileSettingsCategory
+    let route: SettingsRoute
+    let value: Text?
+    @Environment(\.settingsRootShowsPreview) private var showsPreview
+
+    var body: some View {
+        SettingsSectionButton(
+            title: Text(category.title), icon: category.symbol, value: value,
+            subtitle: showsPreview ? nil : category.summary.map { Text($0) }, route: route
+        )
     }
 }
 

@@ -161,6 +161,19 @@ public extension EnvironmentValues {
     }
 }
 
+private struct SettingsPageViewportKey: EnvironmentKey {
+    static let defaultValue: CGSize = .zero
+}
+
+public extension EnvironmentValues {
+    /// The stack's whole viewport, for a page that draws beyond its own
+    /// column (Settings' split root).
+    var settingsPageViewport: CGSize {
+        get { self[SettingsPageViewportKey.self] }
+        set { self[SettingsPageViewportKey.self] = newValue }
+    }
+}
+
 /// Retains every parent while one current page owns input, accessibility and Back.
 public struct SettingsPageStack<Route: Hashable, Root: View, Destination: View>: View {
     let navigation: SettingsPageNavigation<Route>
@@ -270,6 +283,7 @@ public struct SettingsPageStack<Route: Hashable, Root: View, Destination: View>:
         )
         return content()
             .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .environment(\.settingsPageViewport, viewport)
             .frame(width: viewport.width, height: viewport.height, alignment: .top)
             .environment(\.settingsPageContext, context)
             .environment(\.settingsPageBackButton, id.map { _ in

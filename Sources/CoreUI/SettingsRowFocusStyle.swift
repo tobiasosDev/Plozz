@@ -300,6 +300,7 @@ public struct SettingsFocusRow<Content: View>: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.settingsRowsHaveDividers) private var hasDividers
     @Environment(\.settingsFormTextInset) private var textInset
+    @Environment(\.settingsRowCards) private var cards
 
     public init(
         isFocused: Bool, isPressed: Bool = false, size: SettingsRowSize = .standard,
@@ -353,6 +354,44 @@ public struct SettingsFocusRow<Content: View>: View {
     }
 
     public var body: some View {
+        #if os(tvOS)
+        if cards {
+            cardBody
+        } else {
+            rowBody
+        }
+        #else
+        rowBody
+        #endif
+    }
+
+    /// A separate rounded card per row (the Settings root): the shared group
+    /// surface at rest, the inverted focus card grown slightly past it. As with
+    /// grouped rows, only the surface grows; the content never scales.
+    private var cardBody: some View {
+        let shape = RoundedRectangle(cornerRadius: SettingsRowCardMetrics.cornerRadius, style: .continuous)
+        return content
+            .environment(\.settingsFormTextInset, 0)
+            .font(SettingsRowMetrics.titleFont)
+            .environment(\.settingsRowIsFocused, isFocused)
+            .environment(\.settingsRowFocusForeground, focusForeground)
+            .padding(.horizontal, SettingsRowCardMetrics.contentInset)
+            .background {
+                if isFocused {
+                    shape.fill(focusFill)
+                        .padding(.horizontal, -SettingsRowCardMetrics.focusOutset)
+                        .padding(.vertical, -SettingsRowCardMetrics.focusOutset / 6)
+                        .shadow(color: Color.black.opacity(0.4), radius: 18, y: 12)
+                } else {
+                    Color.clear.settingsGroupSurface(cornerRadius: SettingsRowCardMetrics.cornerRadius)
+                }
+            }
+            .contentShape(Rectangle())
+            .foregroundStyle(isFocused ? AnyShapeStyle(focusForeground) : AnyShapeStyle(.primary))
+            .opacity(isPressed ? 0.88 : 1.0)
+    }
+
+    private var rowBody: some View {
         content
             .environment(\.settingsFormTextInset, 0)
             .font(SettingsRowMetrics.titleFont)
@@ -387,6 +426,29 @@ public struct SettingsFocusRow<Content: View>: View {
             .opacity(isPressed ? 0.88 : 1.0)
             // Focus is INSTANT — no fill/scale/shadow easing when focus moves
             // between rows. (Deliberately no `.animation(value: isFocused)`.)
+    }
+}
+
+/// Metrics for rows drawn as separate cards (``EnvironmentValues/settingsRowCards``).
+public enum SettingsRowCardMetrics {
+    public static let cornerRadius: CGFloat = 22
+    /// Added to the row's own 12pt inset, so content sits 26pt from the edge.
+    public static let contentInset: CGFloat = 14
+    /// How far the focus card grows past the resting card on each side.
+    public static let focusOutset: CGFloat = 14
+    public static let spacing: CGFloat = 10
+}
+
+private struct SettingsRowCardsKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+public extension EnvironmentValues {
+    /// Draws every ``SettingsFocusRow`` below as its own rounded card instead
+    /// of a row inside a shared group. tvOS only; set on the Settings root.
+    var settingsRowCards: Bool {
+        get { self[SettingsRowCardsKey.self] }
+        set { self[SettingsRowCardsKey.self] = newValue }
     }
 }
 
