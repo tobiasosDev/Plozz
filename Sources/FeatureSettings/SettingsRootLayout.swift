@@ -15,6 +15,14 @@ enum SettingsRootMetrics {
     static func showsPreview(in width: CGFloat) -> Bool {
         width - listWidth >= minimumPreviewWidth
     }
+
+    /// The part of `viewport` that is inside the screen's side margins. The top
+    /// bar lays its pages out edge to edge and reports the title-safe margins as
+    /// `plozzTopNavigationContentInsets`; the rail and sidebar already hand
+    /// Settings a viewport inside them.
+    static func usableWidth(viewport: CGFloat, insets: EdgeInsets) -> CGFloat {
+        max(0, viewport - insets.leading - insets.trailing)
+    }
     static let tileCornerRadius: CGFloat = 90
     static let descriptionWidth: CGFloat = 560
 }
@@ -47,17 +55,20 @@ struct SettingsRootLayout<List: View, Preview: View>: View {
     @ViewBuilder var list: () -> List
     @ViewBuilder var preview: () -> Preview
     @Environment(\.settingsPageViewport) private var viewport
+    @Environment(\.plozzTopNavigationContentInsets) private var sideInsets
 
     var body: some View {
-        let showsPreview = SettingsRootMetrics.showsPreview(in: viewport.width)
+        let usable = SettingsRootMetrics.usableWidth(viewport: viewport.width, insets: sideInsets)
+        let showsPreview = SettingsRootMetrics.showsPreview(in: usable)
         let outset = SettingsRowCardMetrics.focusOutset
-        let column = min(SettingsRootMetrics.listWidth, viewport.width) - outset
+        let column = min(SettingsRootMetrics.listWidth, usable) - outset
         // From the centred page's leading edge to one focus outset before the
         // trailing margin; the focused card draws into that gap. Keeping the
         // scroll view off the title-safe edge also stops it adapting to the
         // safe area, which shifted it under the top bar.
         let page = min(SettingsFormMetrics.pageWidth, viewport.width)
-        let shift = showsPreview ? viewport.width - outset - column - (viewport.width - page) / 2 : 0
+        let trailingEdge = viewport.width - sideInsets.trailing
+        let shift = showsPreview ? trailingEdge - outset - column - (viewport.width - page) / 2 : 0
         list()
             .frame(width: column)
             .environment(\.settingsRootShowsPreview, showsPreview)
@@ -68,7 +79,7 @@ struct SettingsRootLayout<List: View, Preview: View>: View {
                     HStack(spacing: 0) {
                         preview()
                             .padding(.trailing, SettingsRootMetrics.previewTrailingInset)
-                            .frame(width: viewport.width - SettingsRootMetrics.listWidth)
+                            .frame(width: usable - SettingsRootMetrics.listWidth)
                             .frame(maxHeight: .infinity)
                         Color.clear.frame(width: column)
                     }

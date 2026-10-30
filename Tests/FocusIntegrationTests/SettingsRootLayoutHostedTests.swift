@@ -25,8 +25,11 @@ final class SettingsRootLayoutHostedTests: XCTestCase {
             window.rootViewController = nil
             previous?.makeKeyAndVisible()
         }
+        // `edgeToEdge` is the production top bar: its pages ignore the safe area
+        // and receive the title-safe margins as `plozzTopNavigationContentInsets`.
+        let cases: [(NavigationStyle, Bool)] = [(.tabBar, false), (.sidebar, false), (.tabBar, true)]
         for direction in [LayoutDirection.leftToRight, .rightToLeft] {
-            for style in [NavigationStyle.tabBar, .sidebar] {
+            for (style, edgeToEdge) in cases {
                 let frames = RootFrames()
                 let navigation = SettingsNavigationModel()
                 window.rootViewController = UIHostingController(rootView:
@@ -54,18 +57,23 @@ final class SettingsRootLayoutHostedTests: XCTestCase {
                     // title-safe edges, so the list column touches them.
                     .environment(\.layoutDirection, direction)
                     .environment(\.plozzNavigationStyle, style)
+                    .environment(
+                        \.plozzTopNavigationContentInsets,
+                        edgeToEdge ? EdgeInsets(top: 0, leading: 80, bottom: 0, trailing: 80) : EdgeInsets()
+                    )
+                    .ignoresSafeArea(.container, edges: edgeToEdge ? .horizontal : [])
                 )
                 window.makeKeyAndVisible()
                 try await Task.sleep(for: .milliseconds(300))
                 window.layoutIfNeeded()
-                let report = XCTAttachment(string: "\(style) \(direction) \(frames.values)")
+                let report = XCTAttachment(string: "\(style) edgeToEdge=\(edgeToEdge) \(direction) \(frames.values)")
                 report.name = "root-frames-\(style)-\(direction)"
                 report.lifetime = .keepAlways
                 add(report)
-                let list = try XCTUnwrap(frames.values["row"], "\(style) \(direction)")
-                let preview = try XCTUnwrap(frames.values["preview"], "\(style) \(direction)")
+                let list = try XCTUnwrap(frames.values["row"], "\(style) edgeToEdge=\(edgeToEdge) \(direction)")
+                let preview = try XCTUnwrap(frames.values["preview"], "\(style) edgeToEdge=\(edgeToEdge) \(direction)")
                 let column = SettingsRootMetrics.listWidth - SettingsRowCardMetrics.focusOutset
-                XCTAssertEqual(list.width, column, accuracy: 1, "\(style) \(direction)")
+                XCTAssertEqual(list.width, column, accuracy: 1, "\(style) edgeToEdge=\(edgeToEdge) \(direction)")
                 let (trailingEdge, previewCenter): (CGFloat, CGFloat) = direction == .leftToRight
                     ? (list.maxX, preview.midX) : (window.bounds.width - list.minX, window.bounds.width - preview.midX)
                 // The focused card's outset fills the gap up to the side margin.
@@ -87,7 +95,7 @@ final class SettingsRootLayoutHostedTests: XCTestCase {
                 // Centred in the space left of the list, less the trailing inset.
                 let previewSpace = window.bounds.width - 160 - SettingsRootMetrics.listWidth
                 XCTAssertEqual(previewCenter, 80 + (previewSpace - SettingsRootMetrics.previewTrailingInset) / 2,
-                               accuracy: 1, "\(style) \(direction): \(preview)")
+                               accuracy: 1, "\(style) edgeToEdge=\(edgeToEdge) \(direction): \(preview)")
             }
         }
     }
