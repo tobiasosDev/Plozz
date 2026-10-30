@@ -356,6 +356,10 @@ public struct HeroBackdropLayer<Video: View>: View {
             surface.overlay {
                 paintedDissolve.allowsHitTesting(false)
             }
+            // The mask also clipped what the trailer and scrim draw past the
+            // backdrop's bounds; a plain rectangular clip keeps that without an
+            // offscreen pass.
+            .clipped()
         }
     }
 
