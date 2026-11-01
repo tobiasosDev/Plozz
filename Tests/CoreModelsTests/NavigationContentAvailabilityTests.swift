@@ -7,6 +7,7 @@ final class NavigationContentAvailabilityTests: XCTestCase {
         NavigationLibraryLayout.homeKey,
         NavigationLibraryLayout.searchKey,
         NavigationLibraryLayout.watchlistKey,
+        NavigationLibraryLayout.tonightKey,
     ]
 
     func testLiveOnlyIPTVAndStandaloneSourcesHideUnusedDestinationsInEveryStyle() {

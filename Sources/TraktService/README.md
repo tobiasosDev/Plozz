@@ -21,6 +21,8 @@ user signs in.
 - `TraktScrobbler` — translates `FeaturePlayback` progress events into
   Trakt scrobble start/pause/stop calls, with thresholds, debouncing, and
   graceful no-op when disabled.
+- `TraktTasteService` — read-only calls for "Tonight": watched movies, ratings,
+  watchlist, related movies and personal recommendations. Never writes.
 - `TraktModels` — Trakt API DTOs / response shapes, mapped onto domain
   types at the seam.
 

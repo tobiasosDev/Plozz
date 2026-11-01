@@ -960,6 +960,18 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
         )
     }
 
+    /// The browse grid stays lean; a taste scan also needs the synopsis, the
+    /// directors (`People`) and the content and community ratings, which the
+    /// grid never reads. `UserData` (plays, last played, favourite) is always
+    /// returned for a user-scoped query.
+    static func listFields(for detail: PageRequest.Detail) -> String {
+        let base = "PrimaryImageAspectRatio,ProviderIds,SortName,DateCreated,Genres"
+        switch detail {
+        case .browse, .identity: return base
+        case .taste: return base + ",Overview,OriginalTitle,People,OfficialRating,CommunityRating"
+        }
+    }
+
     public func items(in containerID: String, kind: MediaItemKind, page: PageRequest) async throws -> MediaPage {
         if containerID == collectionDirectoryID {
             guard kind == .collection, page.filters.isEmpty else { throw AppError.invalidResponse }
@@ -978,6 +990,7 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
                 startIndex: page.startIndex,
                 limit: page.limit,
                 sort: page.sort,
+                fields: Self.listFields(for: page.detail),
                 filters: page.filters
             )
             let items = response.Items.map(map(item:))

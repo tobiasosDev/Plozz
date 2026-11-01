@@ -76,7 +76,8 @@ public enum PlozzLog {
         "x-emby-authorization",
         "x-mediabrowser-token",
         "x-plex-token",
-        "x-profile-token"
+        "x-profile-token",
+        "x-api-key"
     ]
 
     /// Returns a copy of `headers` with sensitive values replaced by `<redacted>`.

@@ -17,6 +17,7 @@ import FeatureHome
 import FeaturePlayback
 import FeatureSettings
 import FeatureSyncCloud
+import FeatureTonightCore
 import MetadataKit
 
 /// Composes the identity that scopes the Home tab subtree — and the retained
@@ -51,6 +52,14 @@ enum HomeRuntimeScope {
     ///   key was unchanged — Home and Search kept serving the previous user's
     ///   rows until the viewer switched profiles away and back, which was the
     ///   only thing that did move it.
+    /// A persistent identity for data cached across launches ("Tonight"'s
+    /// library snapshot). Unlike ``homeScopeKey(profileID:accounts:plexIdentityGeneration:)``
+    /// it names the actual Plex Home user rather than a per-launch generation,
+    /// so another "watching as" user never matches a previous user's cache.
+    static func persistentScopeKey(profileID: String, plexPlaybackIdentityKey: String, accounts: [Account]) -> String {
+        identityKey(profileID: profileID, plexPlaybackIdentityKey: plexPlaybackIdentityKey) + "|" + accountScopeKey(accounts)
+    }
+
     static func homeScopeKey(
         profileID: String,
         accounts: [Account],
@@ -80,6 +89,7 @@ public struct RootView: View {
     /// tab tree so a `TabView` re-host cannot discard it mid-load; see
     /// ``LazyViewState`` for the measurements that forced this.
     @State private var homeViewModelBox = LazyViewState<HomeViewModel>()
+    @State private var tonightModelBox = LazyViewState<TonightModel>()
     /// The device appearance, mirrored into state by `ColorSchemeMirror` rather
     /// than read from the environment here.
     ///
@@ -743,7 +753,25 @@ public struct RootView: View {
                                     appState.plexHomeUsers.plexIdentityGeneration
                             ),
                             pendingPlay: appState.pendingPlay,
-                            screenshotDirector: appState.screenshotDirector
+                            screenshotDirector: appState.screenshotDirector,
+                            tonight: TonightRuntime(
+                                model: tonightModelBox,
+                                makeTrakt: { appState.traktService.tasteService() },
+                                isKidsProfile: appState.profilesModel.activeProfile.isKids,
+                                cacheScopeKey: HomeRuntimeScope.persistentScopeKey(
+                                    profileID: appState.profilesModel.activeProfileID,
+                                    plexPlaybackIdentityKey: appState.profilesModel.activeProfile
+                                        .plexPlaybackIdentityKey(for: accounts.map(\.account)),
+                                    accounts: accounts.map(\.account)
+                                ),
+                                currentScopeKey: {
+                                    HomeRuntimeScope.homeScopeKey(
+                                        profileID: appState.profilesModel.activeProfileID,
+                                        accounts: appState.accountsProviders.homeAccounts.map(\.account),
+                                        plexIdentityGeneration: appState.plexHomeUsers.plexIdentityGeneration
+                                    )
+                                }
+                            )
                         ),
                         isAccountIncludedInActiveProfile: { appState.profileFlow.isAccountIncludedInActiveProfile($0) },
                         onSetAccountIncluded: { appState.profileFlow.setAccount($0, includedInActiveProfile: $1) },

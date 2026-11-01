@@ -136,4 +136,14 @@ final class HomeRuntimeScopeTests: XCTestCase {
         )
     }
 
+
+    func testPersistentScopeNamesTheWatchingAsUserNotTheLaunchGeneration() {
+        let accounts = [account(id: "a")]
+        let anna = HomeRuntimeScope.persistentScopeKey(profileID: "p", plexPlaybackIdentityKey: "a#anna", accounts: accounts)
+        let ben = HomeRuntimeScope.persistentScopeKey(profileID: "p", plexPlaybackIdentityKey: "a#ben", accounts: accounts)
+        XCTAssertNotEqual(anna, ben)
+        // Same user after a relaunch: generation counters restart, the key does not.
+        XCTAssertEqual(anna, HomeRuntimeScope.persistentScopeKey(profileID: "p", plexPlaybackIdentityKey: "a#anna", accounts: accounts))
+        XCTAssertNotEqual(anna, HomeRuntimeScope.persistentScopeKey(profileID: "p", plexPlaybackIdentityKey: "a#anna", accounts: [account(id: "b")]))
+    }
 }

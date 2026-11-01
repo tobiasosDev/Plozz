@@ -92,6 +92,13 @@ public final class TraktService {
     /// Whether the feature is offered at all (client credentials present).
     public var isConfigured: Bool { config.isConfigured }
 
+    /// Read-only Trakt access for "Tonight", bound to the active profile's
+    /// connection at the moment of the call. `nil` when Trakt is unconfigured.
+    public func tasteService() -> TraktTasteService? {
+        guard config.isConfigured else { return nil }
+        return TraktTasteService(config: config, http: http, tokenStore: tokenStore.snapshot())
+    }
+
     public func playbackScrobbler() -> any TraktScrobbling {
         guard config.isConfigured else { return DisabledTraktScrobbler() }
         return TraktScrobbler(config: config, http: http, tokenStore: tokenStore.snapshot())

@@ -36,10 +36,26 @@ public struct TraktConfig: Sendable, Equatable {
         bundle: Bundle = .main,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> TraktConfig {
-        let plistID = bundle.object(forInfoDictionaryKey: "TraktClientID") as? String
-        return TraktConfig(
-            clientID: sanitize(plistID) ?? sanitize(environment["TRAKT_CLIENT_ID"])
+        resolved(
+            plistClientID: bundle.object(forInfoDictionaryKey: "TraktClientID") as? String,
+            plistRedirectURI: bundle.object(forInfoDictionaryKey: "TraktRedirectURI") as? String,
+            environment: environment
         )
+    }
+
+    /// A registration may list a different redirect than Plozz's default; the
+    /// refresh grant must send the registered one. Only an absolute URL counts.
+    static func resolved(
+        plistClientID: String?,
+        plistRedirectURI: String?,
+        environment: [String: String]
+    ) -> TraktConfig {
+        let redirect = (sanitize(plistRedirectURI) ?? sanitize(environment["TRAKT_REDIRECT_URI"]))
+            .flatMap(URL.init(string:))
+            .flatMap { $0.scheme != nil && $0.host != nil ? $0 : nil }
+        var config = TraktConfig(clientID: sanitize(plistClientID) ?? sanitize(environment["TRAKT_CLIENT_ID"]))
+        if let redirect { config.redirectURI = redirect }
+        return config
     }
 
     /// Normalizes a raw value: trims whitespace and rejects empty strings and the

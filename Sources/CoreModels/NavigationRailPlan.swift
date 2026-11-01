@@ -6,6 +6,8 @@ public enum NavigationRailDestination: Hashable, Sendable {
     case home
     case search
     case watchlist
+    /// Personal film suggestions.
+    case tonight
     case liveTV
     case music
     case settings
@@ -20,6 +22,7 @@ public enum NavigationRailDestination: Hashable, Sendable {
         case .home: return "home"
         case .search: return "search"
         case .watchlist: return "watchlist"
+        case .tonight: return "tonight"
         case .liveTV: return "liveTV"
         case .music: return "music"
         case .settings: return "settings"
@@ -33,6 +36,7 @@ public enum NavigationRailDestination: Hashable, Sendable {
         case "home": self = .home
         case "search": self = .search
         case "watchlist": self = .watchlist
+        case "tonight": self = .tonight
         case "liveTV": self = .liveTV
         case "music": self = .music
         case "settings": self = .settings
@@ -89,7 +93,7 @@ public enum NavigationDestinationDefaults {
     }
 
     public static func compact(hasMusic: Bool) -> [String] {
-        var keys = [NavigationLibraryLayout.homeKey, NavigationLibraryLayout.watchlistKey]
+        var keys = [NavigationLibraryLayout.homeKey, NavigationLibraryLayout.tonightKey, NavigationLibraryLayout.watchlistKey]
         keys.append(NavigationLibraryLayout.liveTVKey)
         keys.append(NavigationLibraryLayout.searchKey)
         if hasMusic { keys.append(NavigationLibraryLayout.musicKey) }
@@ -253,6 +257,7 @@ public enum NavigationRailPlan {
         case NavigationLibraryLayout.homeKey: return .home
         case NavigationLibraryLayout.searchKey: return .search
         case NavigationLibraryLayout.watchlistKey: return .watchlist
+        case NavigationLibraryLayout.tonightKey: return .tonight
         case NavigationLibraryLayout.liveTVKey: return .liveTV
         case NavigationLibraryLayout.musicKey: return .music
         case NavigationLibraryLayout.settingsKey: return .settings
@@ -267,6 +272,7 @@ public enum NavigationRailPlan {
         case .home: return NavigationLibraryLayout.homeKey
         case .search: return NavigationLibraryLayout.searchKey
         case .watchlist: return NavigationLibraryLayout.watchlistKey
+        case .tonight: return NavigationLibraryLayout.tonightKey
         case .liveTV: return NavigationLibraryLayout.liveTVKey
         case .music: return NavigationLibraryLayout.musicKey
         case .settings: return NavigationLibraryLayout.settingsKey

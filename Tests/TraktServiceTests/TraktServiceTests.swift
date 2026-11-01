@@ -38,6 +38,17 @@ final class TraktConfigTests: XCTestCase {
         XCTAssertFalse(TraktConfig(clientID: "").isConfigured)
     }
 
+    func testRegistrationSpecificRedirectIsUsedOnlyWhenItIsAnAbsoluteURL() {
+        let custom = TraktConfig.resolved(
+            plistClientID: "id", plistRedirectURI: "http://localhost:4747/trakt/callback", environment: [:]
+        )
+        XCTAssertEqual(custom.redirectURI.absoluteString, "http://localhost:4747/trakt/callback")
+        for unusable in [nil, "", "$(TRAKT_REDIRECT_URI)", "not a url"] {
+            let config = TraktConfig.resolved(plistClientID: "id", plistRedirectURI: unusable, environment: [:])
+            XCTAssertEqual(config.redirectURI.absoluteString, "https://plozz.app/auth/trakt/callback", "\(String(describing: unusable))")
+        }
+    }
+
     func testSanitizeRejectsPlaceholderAndEmpty() {
         XCTAssertNil(TraktConfig(clientID: "$(TRAKT_CLIENT_ID)").clientID)
         XCTAssertNil(TraktConfig(clientID: "   ").clientID)

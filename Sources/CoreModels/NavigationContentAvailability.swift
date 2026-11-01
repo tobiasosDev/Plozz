@@ -6,6 +6,8 @@ public struct NavigationContentAvailability: Equatable, Sendable {
     public let hasHomeContent: Bool
     public let hasSearchContent: Bool
     public let hasWatchlistItems: Bool
+    /// "Tonight" needs a video library to reason over.
+    public let hasTonightContent: Bool
 
     public init(
         accounts: [Account],
@@ -27,6 +29,7 @@ public struct NavigationContentAvailability: Equatable, Sendable {
             $0.server.provider != .iptv && !discoveredAccountIDs.contains($0.id)
         }
         hasSearchContent = hasLibraries || hasUnresolvedMediaServer || hasDiscoverySearch
+        hasTonightContent = hasLibraries || hasUnresolvedMediaServer
         hasHomeContent = hasSearchContent || accounts.contains { $0.server.provider == .plex }
         self.hasWatchlistItems = hasWatchlistItems
     }
@@ -36,6 +39,7 @@ public struct NavigationContentAvailability: Equatable, Sendable {
         if !hasHomeContent { hidden.insert(NavigationLibraryLayout.homeKey) }
         if !hasSearchContent { hidden.insert(NavigationLibraryLayout.searchKey) }
         if !hasWatchlistItems { hidden.insert(NavigationLibraryLayout.watchlistKey) }
+        if !hasTonightContent { hidden.insert(NavigationLibraryLayout.tonightKey) }
         return hidden
     }
 

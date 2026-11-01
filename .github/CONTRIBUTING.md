@@ -255,6 +255,8 @@ targets generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 | [`FeatureSearch`](../Sources/FeatureSearch/README.md) | Search view & view model, deduplication, search policy. |
 | [`FeatureSettings`](../Sources/FeatureSettings/README.md) | Settings (profiles, integrations, server, caption customization, preference detail). |
 | [`FeatureProfiles`](../Sources/FeatureProfiles/README.md) | Profile picker, editor, avatar/photo capture (household "Who's watching?"). |
+| [`FeatureTonightCore`](../Sources/FeatureTonightCore/README.md) | "Tonight" personal film suggestions: taste profile, ranking, reasons, decision memory, library loading. Pure Swift, sources injected. |
+| [`FeatureTonight`](../Sources/FeatureTonight/README.md) | The "Tonight" screen and the "Sharpen Taste" quick rating round. |
 | [`FeatureMusic`](../Sources/FeatureMusic/README.md) | Music browsing, mini-player, queue/now-playing, background audio. |
 | [`AppShell`](../Sources/AppShell/README.md) | App state wiring, root navigation, profile selection, provider/registry composition. |
 

@@ -140,7 +140,7 @@ struct MainTabView: View {
             switch tab {
             case .home:
                 switch activeLibraryNavigationDestination {
-                case .home, .library, .allLibraries: return true
+                case .home, .library, .allLibraries, .tonight: return true
                 case .watchlist, .search, .music, .settings: return false
                 case .liveTV: return false
                 }
@@ -180,6 +180,14 @@ struct MainTabView: View {
         RootNavigationTabLabel(
             title: Text("Watchlist"),
             systemImage: "bookmark.fill",
+            usesCompactSidebarText: navigationStyle == .sidebar
+        )
+    }
+
+    private var tonightTabLabel: some View {
+        RootNavigationTabLabel(
+            title: Text("Tonight"),
+            systemImage: "sparkles",
             usesCompactSidebarText: navigationStyle == .sidebar
         )
     }
@@ -762,7 +770,7 @@ struct MainTabView: View {
     /// keeps its own selection identity in every navigation style.
     private func mainTab(for destination: NavigationRailDestination) -> MainTab {
         switch destination {
-        case .home, .library, .allLibraries: return .home
+        case .home, .library, .allLibraries, .tonight: return .home
         case .watchlist: return .watchlist
         case .search: return .search
         case .liveTV: return .liveTV
@@ -1361,6 +1369,12 @@ struct MainTabView: View {
             return AnyView(watchlistTabContent(
                 isActive: isActive
             ))
+        case .tonight:
+            return AnyView(homeTabContent(
+                root: .tonight,
+                id: "\(homeScopeKey)|tonight",
+                isActive: isActive
+            ))
         case .liveTV:
             return AnyView(LiveTVShellDestination(
                 isActive: isActive,
@@ -1403,6 +1417,8 @@ struct MainTabView: View {
             return AnyView(searchTabLabel)
         case .watchlist:
             return AnyView(watchlistTabLabel)
+        case .tonight:
+            return AnyView(tonightTabLabel)
         case .liveTV:
             return AnyView(liveTVTabLabel)
         case .music:
@@ -1590,7 +1606,7 @@ struct MainTabView: View {
     /// this coarse boundary avoids that crash without affecting scrolling content.
     private var railDestination: AnyView {
         switch activeLibraryNavigationDestination {
-        case .home, .watchlist:
+        case .home, .watchlist, .tonight:
             return AnyView(homeBackedRailDestination)
         case .search:
             return AnyView(searchTabContent())
@@ -1616,12 +1632,14 @@ struct MainTabView: View {
     }
 
     private var homeBackedRailDestination: some View {
-        let showsWatchlist = activeLibraryNavigationDestination == .watchlist
-        return homeTabContent(
-            root: showsWatchlist ? .watchlist : .home,
-            id: showsWatchlist ? "\(homeScopeKey)|watchlist" : nil,
-            isActive: true
-        )
+        let root: HomeTabRoot
+        let id: String?
+        switch activeLibraryNavigationDestination {
+        case .watchlist: (root, id) = (.watchlist, "\(homeScopeKey)|watchlist")
+        case .tonight: (root, id) = (.tonight, "\(homeScopeKey)|tonight")
+        default: (root, id) = (.home, nil)
+        }
+        return homeTabContent(root: root, id: id, isActive: true)
     }
 
     private func watchlistTabContent(isActive: Bool) -> some View {
