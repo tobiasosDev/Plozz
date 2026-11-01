@@ -98,6 +98,8 @@
 	<string>$(TONIGHT_CLAUDE_MODEL)</string>
 	<key>TraktClientID</key>
 	<string>$(TRAKT_CLIENT_ID)</string>
+	<key>TraktRedirectURI</key>
+	<string>$(TRAKT_REDIRECT_URI)</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Bungee-Regular.ttf</string>
