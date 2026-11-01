@@ -122,7 +122,11 @@ public final class TonightModel {
         // No source to read yet (accounts still loading): not an answer about the
         // library, so a cached library stays. Every other complete scan, empty
         // included, replaces the cache.
-        if snapshot.films.isEmpty, (snapshot.sourceCount ?? 1) == 0 { return }
+        if snapshot.films.isEmpty, (snapshot.sourceCount ?? 1) == 0 {
+            // Still finish an empty first load, so the screen leaves "Reading…".
+            if library.isEmpty { await recommend() }
+            return
+        }
         await store.saveLibrary(snapshot)
         await engine.invalidate()
         await apply(snapshot)

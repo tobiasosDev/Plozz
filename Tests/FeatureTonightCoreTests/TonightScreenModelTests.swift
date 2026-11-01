@@ -257,4 +257,14 @@ final class TonightScreenModelTests: XCTestCase {
         let replaced = await store.loadLibrary()
         XCTAssertEqual(replaced?.films.count, 0, "a complete empty scan is the truth now")
     }
+
+    func testAColdStartWithNothingToReadEndsInTheEmptyState() async {
+        let store = TonightMemoryStore()
+        let model = makeModel(store: store, loader: Loader(TonightLibrarySnapshot(films: [], builtAt: TonightFixtures.now, sourceCount: 0)))
+        await model.start()
+        XCTAssertEqual(model.phase, .empty)
+        XCTAssertFalse(model.isRefreshingLibrary)
+        let cached = await store.loadLibrary()
+        XCTAssertNil(cached, "a scan with no source is not cached")
+    }
 }
