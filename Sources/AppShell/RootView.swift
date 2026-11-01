@@ -17,6 +17,7 @@ import FeatureHome
 import FeaturePlayback
 import FeatureSettings
 import FeatureSyncCloud
+import FeatureTonightCore
 import MetadataKit
 
 /// Composes the identity that scopes the Home tab subtree — and the retained
@@ -80,6 +81,7 @@ public struct RootView: View {
     /// tab tree so a `TabView` re-host cannot discard it mid-load; see
     /// ``LazyViewState`` for the measurements that forced this.
     @State private var homeViewModelBox = LazyViewState<HomeViewModel>()
+    @State private var tonightModelBox = LazyViewState<TonightModel>()
     /// The device appearance, mirrored into state by `ColorSchemeMirror` rather
     /// than read from the environment here.
     ///
@@ -743,7 +745,12 @@ public struct RootView: View {
                                     appState.plexHomeUsers.plexIdentityGeneration
                             ),
                             pendingPlay: appState.pendingPlay,
-                            screenshotDirector: appState.screenshotDirector
+                            screenshotDirector: appState.screenshotDirector,
+                            tonight: TonightRuntime(
+                                model: tonightModelBox,
+                                makeTrakt: { appState.traktService.tasteService() },
+                                isKidsProfile: appState.profilesModel.activeProfile.isKids
+                            )
                         ),
                         isAccountIncludedInActiveProfile: { appState.profileFlow.isAccountIncludedInActiveProfile($0) },
                         onSetAccountIncluded: { appState.profileFlow.setAccount($0, includedInActiveProfile: $1) },

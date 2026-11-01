@@ -10712,6 +10712,9 @@
         }
       }
     },
+    "%@, as you asked." : {
+      "comment" : "Tonight reason: the requested genre"
+    },
     "%@, offline" : {
       "comment" : "Accessibility label for an unavailable source row in the playback source picker. %@ is the source name.",
       "localizations" : {
@@ -96062,6 +96065,9 @@
         }
       }
     },
+    "%lld watched films without a rating. Answers stay in Plozz and are not sent to Trakt." : {
+
+    },
     "%lld%%" : {
       "comment" : "Standalone percentage label used for numeric values such as subtitle appearance controls and download progress. %lld is the percentage number.",
       "localizations" : {
@@ -106182,6 +106188,9 @@
         }
       }
     },
+    "A film from your history." : {
+      "comment" : "Tonight rewatch reason: nothing more specific known"
+    },
     "A library used by this channel isn't available to this profile." : {
       "localizations" : {
         "ar" : {
@@ -107062,6 +107071,9 @@
           }
         }
       }
+    },
+    "A rainy Sunday, something light…" : {
+
     },
     "A request for the playback stream timed out." : {
       "localizations" : {
@@ -109046,6 +109058,9 @@
           }
         }
       }
+    },
+    "A wintry setting, as you asked." : {
+      "comment" : "Tonight reason: the mood asked for winter or snow"
     },
     "AC-3 passthrough" : {
       "comment" : "Value shown in the playback diagnostics Audio > Output row when Dolby Digital AC-3 audio is being passed through unchanged to the playback device.",
@@ -114127,6 +114142,9 @@
           }
         }
       }
+    },
+    "Action" : {
+      "comment" : "Tonight: film genre"
     },
     "Active" : {
       "localizations" : {
@@ -129791,7 +129809,7 @@
       }
     },
     "Adventure" : {
-      "comment" : "Category header in the profile avatar emoji picker for the adventure-themed emoji group.",
+      "comment" : "Tonight: film genre",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -137062,6 +137080,18 @@
         }
       }
     },
+    "Already Seen" : {
+
+    },
+    "Also Possible" : {
+
+    },
+    "Also based on %@." : {
+      "comment" : "Tonight reason: a second supporting film"
+    },
+    "Also by %@." : {
+      "comment" : "Tonight reason: the suggestion shares the director"
+    },
     "Also in your library" : {
       "comment" : "Heading for a shelf of titles the viewer owns featuring this person, shown on a person's page beneath Movies and TV Shows. Catches anything that is neither.",
       "extractionState" : "stale",
@@ -139268,6 +139298,7 @@
       }
     },
     "Animation" : {
+      "comment" : "Tonight: film genre",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -140369,6 +140400,12 @@
           }
         }
       }
+    },
+    "Any Genre" : {
+      "comment" : "Tonight: genre filter, none"
+    },
+    "Any Length" : {
+      "comment" : "Tonight: runtime filter, no limit"
     },
     "App default" : {
       "localizations" : {
@@ -163533,6 +163570,9 @@
         }
       }
     },
+    "Bad" : {
+
+    },
     "Base URL for relative addresses (optional)" : {
       "localizations" : {
         "ar" : {
@@ -165078,6 +165118,9 @@
         }
       }
     },
+    "Because %@ is one of your favorites." : {
+      "comment" : "Tonight reason: a favorite film without a rating"
+    },
     "Because you liked %@" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -165295,6 +165338,39 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "因為你喜歡 %@"
+          }
+        }
+      }
+    },
+    "Because you marked %@ as %@." : {
+      "comment" : "Tonight reason: one film and a quick verdict (good/okay/bad)",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Because you marked %1$@ as %2$@."
+          }
+        }
+      }
+    },
+    "Because you rated %@ %lld and %@ %lld." : {
+      "comment" : "Tonight reason: two films with the viewer's 1-10 ratings",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Because you rated %1$@ %2$lld and %3$@ %4$lld."
+          }
+        }
+      }
+    },
+    "Because you rated %@ %lld." : {
+      "comment" : "Tonight reason: one film and the viewer's 1-10 rating",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Because you rated %1$@ %2$lld."
           }
         }
       }
@@ -165519,6 +165595,9 @@
           }
         }
       }
+    },
+    "Because you watched %@." : {
+      "comment" : "Tonight reason: one watched film without a rating"
     },
     "Before approving, check that Silo shows %@." : {
       "localizations" : {
@@ -176983,6 +177062,42 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "購買"
+          }
+        }
+      }
+    },
+    "By %@, as you asked." : {
+      "comment" : "Tonight reason: director named in the request"
+    },
+    "By %@, who also made %@." : {
+      "comment" : "Tonight rewatch reason: another film by the same director",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "By %1$@, who also made %2$@."
+          }
+        }
+      }
+    },
+    "By %@, who also made your favorite %@." : {
+      "comment" : "Tonight rewatch reason: another film by the same director is a favorite",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "By %1$@, who also made your favorite %2$@."
+          }
+        }
+      }
+    },
+    "By %@: you rated %@ %lld." : {
+      "comment" : "Tonight rewatch reason: another film by the same director and its rating",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "By %1$@: you rated %2$@ %3$lld."
           }
         }
       }
@@ -219148,6 +219263,12 @@
         }
       }
     },
+    "Claude is choosing…" : {
+
+    },
+    "Clear" : {
+
+    },
     "Clear Cache" : {
       "comment" : "Destructive button in Metadata Diagnostics that clears cached metadata and artwork.",
       "localizations" : {
@@ -221567,6 +221688,17 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "開啟喜好項目前，請先關閉目前的多畫面。"
+          }
+        }
+      }
+    },
+    "Close to %@, which you liked; both are %@." : {
+      "comment" : "Tonight rewatch reason: a similar liked film and the shared genre noun",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Close to %1$@, which you liked; both are %2$@."
           }
         }
       }
@@ -225851,6 +225983,7 @@
       }
     },
     "Comedy" : {
+      "comment" : "Tonight: film genre",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -263977,6 +264110,9 @@
         }
       }
     },
+    "Crime" : {
+      "comment" : "Tonight: film genre"
+    },
     "Crimson" : {
       "comment" : "Accessibility name for a profile color swatch in the profile editor.",
       "localizations" : {
@@ -278981,6 +279117,9 @@
         }
       }
     },
+    "Describe tonight in your own words. Titles, themes and synopses are matched." : {
+
+    },
     "Destinations" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -286042,6 +286181,17 @@
         }
       }
     },
+    "Directed by %@, like %@." : {
+      "comment" : "Tonight reason: same director as the chosen reference film",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Directed by %1$@, like %2$@."
+          }
+        }
+      }
+    },
     "Director" : {
       "comment" : "Caption under a crew member in the Cast & Crew row.",
       "localizations" : {
@@ -292224,6 +292374,9 @@
         }
       }
     },
+    "Documentary" : {
+      "comment" : "Tonight: film genre"
+    },
     "Does this code match?" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -293769,6 +293922,9 @@
           }
         }
       }
+    },
+    "Don't Know" : {
+
     },
     "Don't Share" : {
       "localizations" : {
@@ -308638,6 +308794,9 @@
           }
         }
       }
+    },
+    "Drama" : {
+      "comment" : "Tonight: film genre"
     },
     "Dropped" : {
       "comment" : "Playback diagnostics label for dropped video frames.",
@@ -334744,6 +334903,12 @@
         }
       }
     },
+    "Every matching film was suggested recently, so some suggestions repeat." : {
+      "comment" : "Tonight note"
+    },
+    "Every watched film has a rating." : {
+
+    },
     "Exclude movie or show titles" : {
       "localizations" : {
         "ar" : {
@@ -339599,6 +339764,7 @@
       }
     },
     "Family" : {
+      "comment" : "Tonight: film genre",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -340037,6 +340203,9 @@
           }
         }
       }
+    },
+    "Fantasy" : {
+      "comment" : "Tonight: film genre"
     },
     "Fantasy & Sci-Fi" : {
       "localizations" : {
@@ -352737,6 +352906,9 @@
         }
       }
     },
+    "First Watch" : {
+      "comment" : "Tonight: request mode, a film not seen before"
+    },
     "Flair" : {
       "comment" : "Category header in the profile editor's emoji avatar picker for decorative or style-themed emoji choices.",
       "localizations" : {
@@ -357152,6 +357324,15 @@
         }
       }
     },
+    "Forget Decisions" : {
+
+    },
+    "Forget Decisions…" : {
+
+    },
+    "Forget all decisions?" : {
+
+    },
     "Formats" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -359664,6 +359845,9 @@
           }
         }
       }
+    },
+    "From %@, matching the decade you asked for." : {
+      "comment" : "Tonight reason: year matches a requested decade"
     },
     "From IntroDB and TheIntroDB when your server has none. Shares IMDb/TMDB IDs." : {
       "localizations" : {
@@ -366055,6 +366239,9 @@
           }
         }
       }
+    },
+    "Good" : {
+
     },
     "Gradient Backgrounds" : {
       "localizations" : {
@@ -383320,6 +383507,9 @@
         }
       }
     },
+    "History" : {
+      "comment" : "Tonight: film genre"
+    },
     "Home" : {
       "comment" : "Title of the main Home tab and navigation screens on tvOS and iOS.",
       "localizations" : {
@@ -386853,6 +387043,9 @@
         }
       }
     },
+    "Horror" : {
+      "comment" : "Tonight: film genre"
+    },
     "Host" : {
       "comment" : "Text-field label for the server host name or IP address in the iOS SFTP and FTP share setup screens.",
       "extractionState" : "stale",
@@ -388617,6 +388810,9 @@
           }
         }
       }
+    },
+    "How was %@?" : {
+
     },
     "How would you like to choose versions?" : {
       "extractionState" : "stale",
@@ -404930,6 +405126,15 @@
           }
         }
       }
+    },
+    "It's on your watchlist and matches your filters." : {
+      "comment" : "Tonight reason"
+    },
+    "It's one of your favorites." : {
+      "comment" : "Tonight rewatch reason: a favorite film"
+    },
+    "It's set at Christmas, as you asked." : {
+      "comment" : "Tonight reason: the mood asked for Christmas"
     },
     "Items in rotation" : {
       "extractionState" : "stale",
@@ -426642,6 +426847,31 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "淺萊姆綠"
+          }
+        }
+      }
+    },
+    "Like %@" : {
+      "comment" : "Tonight: reference film pill, e.g. 'Like Heat'"
+    },
+    "Like %@, it's %@." : {
+      "comment" : "Tonight reason: shares a genre with the reference film; the genre is a noun such as 'Crime'",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Like %1$@, it's %2$@."
+          }
+        }
+      }
+    },
+    "Like %@, it's from the %@s." : {
+      "comment" : "Tonight reason: same decade as the reference film",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Like %1$@, it's from the %2$@s."
           }
         }
       }
@@ -458668,6 +458898,9 @@
         }
       }
     },
+    "Matches your filters; nothing in your history is close to it yet." : {
+      "comment" : "Tonight reason: no evidence available"
+    },
     "Matching channels appear as each guide source loads. Clear filters to browse all channels now." : {
       "localizations" : {
         "ar" : {
@@ -466697,6 +466930,20 @@
         }
       }
     },
+    "Might suit your history: you've watched %@ and %@." : {
+      "comment" : "Tonight reason: two films watched once, no rating; careful wording",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Might suit your history: you've watched %1$@ and %2$@."
+          }
+        }
+      }
+    },
+    "Might suit your history: you've watched %@." : {
+      "comment" : "Tonight reason: one film watched once, no rating; careful wording"
+    },
     "Mint" : {
       "comment" : "Accessibility label for a profile color swatch in the profile editor when choosing a profile tile or avatar background color.",
       "localizations" : {
@@ -469339,6 +469586,9 @@
           }
         }
       }
+    },
+    "Mood" : {
+      "comment" : "Tonight: free-text mood pill"
     },
     "More" : {
       "comment" : "Live TV header menu with channel management, filters, sources and guide time.",
@@ -477718,7 +477968,7 @@
       }
     },
     "Music" : {
-      "comment" : "Label for the Music tab, and fallback title for a music library when the server does not provide a library name.",
+      "comment" : "Tonight: film genre",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -479259,6 +479509,9 @@
           }
         }
       }
+    },
+    "Mystery" : {
+      "comment" : "Tonight: film genre"
     },
     "NEARBY" : {
       "comment" : "Small heading above nearby-device choices on the tvOS Set Up Another Device screen.",
@@ -484564,6 +484817,9 @@
           }
         }
       }
+    },
+    "Never, Not Now and quick ratings for this profile are removed. Your watchlist and history stay as they are." : {
+
     },
     "New Profile" : {
       "comment" : "Title for the create-profile screen in the profile editor, including the editor header and default preview name before the user types one.",
@@ -491845,6 +492101,9 @@
           }
         }
       }
+    },
+    "No Reference" : {
+      "comment" : "Tonight: no reference film"
     },
     "No SDR version found on this server." : {
       "extractionState" : "stale",
@@ -504842,6 +505101,9 @@
         }
       }
     },
+    "No movies to choose from. Connect a server with a movie library or sign in to Trakt." : {
+      "comment" : "Tonight: empty state"
+    },
     "No music found in your libraries." : {
       "localizations" : {
         "ar" : {
@@ -517838,6 +518100,9 @@
         }
       }
     },
+    "Not on Your Servers" : {
+
+    },
     "Not on your watchlist" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -520484,6 +520749,9 @@
         }
       }
     },
+    "Nothing left to suggest. Change the request or show more." : {
+      "comment" : "Tonight: all picks decided"
+    },
     "Nothing matched in your language. Check that a subtitle source, such as OpenSubtitles, is set up on your server." : {
       "localizations" : {
         "ar" : {
@@ -520924,6 +521192,15 @@
           }
         }
       }
+    },
+    "Nothing matches every filter. Allow a longer runtime or remove the genre." : {
+      "comment" : "Tonight note"
+    },
+    "Nothing matches every filter. Remove the genre or switch between first watch and rewatch." : {
+      "comment" : "Tonight note"
+    },
+    "Nothing matches every filter. Turn off “Only on My Servers” or loosen genre and length." : {
+      "comment" : "Tonight note"
     },
     "Notifications" : {
       "localizations" : {
@@ -524691,6 +524968,9 @@
           }
         }
       }
+    },
+    "Okay" : {
+
     },
     "On" : {
       "comment" : "Generic enabled-state label used in settings rows, toggles, and summary values when a feature is enabled.",
@@ -531315,6 +531595,9 @@
           }
         }
       }
+    },
+    "Only on My Servers" : {
+      "comment" : "Tonight: filter to playable films"
     },
     "Only show forced subtitles for foreign-language passages." : {
       "comment" : "Explanation that only forced (foreign-language-passage) subtitles are shown; used for both the subtitle display mode and the subtitle search preference.",
@@ -613139,6 +613422,9 @@
         }
       }
     },
+    "Reading your film library…" : {
+      "comment" : "Tonight: first library scan in progress"
+    },
     "Reading your playlist" : {
       "localizations" : {
         "ar" : {
@@ -623715,6 +624001,9 @@
           }
         }
       }
+    },
+    "Refresh Library" : {
+
     },
     "Refresh Plozz channels" : {
       "localizations" : {
@@ -668207,6 +668496,9 @@
         }
       }
     },
+    "Rewatch" : {
+      "comment" : "Tonight: request mode, a film seen before"
+    },
     "Rewind on resume" : {
       "localizations" : {
         "ar" : {
@@ -669309,6 +669601,9 @@
           }
         }
       }
+    },
+    "Romance" : {
+      "comment" : "Tonight: film genre"
     },
     "Rose" : {
       "comment" : "Accessibility name for one profile color choice in the profile editor color palette.",
@@ -694171,6 +694466,9 @@
           }
         }
       }
+    },
+    "Science Fiction" : {
+      "comment" : "Tonight: film genre"
     },
     "Screens & Navigation" : {
       "localizations" : {
@@ -729221,6 +729519,12 @@
         }
       }
     },
+    "Sharpen Taste" : {
+
+    },
+    "Sharpen Taste (%lld)" : {
+      "comment" : "Tonight: opens the quick rating round; number of unrated watched films"
+    },
     "Short" : {
       "localizations" : {
         "ar" : {
@@ -730544,6 +730848,9 @@
           }
         }
       }
+    },
+    "Show More" : {
+
     },
     "Show Music" : {
       "extractionState" : "stale",
@@ -765936,6 +766243,9 @@
           }
         }
       }
+    },
+    "Some film sources couldn't be reached; the suggestions use the rest." : {
+      "comment" : "Tonight note"
     },
     "Some libraries are unavailable. Saved row choices are kept." : {
       "extractionState" : "stale",
@@ -823017,6 +823327,9 @@
         }
       }
     },
+    "The matching films were marked in the meantime. Choose again." : {
+      "comment" : "Tonight note"
+    },
     "The media server could not create an offline rendition." : {
       "localizations" : {
         "ar" : {
@@ -870232,6 +870545,9 @@
         }
       }
     },
+    "This film isn't on a connected server." : {
+
+    },
     "This iPhone Is Used for Testing Plozz" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -890168,6 +890484,9 @@
         }
       }
     },
+    "Thriller" : {
+      "comment" : "Tonight: film genre"
+    },
     "Thumbnail treatment" : {
       "comment" : "Picker label in iOS Spoilers settings for how unwatched episode thumbnails are hidden or altered.",
       "localizations" : {
@@ -892374,6 +892693,9 @@
           }
         }
       }
+    },
+    "Tonight" : {
+
     },
     "Tools" : {
       "localizations" : {
@@ -912215,6 +912537,9 @@
         }
       }
     },
+    "Undo" : {
+
+    },
     "Unfavorite" : {
       "localizations" : {
         "ar" : {
@@ -917394,6 +917719,9 @@
           }
         }
       }
+    },
+    "Up to %lld min" : {
+      "comment" : "Tonight: runtime filter with a maximum in minutes"
     },
     "Up to date · synced %@" : {
       "comment" : "Status summary on the Cloud Sync settings screen when the last sync succeeded. %@ is the relative time since the last sync, such as 2m ago.",
@@ -946413,6 +946741,9 @@
         }
       }
     },
+    "War" : {
+      "comment" : "Tonight: film genre"
+    },
     "Warm" : {
       "comment" : "One warmth level name in Circadian Mode or Night Shift settings. Selects a moderately warm picture tint.",
       "localizations" : {
@@ -948843,6 +949174,9 @@
           }
         }
       }
+    },
+    "Watched %lld times" : {
+      "comment" : "Tonight quick rating: number of viewings"
     },
     "Watched Indicator" : {
       "comment" : "Section header for the media-card watch badge style controls in the tvOS Appearance settings detail pane. Contains the picker that chooses how watched status is marked on library cards.",
@@ -957004,6 +957338,9 @@
           }
         }
       }
+    },
+    "Western" : {
+      "comment" : "Tonight: film genre"
     },
     "What Plozz does with subtitles when playback starts." : {
       "localizations" : {
@@ -967387,6 +967724,15 @@
         }
       }
     },
+    "You last watched it %lld years ago." : {
+      "comment" : "Tonight reason: years since the last viewing, at least two"
+    },
+    "You marked it as %@." : {
+      "comment" : "Tonight rewatch reason: quick verdict"
+    },
+    "You rated it %lld." : {
+      "comment" : "Tonight rewatch reason: the viewer's 1-10 rating"
+    },
     "You'll go back to the start and no server will be added." : {
       "localizations" : {
         "ar" : {
@@ -968486,6 +968832,23 @@
           }
         }
       }
+    },
+    "You've watched %@ and %@ several times; this film shares genre or director with them." : {
+      "comment" : "Tonight reason: two films watched repeatedly",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "You've watched %1$@ and %2$@ several times; this film shares genre or director with them."
+          }
+        }
+      }
+    },
+    "You've watched %@ several times; this film shares its genre or director." : {
+      "comment" : "Tonight reason: one film watched repeatedly"
+    },
+    "You've watched it %lld times." : {
+      "comment" : "Tonight rewatch reason: number of viewings"
     },
     "YouTube couldn't be opened on this device." : {
       "comment" : "External trailer handoff failed. No built-in playback or QR fallback is offered.",
@@ -980164,6 +980527,18 @@
         }
       }
     },
+    "Your word “%@” appears in its synopsis." : {
+      "comment" : "Tonight reason: a word from the free text appears in the synopsis"
+    },
+    "Your word “%@” is one of its themes." : {
+      "comment" : "Tonight reason: a theme keyword named in free text"
+    },
+    "Your word “%@” matches its genre." : {
+      "comment" : "Tonight reason: a genre named in free text"
+    },
+    "Your words are matched against titles, themes and synopses." : {
+      "comment" : "Tonight note: free text without a language model"
+    },
     "You’re all set" : {
       "localizations" : {
         "ar" : {
@@ -983059,6 +983434,9 @@
           }
         }
       }
+    },
+    "bad" : {
+      "comment" : "Tonight: quick verdict inside a sentence, as in 'you marked X as bad'"
     },
     "cardFocusStyle.detail.highlight" : {
       "comment" : "One-line explanation shown under the card focus-style picker.",
@@ -995832,6 +996210,9 @@
           }
         }
       }
+    },
+    "good" : {
+      "comment" : "Tonight: quick verdict inside a sentence, as in 'you marked X as good'"
     },
     "heroBackground.detail.off" : {
       "comment" : "One-line explanation shown under the hero-background picker.",
@@ -1022407,6 +1022788,18 @@
         }
       }
     },
+    "navigationRail.tonight" : {
+      "comment" : "Navigation rail destination for personal film suggestions.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Tonight"
+          }
+        }
+      }
+    },
     "navigationRail.watchlist" : {
       "comment" : "Navigation rail destination for the user's universal Watchlist.",
       "extractionState" : "extracted_with_value",
@@ -1024677,6 +1025070,9 @@
           }
         }
       }
+    },
+    "okay" : {
+      "comment" : "Tonight: quick verdict inside a sentence, as in 'you marked X as okay'"
     },
     "on another device" : {
       "localizations" : {

@@ -2,6 +2,8 @@
 import CoreUI
 import CoreModels
 import FeatureHomeCore
+import FeatureTonightCore
+import TraktService
 
 /// The Home tab's session-scoped handles: things owned **above** the tab so
 /// that SwiftUI churn inside the tab tree cannot destroy them.
@@ -32,5 +34,19 @@ struct HomeTabRuntime {
     /// The capture rig's screen requests, carried by reference for the same
     /// reason as ``pendingPlay``. Never populated outside DEBUG.
     let screenshotDirector: ScreenshotDirector
+    /// "Tonight" state owned above the tab tree, rebuilt per profile scope.
+    let tonight: TonightRuntime
+}
+
+/// What the "Tonight" destination needs from the app, resolved per profile.
+struct TonightRuntime {
+    /// Holds the screen model across tab re-hosting, rebuilt only when the
+    /// home scope (profile, accounts, watching-as identity) changes.
+    let model: LazyViewState<TonightModel>
+    /// The active profile's Trakt connection, captured when the model is built.
+    let makeTrakt: @MainActor () -> TraktTasteService?
+    /// Kids Profiles never see films from outside their servers, matching
+    /// External Home Discovery being off for them.
+    let isKidsProfile: Bool
 }
 #endif

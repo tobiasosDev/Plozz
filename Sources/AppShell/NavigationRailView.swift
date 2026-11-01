@@ -447,6 +447,8 @@ struct NavigationRailView: View {
             item(.search, symbol: "magnifyingglass", label: Text(Self.searchTitle))
         case .watchlist:
             item(.watchlist, symbol: "bookmark.fill", label: Text(Self.watchlistTitle))
+        case .tonight:
+            item(.tonight, symbol: "sparkles", label: Text(Self.tonightTitle))
         case .liveTV:
             item(
                 .liveTV, symbol: "antenna.radiowaves.left.and.right",
@@ -655,6 +657,11 @@ struct NavigationRailView: View {
         "navigationRail.watchlist",
         defaultValue: "Watchlist",
         comment: "Navigation rail destination for the user's universal Watchlist."
+    )
+    private static let tonightTitle = LocalizedStringResource(
+        "navigationRail.tonight",
+        defaultValue: "Tonight",
+        comment: "Navigation rail destination for personal film suggestions."
     )
     private static let liveTVTitle = LocalizedStringResource(
         "navigationRail.liveTV",

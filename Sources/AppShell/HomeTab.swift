@@ -13,6 +13,8 @@ import MetadataKit
 import FeatureSearch
 import FeatureSettings
 import FeatureProfiles
+import FeatureTonight
+import FeatureTonightCore
 import RatingsService
 import TraktService
 import SeerService
@@ -34,6 +36,8 @@ import TopShelfKit
 enum HomeTabRoot {
     case home
     case watchlist
+    /// Personal film suggestions.
+    case tonight
     /// One library's grid.
     case library(MediaLibrary)
     /// The combined grid over every browsable library the profile can see.
@@ -217,6 +221,8 @@ struct HomeTab: View {
             homeRoot
         case .watchlist:
             watchlistRoot
+        case .tonight:
+            tonightRoot
         case let .library(library):
             libraryBrowse(for: library, isNavigationRoot: true)
         case let .allLibraries(libraries):
@@ -396,6 +402,32 @@ struct HomeTab: View {
             spoilerSettings: spoilerSettings,
             onSelect: { navigate($0) }
         )
+    }
+
+    private var tonightRoot: some View {
+        TonightView(
+            model: tonightModel,
+            artwork: { [accounts] location, kind, width in
+                accounts.first { $0.account.id == location.accountID }?
+                    .provider.imageURL(itemID: location.itemID, kind: kind, maxWidth: width)
+            },
+            onPlay: { requestPlay($0) },
+            onOpenDetail: { navigate($0) }
+        )
+    }
+
+    /// Built once per home scope and kept above the tab tree, so re-hosting the
+    /// tab never restarts a library scan.
+    private var tonightModel: TonightModel {
+        runtime.tonight.model.value(forKey: runtime.scopeKey) {
+            TonightShell.makeModel(
+                accounts: accounts,
+                profileNamespace: libraryPreferencesNamespace,
+                trakt: runtime.tonight.makeTrakt(),
+                isKidsProfile: runtime.tonight.isKidsProfile,
+                watchlistHandler: mediaItemActionHandler
+            )
+        }
     }
 
     /// One library's paged grid. Shared by the pushed `MediaLibrary` destination

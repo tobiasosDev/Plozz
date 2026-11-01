@@ -59,6 +59,8 @@ let package = Package(
         .library(name: "FeatureSettings", targets: ["FeatureSettings"]),
         .library(name: "FeatureProfiles", targets: ["FeatureProfiles"]),
         .library(name: "FeatureWatchlistCore", targets: ["FeatureWatchlistCore"]),
+        .library(name: "FeatureTonightCore", targets: ["FeatureTonightCore"]),
+        .library(name: "FeatureTonight", targets: ["FeatureTonight"]),
         .library(name: "FeatureSyncSetup", targets: ["FeatureSyncSetup"]),
         .library(name: "FeatureSyncCloud", targets: ["FeatureSyncCloud"]),
         .library(name: "FeatureMusic", targets: ["FeatureMusic"]),
@@ -500,6 +502,20 @@ let package = Package(
             dependencies: ["CoreModels"]
         ),
 
+        // MARK: Tonight (personal film suggestions, ported from Sichtung)
+        //
+        // The taste model, ranking and decision memory are pure Swift in the
+        // Core module; sources (servers, Trakt) are injected. The UI module is
+        // a thin SwiftUI layer shared by tvOS and iOS.
+        .target(
+            name: "FeatureTonightCore",
+            dependencies: ["CoreModels", "CoreNetworking", "TraktService"]
+        ),
+        .target(
+            name: "FeatureTonight",
+            dependencies: ["CoreModels", "CoreUI", "FeatureTonightCore"]
+        ),
+
         // MARK: Sync & Setup (cross-device onboarding — feature-flagged, v1)
         //
         // Config and encrypted credential pairing, with secret-safe diagnostics.
@@ -871,6 +887,8 @@ let package = Package(
                 "FeatureMusic",
                 "FeatureSyncSetup",
                 "FeatureSyncCloud",
+                "FeatureTonight",
+                "FeatureTonightCore",
                 "TopShelfKit",
                 "CrashReporting",
             ]
@@ -953,6 +971,10 @@ let package = Package(
         .testTarget(
             name: "FeatureWatchlistCoreTests",
             dependencies: ["FeatureWatchlistCore", "CoreModels"]
+        ),
+        .testTarget(
+            name: "FeatureTonightCoreTests",
+            dependencies: ["FeatureTonightCore", "CoreModels", "TraktService"]
         ),
         .testTarget(
             name: "FeatureSyncSetupTests",

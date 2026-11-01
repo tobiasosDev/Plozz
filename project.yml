@@ -203,6 +203,12 @@ targets:
         # Config/Secrets.local.xcconfig supplies the registration-specific value.
         TraktClientID: "$(TRAKT_CLIENT_ID)"
         WetrakrClientID: "$(WETRAKR_CLIENT_ID)"
+        # Optional Claude curation for "Tonight", from the gitignored
+        # Config/Secrets.local.xcconfig. Empty by default: rules only.
+        TonightClaudeBaseURL: "$(TONIGHT_CLAUDE_BASE_URL)"
+        TonightClaudeAuthToken: "$(TONIGHT_CLAUDE_AUTH_TOKEN)"
+        TonightClaudeAPIKey: "$(TONIGHT_CLAUDE_API_KEY)"
+        TonightClaudeModel: "$(TONIGHT_CLAUDE_MODEL)"
         # MyAnimeList client ID for anime tracking (device-code OAuth). Substituted
         # from MAL_CLIENT_ID build setting (gitignored Config/Secrets.local.xcconfig).
         # Empty by default, which disables MAL sync.

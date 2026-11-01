@@ -713,6 +713,10 @@ public struct PageRequest: Equatable, Sendable {
     public enum Detail: Equatable, Sendable {
         case browse
         case identity
+        /// A whole-catalogue scan for taste: like `.identity`, plus genres,
+        /// directors, synopsis and the viewer's own watch history and rating.
+        /// No per-file stream payloads.
+        case taste
     }
 
     public init(
