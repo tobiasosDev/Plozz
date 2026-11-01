@@ -268,6 +268,7 @@ public struct TonightMemoryIndex: Sendable {
     private let entryByAlias: [String: TonightMemory.Entry]
     private let shownByAlias: [String: (main: Date?, alternative: Date?)]
     private let usedSeedKeys: Set<String>
+    private let hasTitleAliases: Bool
 
     public init(_ memory: TonightMemory) {
         var entries: [String: TonightMemory.Entry] = [:]
@@ -288,6 +289,21 @@ public struct TonightMemoryIndex: Sendable {
         entryByAlias = entries
         shownByAlias = shown
         usedSeedKeys = Set(memory.seeds.flatMap(\.keys))
+        // Every entry also carries title aliases; what matters is whether some
+        // entry has no stable id, so a title is the only way to find it.
+        hasTitleAliases = memory.entries.values.contains { $0.info.key.hasPrefix("title:") }
+    }
+
+    /// The entry for a film, comparing stable ids first. Normalizing titles is
+    /// the expensive part of identity, so title keys are only built when some
+    /// entry is known by title alone.
+    public func entry(for film: TonightFilm) -> TonightMemory.Entry? {
+        if entryByAlias.isEmpty { return nil }
+        if let entry = entryByAlias[film.key] { return entry }
+        if let tmdb = film.tmdb, let entry = entryByAlias["tmdb:\(tmdb)"] { return entry }
+        if let imdb = film.imdb, let entry = entryByAlias["imdb:\(imdb)"] { return entry }
+        if let trakt = film.trakt, let entry = entryByAlias["trakt:\(trakt)"] { return entry }
+        return hasTitleAliases || film.key.hasPrefix("title:") ? entry(Set(film.identityKeys)) : nil
     }
 
     public func entry(_ keys: Set<String>) -> TonightMemory.Entry? {

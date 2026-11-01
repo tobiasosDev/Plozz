@@ -10,20 +10,20 @@ public enum TonightQuickRate {
 
     static func open(_ films: [TonightFilm], index: TonightMemoryIndex) -> [TonightFilm] {
         films.filter { film in
-            let keys = Set(film.identityKeys)
-            return (film.isSeen || index.isMarkedSeen(keys))
+            let state = index.entry(for: film)?.state
+            return (film.isSeen || state?.seen == true)
                 && film.myRating == nil
-                && index.localRating(keys) == nil
-                && !index.quickSkipped(keys)
-                && !index.isNever(keys)
+                && state?.rating == nil
+                && state?.quickSkippedAt == nil
+                && state?.never != true
         }
     }
 
     public static func stats(_ films: [TonightFilm], memory: TonightMemory) -> Stats {
         let index = TonightMemoryIndex(memory)
-        let seen = films.filter { $0.isSeen || index.isMarkedSeen(Set($0.identityKeys)) }
+        let seen = films.filter { $0.isSeen || index.entry(for: $0)?.state.seen == true }
         return Stats(
-            ratedCount: seen.filter { $0.myRating != nil || index.localRating(Set($0.identityKeys)) != nil }.count,
+            ratedCount: seen.filter { $0.myRating != nil || index.entry(for: $0)?.state.rating != nil }.count,
             openCount: open(films, index: index).count
         )
     }

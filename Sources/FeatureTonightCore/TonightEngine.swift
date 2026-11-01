@@ -216,11 +216,6 @@ public actor TonightEngine {
             if request.mode == .firstWatch {
                 score += TonightBuckets.era(eras, film) * 2 + TonightBuckets.genre(genreAffinity, film) * 2.5
             }
-            var dislike = 0.0
-            for index in dislikedFeatures.indices {
-                dislike = max(dislike, TonightSimilarity.similarity(features, dislikedFeatures[index]) * -dislikedAffinity[index])
-            }
-            score -= dislike * 2.5
             if let likeFeatures { score += TonightSimilarity.similarity(features, likeFeatures) * 6 }
             for seed in endorsingSeeds(film) {
                 score += like.map({ cache.isSameFilm(seed, $0) }) == true ? 2.5 : max(0.2, TonightSignal.affinity(seed))
@@ -233,8 +228,6 @@ public actor TonightEngine {
                 score += days < 183 ? -4 * (1 - days / 183) : min(2.5, days / 730)
                 if film.plays >= 2, Calendar(identifier: .gregorian).component(.month, from: last) == currentMonth { score += 0.4 }
             }
-            score += (savedSignals.map { TonightSimilarity.neighbourSignal(features, $0) }.max() ?? 0) * 0.4
-            score -= (neverSignals.map { TonightSimilarity.neighbourSignal(features, $0) }.max() ?? 0) * 0.5
             if request.mode == .rewatch, index.saved(keys)?.mode == .rewatch { score += 1.2 }
             if hasMood { score += Self.moodScore(film, mood: moodText, haystack: cache.haystack(film)) }
             score -= index.penalty(keys, now: now)
@@ -244,6 +237,26 @@ public actor TonightEngine {
             a.score != b.score ? a.score > b.score : a.film.title.localizedStandardCompare(b.film.title) == .orderedAscending
         }
         scored.sort(by: order)
+
+        // Pairwise comparisons with disliked, saved and rejected films cost a
+        // similarity per pair. A library of tens of thousands of films only needs
+        // them where a pick can come from: the front of the cheap ranking.
+        let pairwiseCount = min(scored.count, 2000)
+        for position in 0..<pairwiseCount {
+            let features = cache.features(scored[position].film)
+            var dislike = 0.0
+            for index in dislikedFeatures.indices {
+                dislike = max(dislike, TonightSimilarity.similarity(features, dislikedFeatures[index]) * -dislikedAffinity[index])
+            }
+            var adjustment = -dislike * 2.5
+            adjustment += (savedSignals.map { TonightSimilarity.neighbourSignal(features, $0) }.max() ?? 0) * 0.4
+            adjustment -= (neverSignals.map { TonightSimilarity.neighbourSignal(features, $0) }.max() ?? 0) * 0.5
+            scored[position].score += adjustment
+        }
+        if pairwiseCount > 0 {
+            let adjusted = scored[0..<pairwiseCount].sorted(by: order)
+            scored.replaceSubrange(0..<pairwiseCount, with: adjusted)
+        }
 
         // Neighbour pass on the front of the list: refines order and names the evidence.
         let refineCount = min(scored.count, 300)

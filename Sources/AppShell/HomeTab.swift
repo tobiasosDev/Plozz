@@ -412,7 +412,8 @@ struct HomeTab: View {
                     .provider.imageURL(itemID: location.itemID, kind: kind, maxWidth: width)
             },
             onPlay: { requestPlay($0) },
-            onOpenDetail: { navigate($0) }
+            onOpenDetail: { navigate($0) },
+            isActive: isActiveTab
         )
     }
 

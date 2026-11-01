@@ -54,6 +54,7 @@ public final class TonightModel {
     @ObservationIgnored private var generation = 0
     /// Bumped by every decision, so a late curated result never overwrites one.
     @ObservationIgnored private var decisionRevision = 0
+    @ObservationIgnored private var quickRevision = 0
     @ObservationIgnored private let engine: TonightEngine
     @ObservationIgnored private let store: any TonightStoring
     @ObservationIgnored private let loadLibrary: @Sendable () async -> TonightLibrarySnapshot
@@ -98,8 +99,8 @@ public final class TonightModel {
         let state = await store.load()
         memory = state.memory
         request = state.request
-        if let cached = await store.loadLibrary(), cached.scope == libraryScope {
-            apply(cached)
+        if let cached = await store.loadLibrary(), cached.scope == libraryScope, !cached.films.isEmpty {
+            await apply(cached)
             await recommend()
             if now().timeIntervalSince(cached.builtAt) > maxLibraryAge { await refreshLibrary() }
         } else {
@@ -112,35 +113,45 @@ public final class TonightModel {
     public func refreshLibrary() async {
         guard !isRefreshingLibrary else { return }
         isRefreshingLibrary = true
-        var snapshot = await loadLibrary()
+        // The scan reads every movie on every server; it yields to navigation.
+        var snapshot = await Task.detached(priority: .utility) { [loadLibrary] in await loadLibrary() }.value
         snapshot.scope = libraryScope
         isRefreshingLibrary = false
         // An empty scan with failures must not replace a good cache.
         if snapshot.films.isEmpty, !library.isEmpty, !snapshot.failedAccountIDs.isEmpty || snapshot.traktFailed { return }
-        await store.saveLibrary(snapshot)
+        // Nothing worth caching: an empty result (no accounts yet, or no movies).
+        if !snapshot.films.isEmpty { await store.saveLibrary(snapshot) }
         await engine.invalidate()
-        apply(snapshot)
+        await apply(snapshot)
         await recommend()
     }
 
-    private func apply(_ snapshot: TonightLibrarySnapshot) {
+    /// Takes a library snapshot. Everything that walks the whole library runs
+    /// off the main actor: on an Apple TV a pass over tens of thousands of films
+    /// would otherwise freeze navigation.
+    private func apply(_ snapshot: TonightLibrarySnapshot) async {
         library = snapshot.films
-        libraryStats = LibraryStats(
-            films: snapshot.films.count,
-            seen: snapshot.seenCount,
-            rated: snapshot.ratedCount,
-            unreachableServers: snapshot.failedAccountIDs.count,
-            traktFailed: snapshot.traktFailed
-        )
-        references = snapshot.films
-            .filter { $0.isSeen && (($0.effectiveRating ?? 0) >= 7 || $0.plays >= 2 || $0.isFavorite) }
-            .sorted { a, b in
-                let ra = a.effectiveRating ?? (a.isFavorite ? 9 : 0), rb = b.effectiveRating ?? (b.isFavorite ? 9 : 0)
-                return ra != rb ? ra > rb : a.plays != b.plays ? a.plays > b.plays : a.title < b.title
-            }
-            .prefix(40)
-            .map { $0 }
-        refreshQuickRound()
+        let films = snapshot.films
+        let derived = await Task.detached(priority: .utility) {
+            let stats = LibraryStats(
+                films: films.count,
+                seen: snapshot.seenCount,
+                rated: snapshot.ratedCount,
+                unreachableServers: snapshot.failedAccountIDs.count,
+                traktFailed: snapshot.traktFailed
+            )
+            let references = films
+                .filter { $0.isSeen && (($0.effectiveRating ?? 0) >= 7 || $0.plays >= 2 || $0.isFavorite) }
+                .sorted { a, b in
+                    let ra = a.effectiveRating ?? (a.isFavorite ? 9 : 0), rb = b.effectiveRating ?? (b.isFavorite ? 9 : 0)
+                    return ra != rb ? ra > rb : a.plays != b.plays ? a.plays > b.plays : a.title < b.title
+                }
+                .prefix(40)
+            return (stats, Array(references))
+        }.value
+        libraryStats = derived.0
+        references = derived.1
+        await refreshQuickRound()
     }
 
     // MARK: - Request
@@ -178,14 +189,14 @@ public final class TonightModel {
         var before = memory
         var revision = decisionRevision
         // Rules first, instantly; the curator's pass replaces them when it lands.
-        var output = await engine.recommend(request, library: library, memory: before, now: now(), curate: false)
+        var output = await choose(memory: before, curate: false)
         guard mine == generation else { return }
         // A decision or quick rating landed while the pass ran: choose again from
         // the current memory rather than overwrite it.
         for _ in 0..<3 where revision != decisionRevision {
             before = memory
             revision = decisionRevision
-            output = await engine.recommend(request, library: library, memory: before, now: now(), curate: false)
+            output = await choose(memory: before, curate: false)
             guard mine == generation else { return }
         }
         guard revision == decisionRevision else { return }
@@ -196,7 +207,7 @@ public final class TonightModel {
         await persist()
         guard engine.canCurate, !output.result.picks.isEmpty else { return }
         isCurating = true
-        let curated = await engine.recommend(request, library: library, memory: before, now: now(), curate: true)
+        let curated = await choose(memory: before, curate: true)
         guard mine == generation else { return }
         isCurating = false
         guard revision == decisionRevision, curated.result.chosenByReranker else { return }
@@ -239,7 +250,7 @@ public final class TonightModel {
             result = current
             selectedIndex = min(selectedIndex, max(0, current.picks.count - 1))
         }
-        refreshQuickRound()
+        await refreshQuickRound()
         await persist()
     }
 
@@ -257,7 +268,7 @@ public final class TonightModel {
             current.picks.insert(TonightPick(film: film, reason: .matchesFilters, evidence: []), at: min(selectedIndex, current.picks.count))
             result = current
         }
-        refreshQuickRound()
+        await refreshQuickRound()
         await persist()
     }
 
@@ -274,13 +285,30 @@ public final class TonightModel {
     public func rate(_ film: TonightFilm, _ rating: TonightQuickRating?) async {
         TonightQuickRate.apply(rating, to: film, memory: &memory, now: now())
         decisionRevision += 1
-        refreshQuickRound()
+        await refreshQuickRound()
         await persist()
     }
 
-    private func refreshQuickRound() {
-        quickQueue = TonightQuickRate.queue(library, memory: memory)
-        quickStats = TonightQuickRate.stats(library, memory: memory)
+    /// The quick round walks the whole library; computed off the main actor.
+    private func refreshQuickRound() async {
+        quickRevision += 1
+        let mine = quickRevision
+        let films = library, snapshot = memory
+        let (queue, stats) = await Task.detached(priority: .utility) {
+            (TonightQuickRate.queue(films, memory: snapshot), TonightQuickRate.stats(films, memory: snapshot))
+        }.value
+        // A later decision started a newer computation; keep only the latest.
+        guard mine == quickRevision else { return }
+        quickQueue = queue
+        quickStats = stats
+    }
+
+    /// One engine pass at utility priority, so navigation keeps the CPU.
+    private func choose(memory: TonightMemory, curate: Bool) async -> (result: TonightResult, memory: TonightMemory) {
+        let engine = engine, request = request, library = library, now = now()
+        return await Task.detached(priority: .utility) {
+            await engine.recommend(request, library: library, memory: memory, now: now, curate: curate)
+        }.value
     }
 
     /// Forgets every decision and quick rating of this profile.
@@ -288,7 +316,7 @@ public final class TonightModel {
         memory = TonightMemory()
         decisionRevision += 1
         lastDecision = nil
-        refreshQuickRound()
+        await refreshQuickRound()
         await persist()
         await recommend()
     }

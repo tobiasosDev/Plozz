@@ -14,6 +14,7 @@ public struct TonightView: View {
     private let artwork: TonightArtworkResolver
     private let onPlay: (MediaItem) -> Void
     private let onOpenDetail: (MediaItem) -> Void
+    private let isActive: Bool
 
     @Environment(\.themePalette) private var palette
     @State private var editingMood = false
@@ -27,8 +28,10 @@ public struct TonightView: View {
         model: TonightModel,
         artwork: @escaping TonightArtworkResolver,
         onPlay: @escaping (MediaItem) -> Void,
-        onOpenDetail: @escaping (MediaItem) -> Void
+        onOpenDetail: @escaping (MediaItem) -> Void,
+        isActive: Bool = true
     ) {
+        self.isActive = isActive
         self.model = model
         self.artwork = artwork
         self.onPlay = onPlay
@@ -41,7 +44,11 @@ public struct TonightView: View {
             content
         }
         .background(palette.backgroundBase)
-        .task { await model.start() }
+        // Native navigation keeps hidden destinations alive. Nothing is read or
+        // computed until Tonight is actually on screen.
+        .task(id: TaskKey(model: ObjectIdentifier(model), isActive: isActive)) {
+            if isActive { await model.start() }
+        }
         .onChange(of: focusedPick) { _, key in
             if let key, let index = model.picks.firstIndex(where: { $0.id == key }) { model.select(index) }
         }
@@ -429,6 +436,11 @@ public struct TonightView: View {
         static let posterWidth: CGFloat = 96
         #endif
     }
+}
+
+private struct TaskKey: Hashable {
+    let model: ObjectIdentifier
+    let isActive: Bool
 }
 
 private extension String {
