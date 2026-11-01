@@ -13,7 +13,10 @@ enum TonightShell {
         profileNamespace: String?,
         trakt: TraktTasteService?,
         isKidsProfile: Bool,
-        watchlistHandler: (any MediaItemActionHandling)?
+        watchlistHandler: (any MediaItemActionHandling)?,
+        scopeKey: String,
+        cacheScopeKey: String,
+        currentScopeKey: @escaping @MainActor () -> String
     ) -> TonightModel {
         let accountSources = accounts.map { TonightAccountSource(accountID: $0.account.id, provider: $0.provider) }
         let resolve: @Sendable (TonightLocation) async -> MediaItem? = { location in
@@ -42,8 +45,14 @@ enum TonightShell {
             engine: engine,
             store: TonightFileStore(profileNamespace: profileNamespace),
             loadLibrary: { await TonightLibraryLoader().load(accounts: accountSources, trakt: trakt) },
-            watchlist: watchlistHandler.map { TonightSharedWatchlist(handler: TonightHandlerBox($0), resolve: resolve) },
-            resolveItem: resolve
+            watchlist: watchlistHandler.map {
+                TonightSharedWatchlist(
+                    handler: TonightHandlerBox($0, isCurrent: { currentScopeKey() == scopeKey }),
+                    resolve: resolve
+                )
+            },
+            resolveItem: resolve,
+            libraryScope: cacheScopeKey
         )
     }
 }
@@ -51,10 +60,18 @@ enum TonightShell {
 /// Carries the main-actor watchlist handler into a `Sendable` writer. Only
 /// ever dereferenced on the main actor.
 final class TonightHandlerBox: @unchecked Sendable {
-    @MainActor private(set) weak var handler: (any MediaItemActionHandling)?
+    @MainActor private weak var storedHandler: (any MediaItemActionHandling)?
+    @MainActor private let isCurrent: () -> Bool
 
-    @MainActor init(_ handler: any MediaItemActionHandling) {
-        self.handler = handler
+    @MainActor init(_ handler: any MediaItemActionHandling, isCurrent: @escaping @MainActor () -> Bool) {
+        self.storedHandler = handler
+        self.isCurrent = isCurrent
+    }
+
+    /// The handler, only while the profile scope that built this model is
+    /// still active. A Save resolved after a profile switch writes nothing.
+    @MainActor var handler: (any MediaItemActionHandling)? {
+        isCurrent() ? storedHandler : nil
     }
 }
 

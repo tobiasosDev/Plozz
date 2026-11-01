@@ -48,5 +48,9 @@ struct TonightRuntime {
     /// Kids Profiles never see films from outside their servers, matching
     /// External Home Discovery being off for them.
     let isKidsProfile: Bool
+    /// Persistent account and Plex-user identity for the library cache.
+    let cacheScopeKey: String
+    /// The live home scope, to drop writes that resolve after a profile switch.
+    let currentScopeKey: @MainActor () -> String
 }
 #endif

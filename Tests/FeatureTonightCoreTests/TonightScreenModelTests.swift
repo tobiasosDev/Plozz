@@ -190,4 +190,54 @@ final class TonightScreenModelTests: XCTestCase {
         XCTAssertFalse(model.picks.contains { $0.film.key == pick.film.key })
         XCTAssertNotNil(model.lastDecision)
     }
+
+    func testACachedLibraryFromAnotherScopeIsNeverShown() async {
+        let store = TonightMemoryStore(library: TonightLibrarySnapshot(
+            films: TonightFixtures.library, builtAt: TonightFixtures.now, scope: "profile|watching-as-anna"
+        ))
+        let loader = Loader(TonightLibrarySnapshot(films: Array(TonightFixtures.library.prefix(9)), builtAt: TonightFixtures.now))
+        let model = TonightModel(
+            engine: TonightEngine(), store: store, loadLibrary: { loader.calls += 1; return loader.snapshot },
+            resolveItem: { _ in nil }, libraryScope: "profile|watching-as-ben", now: { TonightFixtures.now }
+        )
+        await model.start()
+        XCTAssertEqual(loader.calls, 1, "the other user's cache must trigger a fresh scan")
+        XCTAssertEqual(model.libraryStats?.films, 9)
+        let saved = await store.loadLibrary()
+        XCTAssertEqual(saved?.scope, "profile|watching-as-ben")
+    }
+
+    /// A source that holds the rule pass until released, like a slow Trakt call.
+    private actor GatedSource: TonightCandidateSource {
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var holding = false
+        func hold() { holding = true }
+        func release() { holding = false; waiters.forEach { $0.resume() }; waiters = [] }
+        func related(to seed: TonightFilm) async throws -> [TonightFilm] { [] }
+        func recommendations() async throws -> [TonightFilm] {
+            if holding { await withCheckedContinuation { waiters.append($0) } }
+            return []
+        }
+    }
+
+    func testADecisionWhileTheRulePassRunsIsKept() async throws {
+        let source = GatedSource()
+        let store = TonightMemoryStore()
+        let model = TonightModel(
+            engine: TonightEngine(sources: [source]), store: store,
+            loadLibrary: { TonightLibrarySnapshot(films: TonightFixtures.library, builtAt: TonightFixtures.now) },
+            resolveItem: { _ in nil }, now: { TonightFixtures.now }
+        )
+        await model.start()
+        let pick = try XCTUnwrap(model.picks.first { $0.film.genres.contains(.crime) })
+        await source.hold()
+        let change = Task { await model.setGenre(.crime) }
+        try await Task.sleep(for: .milliseconds(200))
+        await model.decide(.never, on: pick)
+        await source.release()
+        await change.value
+        let saved = await store.load()
+        XCTAssertTrue(saved.memory.isNever(pick.film), "Never was overwritten by the overlapping rule pass")
+        XCTAssertFalse(model.picks.contains { $0.film.key == pick.film.key })
+    }
 }

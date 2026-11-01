@@ -88,6 +88,14 @@
 	<string>$(TMDB_PROXY_BASE_URL)</string>
 	<key>TVDBAPIKey</key>
 	<string>$(TVDB_API_KEY)</string>
+	<key>TonightClaudeAPIKey</key>
+	<string>$(TONIGHT_CLAUDE_API_KEY)</string>
+	<key>TonightClaudeAuthToken</key>
+	<string>$(TONIGHT_CLAUDE_AUTH_TOKEN)</string>
+	<key>TonightClaudeBaseURL</key>
+	<string>$(TONIGHT_CLAUDE_BASE_URL)</string>
+	<key>TonightClaudeModel</key>
+	<string>$(TONIGHT_CLAUDE_MODEL)</string>
 	<key>TraktClientID</key>
 	<string>$(TRAKT_CLIENT_ID)</string>
 	<key>UIAppFonts</key>

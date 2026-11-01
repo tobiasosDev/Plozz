@@ -446,6 +446,10 @@ targets:
           - vlc-x-callback
         TraktClientID: "$(TRAKT_CLIENT_ID)"
         WetrakrClientID: "$(WETRAKR_CLIENT_ID)"
+        TonightClaudeBaseURL: "$(TONIGHT_CLAUDE_BASE_URL)"
+        TonightClaudeAuthToken: "$(TONIGHT_CLAUDE_AUTH_TOKEN)"
+        TonightClaudeAPIKey: "$(TONIGHT_CLAUDE_API_KEY)"
+        TonightClaudeModel: "$(TONIGHT_CLAUDE_MODEL)"
         SimklClientID: "$(SIMKL_CLIENT_ID)"
         AniListClientID: "$(ANILIST_CLIENT_ID)"
         AniListClientSecret: "$(ANILIST_CLIENT_SECRET)"

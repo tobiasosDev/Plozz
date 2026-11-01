@@ -61,6 +61,7 @@ public final class TonightModel {
     @ObservationIgnored private let resolveItem: @Sendable (TonightLocation) async -> MediaItem?
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private let maxLibraryAge: TimeInterval
+    @ObservationIgnored private let libraryScope: String?
 
     public init(
         engine: TonightEngine,
@@ -69,8 +70,10 @@ public final class TonightModel {
         watchlist: (any TonightWatchlistWriting)? = nil,
         resolveItem: @escaping @Sendable (TonightLocation) async -> MediaItem?,
         maxLibraryAge: TimeInterval = 6 * 3600,
+        libraryScope: String? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
+        self.libraryScope = libraryScope
         self.engine = engine
         self.store = store
         self.loadLibrary = loadLibrary
@@ -95,7 +98,7 @@ public final class TonightModel {
         let state = await store.load()
         memory = state.memory
         request = state.request
-        if let cached = await store.loadLibrary() {
+        if let cached = await store.loadLibrary(), cached.scope == libraryScope {
             apply(cached)
             await recommend()
             if now().timeIntervalSince(cached.builtAt) > maxLibraryAge { await refreshLibrary() }
@@ -109,7 +112,8 @@ public final class TonightModel {
     public func refreshLibrary() async {
         guard !isRefreshingLibrary else { return }
         isRefreshingLibrary = true
-        let snapshot = await loadLibrary()
+        var snapshot = await loadLibrary()
+        snapshot.scope = libraryScope
         isRefreshingLibrary = false
         // An empty scan with failures must not replace a good cache.
         if snapshot.films.isEmpty, !library.isEmpty, !snapshot.failedAccountIDs.isEmpty || snapshot.traktFailed { return }
@@ -171,11 +175,20 @@ public final class TonightModel {
         let mine = generation
         isCurating = false
         if result == nil { phase = .choosing }
-        let before = memory
-        let revision = decisionRevision
+        var before = memory
+        var revision = decisionRevision
         // Rules first, instantly; the curator's pass replaces them when it lands.
-        let output = await engine.recommend(request, library: library, memory: before, now: now(), curate: false)
+        var output = await engine.recommend(request, library: library, memory: before, now: now(), curate: false)
         guard mine == generation else { return }
+        // A decision or quick rating landed while the pass ran: choose again from
+        // the current memory rather than overwrite it.
+        for _ in 0..<3 where revision != decisionRevision {
+            before = memory
+            revision = decisionRevision
+            output = await engine.recommend(request, library: library, memory: before, now: now(), curate: false)
+            guard mine == generation else { return }
+        }
+        guard revision == decisionRevision else { return }
         memory = output.memory
         result = output.result
         selectedIndex = 0

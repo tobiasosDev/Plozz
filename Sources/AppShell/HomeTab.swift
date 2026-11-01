@@ -425,7 +425,10 @@ struct HomeTab: View {
                 profileNamespace: libraryPreferencesNamespace,
                 trakt: runtime.tonight.makeTrakt(),
                 isKidsProfile: runtime.tonight.isKidsProfile,
-                watchlistHandler: mediaItemActionHandler
+                watchlistHandler: mediaItemActionHandler,
+                scopeKey: runtime.scopeKey,
+                cacheScopeKey: runtime.tonight.cacheScopeKey,
+                currentScopeKey: runtime.tonight.currentScopeKey
             )
         }
     }

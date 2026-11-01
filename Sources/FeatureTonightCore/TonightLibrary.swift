@@ -20,12 +20,17 @@ public struct TonightLibrarySnapshot: Codable, Hashable, Sendable {
     /// Accounts whose movies could not be read this time.
     public var failedAccountIDs: [String]
     public var traktFailed: Bool
+    /// The account and server-user scope the snapshot was read under. A cache
+    /// from another scope (a different "watching as" user, other accounts) is
+    /// never shown.
+    public var scope: String?
 
-    public init(films: [TonightFilm], builtAt: Date, failedAccountIDs: [String] = [], traktFailed: Bool = false) {
+    public init(films: [TonightFilm], builtAt: Date, failedAccountIDs: [String] = [], traktFailed: Bool = false, scope: String? = nil) {
         self.films = films
         self.builtAt = builtAt
         self.failedAccountIDs = failedAccountIDs
         self.traktFailed = traktFailed
+        self.scope = scope
     }
 
     public var seenCount: Int { films.filter(\.isSeen).count }

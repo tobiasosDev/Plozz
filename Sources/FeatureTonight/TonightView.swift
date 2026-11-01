@@ -131,6 +131,12 @@ public struct TonightView: View {
                     statusMessage(model.result?.note.map(TonightCopy.note)
                         ?? String(localized: "Nothing left to suggest. Change the request or show more.", comment: "Tonight: all picks decided"),
                         showsProgress: model.phase == .choosing)
+                    if model.lastDecision != nil {
+                        Button { Task { await model.undoLastDecision() } } label: {
+                            Label("Undo", systemImage: "arrow.uturn.backward")
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 }
             }
         }
