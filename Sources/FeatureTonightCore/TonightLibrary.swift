@@ -24,8 +24,19 @@ public struct TonightLibrarySnapshot: Codable, Hashable, Sendable {
     /// from another scope (a different "watching as" user, other accounts) is
     /// never shown.
     public var scope: String?
+    /// How many sources (server accounts, Trakt) the scan read. Zero means
+    /// there was nothing to read yet, which says nothing about the library.
+    public var sourceCount: Int?
 
-    public init(films: [TonightFilm], builtAt: Date, failedAccountIDs: [String] = [], traktFailed: Bool = false, scope: String? = nil) {
+    public init(
+        films: [TonightFilm],
+        builtAt: Date,
+        failedAccountIDs: [String] = [],
+        traktFailed: Bool = false,
+        scope: String? = nil,
+        sourceCount: Int? = nil
+    ) {
+        self.sourceCount = sourceCount
         self.films = films
         self.builtAt = builtAt
         self.failedAccountIDs = failedAccountIDs
@@ -148,7 +159,11 @@ public struct TonightLibraryLoader: Sendable {
                 }
             }
         }
-        return TonightLibrarySnapshot(films: films, builtAt: now, failedAccountIDs: failed.sorted(), traktFailed: traktFailed)
+        let traktSources = trakt?.isConnected == true ? 1 : 0
+        return TonightLibrarySnapshot(
+            films: films, builtAt: now, failedAccountIDs: failed.sorted(), traktFailed: traktFailed,
+            sourceCount: accounts.count + traktSources
+        )
     }
 
     static func movies(of account: TonightAccountSource, pageSize: Int) async throws -> [TonightFilm] {

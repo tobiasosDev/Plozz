@@ -119,8 +119,11 @@ public final class TonightModel {
         isRefreshingLibrary = false
         // An empty scan with failures must not replace a good cache.
         if snapshot.films.isEmpty, !library.isEmpty, !snapshot.failedAccountIDs.isEmpty || snapshot.traktFailed { return }
-        // Nothing worth caching: an empty result (no accounts yet, or no movies).
-        if !snapshot.films.isEmpty { await store.saveLibrary(snapshot) }
+        // No source to read yet (accounts still loading): not an answer about the
+        // library, so a cached library stays. Every other complete scan, empty
+        // included, replaces the cache.
+        if snapshot.films.isEmpty, (snapshot.sourceCount ?? 1) == 0 { return }
+        await store.saveLibrary(snapshot)
         await engine.invalidate()
         await apply(snapshot)
         await recommend()

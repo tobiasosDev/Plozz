@@ -240,4 +240,21 @@ final class TonightScreenModelTests: XCTestCase {
         XCTAssertTrue(saved.memory.isNever(pick.film), "Never was overwritten by the overlapping rule pass")
         XCTAssertFalse(model.picks.contains { $0.film.key == pick.film.key })
     }
+
+    func testAnEmptyScanWithSourcesReplacesTheCacheButOneWithoutSourcesDoesNot() async {
+        let store = TonightMemoryStore()
+        let loader = Loader(TonightLibrarySnapshot(films: TonightFixtures.library, builtAt: TonightFixtures.now, sourceCount: 1))
+        let model = makeModel(store: store, loader: loader)
+        await model.start()
+
+        loader.snapshot = TonightLibrarySnapshot(films: [], builtAt: TonightFixtures.now, sourceCount: 0)
+        await model.refreshLibrary()
+        let kept = await store.loadLibrary()
+        XCTAssertEqual(kept?.films.count, TonightFixtures.library.count, "no source read: the cache stays")
+
+        loader.snapshot = TonightLibrarySnapshot(films: [], builtAt: TonightFixtures.now, sourceCount: 1)
+        await model.refreshLibrary()
+        let replaced = await store.loadLibrary()
+        XCTAssertEqual(replaced?.films.count, 0, "a complete empty scan is the truth now")
+    }
 }
