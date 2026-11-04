@@ -10,7 +10,7 @@ import UIKit
 /// Pure-logic coverage for the env-gated imperative UIKit hero foreground's value
 /// layer (``HeroForegroundModel`` / ``HeroForegroundModelBuilder``). These lock the
 /// slide → visuals mapping — metadata joining, per-pill label/glyph resolution,
-/// selection clamping, dots presence, spoiler masking and overview gating — with no
+/// dots presence, spoiler masking and overview gating — with no
 /// view or simulator, so the persistent renderer can stay a thin apply-in-place
 /// layer over a trusted model.
 final class HeroForegroundModelTests: XCTestCase {
@@ -23,8 +23,7 @@ final class HeroForegroundModelTests: XCTestCase {
         item.familyGuidance = .init(recommendedAge: 14, qualityRating: nil)
         let model = Builder.model(
             item: item, overviewVisible: true, showsContentRatings: false,
-            maskedTitle: nil, pillInputs: [], selectedIndex: 0, heroFocused: false,
-            slideCount: 1, slideIndex: 0
+            maskedTitle: nil, pillInputs: [], slideCount: 1, slideIndex: 0
         )
         XCTAssertNil(model.ratingBadgeText)
         XCTAssertEqual(model.ratings, item.ratings)
@@ -63,7 +62,7 @@ final class HeroForegroundModelTests: XCTestCase {
             Builder.model(
                 item: item, overviewVisible: true, ratingsVisible: visible,
                 ratingPreferences: preferences, maskedTitle: nil, pillInputs: [],
-                selectedIndex: 0, heroFocused: false, slideCount: 1, slideIndex: 0
+                slideCount: 1, slideIndex: 0
             )
         }
         let shown = model(visible: true)
@@ -188,7 +187,7 @@ final class HeroForegroundModelTests: XCTestCase {
         var x: CGFloat = 0
         for input in inputs {
             let pill = HeroForegroundPillView(frame: .zero)
-            pill.configure(Builder.pill(for: input), selected: input.kind == .request, locale: Locale(identifier: "en"))
+            pill.configure(Builder.pill(for: input), locale: Locale(identifier: "en"))
             let size = pill.preferredSize()
             pill.frame = CGRect(origin: CGPoint(x: x, y: 12), size: size)
             container.addSubview(pill)
@@ -236,7 +235,7 @@ final class HeroForegroundModelTests: XCTestCase {
             kind: .play, isStarting: true, seasonEpisodeText: "S1, E1"
         ))
         let view = HeroForegroundPillView(frame: .zero)
-        view.configure(pill, selected: false, locale: Locale(identifier: "en"))
+        view.configure(pill, locale: Locale(identifier: "en"))
         XCTAssertEqual(
             view.subviews.compactMap { $0 as? UILabel }.first?.text,
             "Start watching · S1, E1"
@@ -292,8 +291,6 @@ final class HeroForegroundModelTests: XCTestCase {
             pillInputs: [
                 .init(kind: .play, seasonEpisodeText: Builder.seasonEpisodeButtonText(for: item))
             ],
-            selectedIndex: 0,
-            heroFocused: false,
             slideCount: 1,
             slideIndex: 0
         )
@@ -421,7 +418,7 @@ final class HeroForegroundModelTests: XCTestCase {
             requestSystemImage: "clock"
         ))
         let view = HeroForegroundPillView(frame: .zero)
-        view.configure(pill, selected: false, locale: Locale(identifier: "en"))
+        view.configure(pill, locale: Locale(identifier: "en"))
         XCTAssertEqual(view.subviews.compactMap { $0 as? UILabel }.first?.text, "S7 Requested")
     }
 #endif
@@ -449,55 +446,31 @@ final class HeroForegroundModelTests: XCTestCase {
         XCTAssertEqual(Builder.pill(for: PillInput(kind: .watchlist, isFavorite: false)).systemImage, "bookmark")
     }
 
-    func testNextPillIsChevron() {
-        XCTAssertEqual(Builder.pill(for: PillInput(kind: .next)).systemImage, "chevron.forward")
+    func testIconOnlyPillsCarryASpokenName() throws {
+        var info = try XCTUnwrap(Builder.pill(for: PillInput(kind: .moreInfo)).accessibilityName)
+        info.locale = Locale(identifier: "en")
+        XCTAssertEqual(String(localized: info), "More Info")
+        var add = try XCTUnwrap(Builder.pill(for: PillInput(kind: .watchlist, isFavorite: false)).accessibilityName)
+        add.locale = Locale(identifier: "en")
+        XCTAssertEqual(String(localized: add), "Add to Watchlist")
+        var remove = try XCTUnwrap(Builder.pill(for: PillInput(kind: .watchlist, isFavorite: true)).accessibilityName)
+        remove.locale = Locale(identifier: "en")
+        XCTAssertEqual(String(localized: remove), "Remove from Watchlist")
+        XCTAssertNil(Builder.pill(for: PillInput(kind: .play)).accessibilityName, "Labelled pills speak their label.")
     }
 
     // MARK: - model(...)
 
-    func testModelMapsPillsInOrderAndClampsSelection() {
+    func testModelMapsPillsInOrder() {
         let model = Builder.model(
             item: movie(),
             overviewVisible: true,
             maskedTitle: nil,
-            pillInputs: [PillInput(kind: .play), PillInput(kind: .moreInfo)],
-            selectedIndex: 9,
-            heroFocused: true,
+            pillInputs: [PillInput(kind: .play), PillInput(kind: .watchlist), PillInput(kind: .moreInfo)],
             slideCount: 3,
             slideIndex: 0
         )
-        XCTAssertEqual(model.pills.map(\.kind), [.play, .moreInfo])
-        XCTAssertEqual(model.selectedIndex, 1, "out-of-range selection clamps to the last pill")
-        XCTAssertTrue(model.heroFocused)
-    }
-
-    func testModelClampsNegativeSelectionToZero() {
-        let model = Builder.model(
-            item: movie(),
-            overviewVisible: true,
-            maskedTitle: nil,
-            pillInputs: [PillInput(kind: .play), PillInput(kind: .moreInfo)],
-            selectedIndex: -5,
-            heroFocused: false,
-            slideCount: 1,
-            slideIndex: 0
-        )
-        XCTAssertEqual(model.selectedIndex, 0)
-    }
-
-    func testModelSelectionIsZeroWhenNoPills() {
-        let model = Builder.model(
-            item: movie(),
-            overviewVisible: true,
-            maskedTitle: nil,
-            pillInputs: [],
-            selectedIndex: 3,
-            heroFocused: true,
-            slideCount: 1,
-            slideIndex: 0
-        )
-        XCTAssertEqual(model.selectedIndex, 0)
-        XCTAssertTrue(model.pills.isEmpty)
+        XCTAssertEqual(model.pills.map(\.kind), [.play, .watchlist, .moreInfo])
     }
 
     func testModelHasNoDotsForSingleSlide() {
@@ -506,8 +479,6 @@ final class HeroForegroundModelTests: XCTestCase {
             overviewVisible: true,
             maskedTitle: nil,
             pillInputs: [],
-            selectedIndex: 0,
-            heroFocused: false,
             slideCount: 1,
             slideIndex: 0
         )
@@ -520,8 +491,6 @@ final class HeroForegroundModelTests: XCTestCase {
             overviewVisible: true,
             maskedTitle: nil,
             pillInputs: [],
-            selectedIndex: 0,
-            heroFocused: false,
             slideCount: 5,
             slideIndex: 2
         )
@@ -534,8 +503,6 @@ final class HeroForegroundModelTests: XCTestCase {
             overviewVisible: false,
             maskedTitle: nil,
             pillInputs: [],
-            selectedIndex: 0,
-            heroFocused: false,
             slideCount: 1,
             slideIndex: 0
         )
@@ -548,8 +515,6 @@ final class HeroForegroundModelTests: XCTestCase {
             overviewVisible: true,
             maskedTitle: nil,
             pillInputs: [],
-            selectedIndex: 0,
-            heroFocused: false,
             slideCount: 1,
             slideIndex: 0
         )
@@ -562,8 +527,6 @@ final class HeroForegroundModelTests: XCTestCase {
             overviewVisible: false,
             maskedTitle: "Hidden Show",
             pillInputs: [],
-            selectedIndex: 0,
-            heroFocused: false,
             slideCount: 1,
             slideIndex: 0
         )
@@ -577,8 +540,6 @@ final class HeroForegroundModelTests: XCTestCase {
             overviewVisible: true,
             maskedTitle: nil,
             pillInputs: [],
-            selectedIndex: 0,
-            heroFocused: false,
             slideCount: 1,
             slideIndex: 0
         )
@@ -591,8 +552,6 @@ final class HeroForegroundModelTests: XCTestCase {
             overviewVisible: true,
             maskedTitle: nil,
             pillInputs: [],
-            selectedIndex: 0,
-            heroFocused: false,
             slideCount: 1,
             slideIndex: 0
         )
@@ -620,8 +579,6 @@ final class HeroForegroundModelTests: XCTestCase {
                 overviewVisible: true,
                 maskedTitle: nil,
                 pillInputs: [PillInput(kind: .play, resumeProgress: 0.5, isResume: true), PillInput(kind: .moreInfo)],
-                selectedIndex: 0,
-                heroFocused: true,
                 slideCount: 3,
                 slideIndex: 1
             )
@@ -629,19 +586,14 @@ final class HeroForegroundModelTests: XCTestCase {
         XCTAssertEqual(make(), make())
     }
 
-    func testSelectionChangeProducesUnequalModels() {
-        func make(selected: Int) -> HeroForegroundModel {
-            Builder.model(
-                item: movie(),
-                overviewVisible: true,
-                maskedTitle: nil,
-                pillInputs: [PillInput(kind: .play), PillInput(kind: .moreInfo)],
-                selectedIndex: selected,
-                heroFocused: true,
-                slideCount: 2,
-                slideIndex: 0
-            )
-        }
-        XCTAssertNotEqual(make(selected: 0), make(selected: 1))
+    func testModelHasNoFocusState() {
+        // Focus lives in the UIKit pills; moving between them must not change
+        // the model and re-apply the foreground.
+        let labels = Mirror(reflecting: Builder.model(
+            item: movie(), overviewVisible: true, maskedTitle: nil,
+            pillInputs: [PillInput(kind: .play)], slideCount: 2, slideIndex: 0
+        )).children.compactMap(\.label)
+        XCTAssertFalse(labels.contains("selectedIndex"))
+        XCTAssertFalse(labels.contains("heroFocused"))
     }
 }

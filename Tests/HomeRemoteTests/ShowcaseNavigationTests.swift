@@ -168,7 +168,7 @@ final class ShowcaseNavigationTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Production Home ready"].waitForExistence(timeout: 30))
         let heading = app.staticTexts["Continue Watching"]
         XCTAssertTrue(heading.waitForExistence(timeout: 5))
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         if fullscreen {
             XCTAssertTrue(hero.waitForExistence(timeout: 10), "This must exercise the real full-screen hero.")
         }
@@ -295,7 +295,7 @@ final class ShowcaseNavigationTests: XCTestCase {
         XCTAssertEqual(resumeState.label, "pending")
         if layout == nil || layout == "--cached-home-hero" {
             if layout == "--cached-home-hero" {
-                XCTAssertTrue(app.buttons["home-hero-action-row"].waitForExistence(timeout: 10))
+                XCTAssertTrue(app.homeHero.waitForExistence(timeout: 10))
             }
             XCUIRemote.shared.press(.right)
             XCUIRemote.shared.press(.down)
@@ -346,7 +346,7 @@ final class ShowcaseNavigationTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["Production Home ready"].waitForExistence(timeout: 30))
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 15))
         if !hero.hasFocus { XCUIRemote.shared.press(.select) }
         try assertNativeSidebarButtonPainted(in: app, name: "carousel-native-sidebar")
@@ -634,7 +634,7 @@ final class ShowcaseNavigationTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["Production Home ready"].waitForExistence(timeout: 30))
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 20))
         XCTAssertTrue(hero.hasFocus)
         let initial = hero.label

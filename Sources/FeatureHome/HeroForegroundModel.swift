@@ -54,24 +54,17 @@ struct HeroForegroundModel: Equatable {
     /// The selected review-score preview, spoiler-gated by caller.
     let ratings: [ExternalRating]
     let familyGuidanceAge: Double?
-    /// The visible action pills, left-to-right, exactly matching the SwiftUI
-    /// hero's `buttons(for:)` order. Non-interactive here — the SwiftUI overlay
-    /// owns focus/selection/dispatch — but their *visuals* (including the selected
-    /// highlight) are drawn by the renderer.
+    /// The visible action pills, left-to-right, in `HomeHeroView.buttons(for:)`
+    /// order. The renderer turns each into a focusable control; focus, and with it
+    /// the highlighted pill, belongs to the tvOS focus engine, so it is not part of
+    /// this value and moving between pills never re-applies the model.
     let pills: [Pill]
-    /// Zero-based index of the currently selected pill (owned by the SwiftUI
-    /// `selectedButton`); clamped to `pills` by the builder.
-    let selectedIndex: Int
-    /// Whether the hero currently holds focus. The selected pill only gets the
-    /// bright treatment while this is `true` (matches `selected = focus != nil &&
-    /// selectedButton == offset` in the SwiftUI hero).
-    let heroFocused: Bool
     /// Paging-dot state, or `nil` for a single-slide carousel (no dots).
     let dots: Dots?
 
     /// One visible hero action pill's *visuals* only.
     struct Pill: Equatable {
-        enum Kind: Equatable { case play, request, downloadStatus, moreInfo, watchlist, next }
+        enum Kind: Equatable { case play, request, downloadStatus, moreInfo, watchlist }
         let kind: Kind
         /// Trailing text label (e.g. "Play", "Request", "Requested", the remaining
         /// time "20m", or the download "83%"), or `nil` for an icon-only pill.
@@ -87,6 +80,9 @@ struct HeroForegroundModel: Equatable {
         /// App copy remains unresolved until the UIKit presentation boundary.
         /// When present, `text` is the content-only suffix (episode numbering).
         var localizedTitle: LocalizedStringResource? = nil
+        /// VoiceOver name for a pill whose visible label is only a glyph (More
+        /// Info, Watchlist). Labelled pills speak their visible title instead.
+        var accessibilityName: LocalizedStringResource? = nil
     }
 
     /// Paging-indicator state for the renderer (count + fronted index) plus the
@@ -308,25 +304,21 @@ enum HeroForegroundModelBuilder {
                 text: input.prominent ? "More Info" : nil,
                 systemImage: "info.circle",
                 progress: nil,
-                prominent: input.prominent
+                prominent: input.prominent,
+                accessibilityName: "More Info"
             )
         case .watchlist:
             return HeroForegroundModel.Pill(
                 kind: .watchlist,
                 text: nil,
                 systemImage: input.isFavorite ? "bookmark.fill" : "bookmark",
-                progress: nil
-            )
-        case .next:
-            return HeroForegroundModel.Pill(
-                kind: .next, text: nil, systemImage: "chevron.forward", progress: nil
+                progress: nil,
+                accessibilityName: input.isFavorite ? "Remove from Watchlist" : "Add to Watchlist"
             )
         }
     }
 
-    /// Assembles the full slide model. `selectedIndex` is clamped defensively so a
-    /// stale selection from a previous (differently-sized) slide can never point
-    /// past the last pill — matching the SwiftUI hero's own clamping.
+    /// Assembles the full slide model.
     static func model(
         item: MediaItem,
         overviewVisible: Bool,
@@ -335,8 +327,6 @@ enum HeroForegroundModelBuilder {
         ratingPreferences: DetailPageSettings = .default,
         maskedTitle: String?,
         pillInputs: [PillInput],
-        selectedIndex: Int,
-        heroFocused: Bool,
         slideCount: Int,
         slideIndex: Int,
         scheduleLine: String? = nil,
@@ -349,7 +339,6 @@ enum HeroForegroundModelBuilder {
     ) -> HeroForegroundModel {
         let presentation = HomeHeroPresentationCache.presentation(for: item)
         let pills = pillInputs.map(pill(for:))
-        let clamped = pills.isEmpty ? 0 : min(max(selectedIndex, 0), pills.count - 1)
         let dots: HeroForegroundModel.Dots? =
             slideCount > 1
             ? HeroForegroundModel.Dots(
@@ -380,8 +369,6 @@ enum HeroForegroundModelBuilder {
                 from: presentation.familyGuidanceAge, hidesRatings: !ratingsVisible
             ),
             pills: pills,
-            selectedIndex: clamped,
-            heroFocused: heroFocused,
             dots: dots
         )
     }

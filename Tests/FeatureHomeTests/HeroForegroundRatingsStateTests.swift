@@ -20,9 +20,9 @@ final class HeroForegroundRatingsStateTests: XCTestCase {
             scheduleLine: nil, overview: String(repeating: "Across the stars. ", count: 40),
             ratings: [], familyGuidanceAge: nil,
             pills: [.init(kind: .play, text: "Play", systemImage: "play.fill", progress: nil)],
-            selectedIndex: 0, heroFocused: false, dots: nil
+            dots: nil
         ), logo: HeroUIKitLogo(image: image, isMonochrome: false, needsHalo: false, isDark: false, coverage: 0.32),
-           metadataVisible: true, slideChanged: false)
+           slideChanged: false)
         foreground.layoutIfNeeded()
         let overview = try XCTUnwrap(foreground.subviews.compactMap { $0 as? UILabel }.first {
             $0.text?.hasPrefix("Across the stars.") == true
@@ -57,8 +57,8 @@ final class HeroForegroundRatingsStateTests: XCTestCase {
             metadataText: "Drama", ratingBadgeText: "PG", scheduleLine: "Upcoming",
             overview: String(repeating: "An expedition beyond the stars. ", count: 20), ratings: [], familyGuidanceAge: nil,
             pills: [.init(kind: .play, text: "Play", systemImage: "play.fill", progress: nil)],
-            selectedIndex: 0, heroFocused: false, dots: nil
-        ), logo: nil, metadataVisible: true, slideChanged: false)
+            dots: nil
+        ), logo: nil, slideChanged: false)
         foreground.layoutIfNeeded()
         let labels = foreground.subviews.compactMap { $0 as? UILabel }
         let certificate = try XCTUnwrap(labels.first { $0.text == "PG" })

@@ -11,7 +11,7 @@ final class ProductionHomeNavigationTests: XCTestCase {
         defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["Production Home ready"].waitForExistence(timeout: 30))
         let bar = app.descendants(matching: .any)["top-navigation"]
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 15))
         XCTAssertGreaterThanOrEqual(hero.frame.minY, bar.frame.maxY + 16)
         captureNavigation("Compact navigation over Home", app: app)
@@ -158,7 +158,7 @@ final class ProductionHomeNavigationTests: XCTestCase {
         }
         defer { if !attach { app.terminate() } }
         XCTAssertTrue(app.staticTexts["Production Home ready"].waitForExistence(timeout: 30))
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 20))
         // A navigation shell (`--top-bar-home`, `--native-sidebar-home`) can start
         // with focus in its chrome; enter the content the way a viewer would.

@@ -236,6 +236,11 @@ names one (`top-bar`, `sidebar` or `rail`). The test then moves focus out of the
 chrome into the hero before the timed input starts. Compare shells only with
 each other or with the same shell on another commit.
 
+`hero-paging` uses the same fixture and shells but pages the hero itself: ten
+Right and six Left presses on the hero's pills (moves past either end page the
+carousel), then Down to Continue Watching and back Up, three times. It only
+presses, so the same sequence can run against an older hero for an A/B.
+
 The process sample sees the main thread, not the render server. For compositing
 cost (live blurs and glass, masks, filters, path-less shadows), run
 `LayerCensusRemoteTests` against the same fixture build with

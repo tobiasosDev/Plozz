@@ -18,7 +18,7 @@ final class NativeSidebarHandoffTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["Production Home ready"].waitForExistence(timeout: 30))
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 15), app.debugDescription)
         if !hero.hasFocus { XCUIRemote.shared.press(.select) }
         assertFocused(hero, app: app)
@@ -101,7 +101,7 @@ final class NativeSidebarHandoffTests: XCTestCase {
     }
 
     private func assertFocused(
-        _ element: XCUIElement, app: XCUIApplication,
+        _ element: some RemoteFocusTarget, app: XCUIApplication,
         file: StaticString = #filePath, line: UInt = #line
     ) {
         let expected = XCTNSPredicateExpectation(

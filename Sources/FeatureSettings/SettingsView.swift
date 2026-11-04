@@ -50,13 +50,6 @@ public struct SettingsView: View {
     /// shell only ever runs on an Apple TV; the iOS shell passes iPhone/iPad.
     private static let deviceName = "Apple TV"
 
-    #if DEBUG
-    /// Live A/B override for the Home hero foreground renderer, shared with
-    /// `HomeHeroView` via this UserDefaults key. `0` = launch default, `1` = force
-    /// UIKit, `2` = force SwiftUI. Changing it applies live on return to Home.
-    @AppStorage("PLZDebugHeroForegroundMode") private var heroForegroundMode = 0
-    #endif
-
     private let subtitleBehavior: SubtitleBehaviorModel
     private let subtitleStyle: SubtitleStyleModel
     private let spoilers: SpoilerSettingsModel
@@ -712,13 +705,6 @@ public struct SettingsView: View {
                 }
                 developerModeRow
 
-                // Only meaningful in Debug builds (the hero A/B override the
-                // renderer reads is itself `#if DEBUG`), so keep it compiled out
-                // of release; still gated on Developer Mode when present.
-                #if DEBUG
-                debugHeroForegroundRow
-                #endif
-
                 // Wipe accounts, profiles, recents, and the first-run flag so the
                 // next server add reproduces a genuine first run.
                 debugResetFirstRunRow
@@ -787,40 +773,6 @@ public struct SettingsView: View {
             }
         }
     }
-    #if DEBUG
-    /// DEBUG-only row that cycles the Home hero foreground renderer override
-    /// (Default → UIKit → SwiftUI). Writes the shared `PLZDebugHeroForegroundMode`
-    /// key that `HomeHeroView` reads, so the change takes effect live on Home.
-    private var debugHeroForegroundRow: some View {
-        Button {
-            heroForegroundMode = (heroForegroundMode + 1) % 3
-        } label: {
-            HStack(spacing: 16) {
-                Image(systemName: "rectangle.on.rectangle.angled")
-                    .font(.system(size: 22, weight: .regular))
-                    .frame(width: 30, height: 30)
-                Text("Hero Foreground (Debug)").font(.callout.weight(.medium))
-                Spacer()
-                Text(heroForegroundModeLabel)
-                    .font(.callout)
-                    .plozzForeground(.secondary)
-            }
-            .foregroundStyle(.orange)
-            .padding(.vertical, 12)
-            .padding(.horizontal, 12)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(SettingsFocusButtonStyle())
-    }
-
-    private var heroForegroundModeLabel: LocalizedStringResource {
-        switch heroForegroundMode {
-        case 1: return "UIKit (forced)"
-        case 2: return "SwiftUI (forced)"
-        default: return "Default"
-        }
-    }
-    #endif
 
     /// "Reset to First Run" row. Collapses profiles to a pristine default and
     /// clears the first-run flag so the first-run profile screen can be re-tested

@@ -87,15 +87,15 @@ enum HeroForegroundGlass {
     }
 }
 
-/// One hero action **pill** rendered in UIKit (POC). Non-interactive — the SwiftUI
-/// overlay owns focus/selection/dispatch — but it draws the pill visual and the
-/// selected-highlight the same way the SwiftUI `heroPill` does:
+/// One hero action **pill**: a real tvOS focus item.
 ///
-/// * **Idle:** a Liquid Glass capsule (real UIKit `UIGlassEffect` on tvOS 26+,
-///   falling back to an ultra-thin blur that mirrors the SwiftUI `.ultraThinMaterial`
-///   path) with a white glyph/label.
-/// * **Selected + hero focused:** a bright white capsule with a dark glyph/label, a
-///   1.06 lift and a soft shadow, animated with the SwiftUI hero's 0.16 ease-out.
+/// The focus engine moves between pills natively (sound, swipe, held clicks), and
+/// the focused pill draws the bright treatment:
+///
+/// * **Idle:** a flat capsule (`clean`/`glassish`) or live glass (`glass`) with
+///   a theme-aware glyph/label.
+/// * **Focused:** a bright white capsule with a dark glyph/label, a 1.06 lift and
+///   a soft shadow, animated alongside the focus update.
 ///
 /// Progress pills (Play resume / active download) draw the shared inline capsule
 /// gauge (≈150pt, matching `ResumeProgressCapsule`) *between* the glyph and the
@@ -131,12 +131,18 @@ final class HeroForegroundPillView: UIView {
     private var prominent = false
     private var progressFraction: CGFloat = 0
 
+    /// Pill identifiers are `home-hero-action-<kind>`; remote tests find the hero
+    /// by this prefix.
+    static let accessibilityIdentifierPrefix = "home-hero-action-"
+
     override init(frame: CGRect) {
         super.init(frame: frame)
-        isUserInteractionEnabled = false
         clipsToBounds = false
+        isAccessibilityElement = true
+        accessibilityTraits = .button
 
         glassView.clipsToBounds = true
+        glassView.isUserInteractionEnabled = false
         glassView.isHidden = (style != .glass)
         addSubview(glassView)
 
@@ -170,15 +176,31 @@ final class HeroForegroundPillView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(_ pill: HeroForegroundModel.Pill, selected: Bool, locale: Locale = .current) {
-        let selectionChanged = self.selected != selected
+    override var canBecomeFocused: Bool { pill != nil && !isHidden }
+
+    var kind: HeroForegroundModel.Pill.Kind? { pill?.kind }
+
+    /// The slide title, read after the action name ("Play, Severance").
+    var slideTitle: String? {
+        didSet { accessibilityValue = slideTitle }
+    }
+
+    func configure(_ pill: HeroForegroundModel.Pill, locale: Locale = .current) {
         self.pill = pill
-        self.selected = selected
+        self.locale = locale
         prominent = pill.prominent
-        // tvOS: focus alone marks the active button, so a pill is only bright (white
-        // fill + dark ink) when it's the *selected* one and the hero holds focus —
-        // never an always-lit "primary" fill. (iOS/iPadOS keep a real filled primary
-        // via PlozziOSHeroActionButtonStyle, since they can't focus a button.)
+        accessibilityIdentifier = Self.accessibilityIdentifierPrefix + "\(pill.kind)"
+        applyContent()
+        applyLift()
+    }
+
+    private var locale: Locale = .current
+
+    /// Draws the glyph, label, progress and background for the current pill and
+    /// focus state. Focus alone marks the active button on tvOS, so a pill is only
+    /// bright while it is the focused one, never an always-lit "primary" fill.
+    private func applyContent() {
+        guard let pill else { return }
         let bright = selected
 
         let tint: UIColor = bright ? .black : HeroForegroundGlass.primaryInk()
@@ -205,6 +227,12 @@ final class HeroForegroundPillView: UIView {
             textLabel.text = nil
             textLabel.isHidden = true
         }
+        if var name = pill.accessibilityName {
+            name.locale = locale
+            accessibilityLabel = String(localized: name) // l10n:content — UIKit accessibility boundary, refreshed with the pill
+        } else {
+            accessibilityLabel = displayText
+        }
 
         if let progress = pill.progress {
             progressTrack.isHidden = false
@@ -216,25 +244,45 @@ final class HeroForegroundPillView: UIView {
             progressTrack.isHidden = true
         }
 
-        // Idle = flat capsule (clean/glassish) or live glass; selected = bright white.
         applyBackgroundAppearance()
         setNeedsLayout()
+    }
 
-        // Only the lift scale animates as selection moves (matches SwiftUI 0.16 easeOut).
-        let apply = { self.transform = selected ? CGAffineTransform(scaleX: 1.06, y: 1.06) : .identity }
-        if selectionChanged {
-            UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: apply)
-        } else {
-            apply()
+    private func applyLift() {
+        transform = selected ? CGAffineTransform(scaleX: 1.06, y: 1.06) : .identity
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        // A hop onto an edge catcher is a page, not leaving the pill: focus comes
+        // straight back, so the pill keeps its focused look in between.
+        let focused = context.nextFocusedView === self
+            || (context.previouslyFocusedView === self && context.nextFocusedView is HeroEdgeCatcher)
+        guard focused != selected else { return }
+        selected = focused
+        // Colour and fill snap with the focus update (no comet trail); only the
+        // lift animates, on the focus engine's own timing.
+        UIView.performWithoutAnimation {
+            applyContent()
+            layoutIfNeeded()
         }
+        coordinator.addCoordinatedAnimations({ self.applyLift() })
+    }
+
+    /// Re-reads the real focus state, for the case a hop onto an edge catcher
+    /// did not come back to this pill.
+    func syncFocusAppearance() {
+        guard selected != isFocused else { return }
+        selected = isFocused
+        applyContent()
+        applyLift()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        guard previousTraitCollection?.hasDifferentColorAppearance(comparedTo: traitCollection) == true,
-              let pill else { return }
+        guard previousTraitCollection?.hasDifferentColorAppearance(comparedTo: traitCollection) == true else { return }
         // Refresh explicit layer-backed colors when tvOS changes appearance.
-        configure(pill, selected: selected)
+        applyContent()
     }
 
     /// Resolves the pill background for the current style and selection:
@@ -249,13 +297,6 @@ final class HeroForegroundPillView: UIView {
             sheenLayer.isHidden = true
             layer.borderWidth = 0
             backgroundColor = .white
-        } else if pill?.kind == .next {
-            // The paging chevron rests as a bare glyph, as in the Apple TV app,
-            // and only becomes a capsule when focused.
-            glassView.isHidden = true
-            sheenLayer.isHidden = true
-            layer.borderWidth = 0
-            backgroundColor = .clear
         } else if style == .glass {
             glassView.isHidden = false
             backgroundColor = .clear

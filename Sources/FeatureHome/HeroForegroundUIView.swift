@@ -28,16 +28,42 @@ private struct HeroForegroundRatingsView: View {
     }
 }
 
-/// The persistent UIKit hero **visual foreground** (POC, gated by
-/// ``HeroForegroundConfig``). One long-lived view that renders a slide's
-/// logo/title, metadata, overview, action-pill *visuals* and paging dots, and is
-/// updated **imperatively in place** by ``HeroForegroundCoordinator`` on a page —
-/// never rebuilt. It is purely a picture: it owns no focus, no gestures, no
-/// controls. The SwiftUI hero keeps the single focus/action/accessibility overlay.
+/// What the interactive hero foreground reports back to `HomeHeroView`.
+///
+/// Moving between pills never reaches SwiftUI: the focus engine handles it and
+/// the pills redraw themselves. Only activation, paging at the row's edges and
+/// the hero gaining or losing focus cross back.
+struct HeroForegroundEvents {
+    /// Remote Select on a pill.
+    var activate: (HeroForegroundModel.Pill.Kind) -> Void = { _ in }
+    /// Remote Play/Pause anywhere in the row.
+    var playPause: () -> Void = {}
+    /// A move past the first (`.left`) or last (`.right`) pill. Return `true`
+    /// when it was handled (a page, or opening the pinned sidebar).
+    var edge: (HeroFocusDirection) -> Bool = { _ in false }
+    /// Any remote input inside the row, so auto-advance can pause.
+    var interaction: () -> Void = {}
+    /// Focus entered (`true`) or left (`false`) the row, with the move's heading.
+    var focusChanged: (Bool, UIFocusHeading) -> Void = { _, _ in }
+    /// Nothing on screen holds focus and the hero should take it. SwiftUI owns
+    /// which representable is focused, so the claim goes through its focus state.
+    /// Returns `false` when the hero must not take focus (Home is covered).
+    var claimFocus: () -> Bool = { false }
+}
+
+/// The persistent UIKit **hero foreground**: logo/title, metadata, overview, the
+/// action pills and the paging dots, updated **imperatively in place** by
+/// ``HeroForegroundCoordinator`` on a page rather than rebuilt.
+///
+/// The pills are the hero's focus items. Left/Right between them is native focus
+/// movement; a move past either end lands on an invisible edge catcher and is
+/// turned into a page, and focus goes straight back to the pill, so the focused
+/// pill stays put while the slide changes under it. Entry guides above and below the row
+/// send focus coming back from the tab bar or Continue Watching to the pill that
+/// was focused last.
 ///
 /// Layout is manual and **bottom-anchored** (the block hugs the bottom of the
-/// view's bounds, mirroring the SwiftUI content column whose leading `Spacer`
-/// pins the logo/metadata/buttons/dots low on the hero).
+/// view's bounds).
 final class HeroForegroundUIView: UIView {
     // MARK: Subviews
     private let logoImageView = UIImageView()
@@ -86,6 +112,25 @@ final class HeroForegroundUIView: UIView {
     /// Reused pill views (pooled), so a page updates labels/frames in place rather
     /// than allocating a fresh row — persistent identity, the whole point.
     private var pillViews: [HeroForegroundPillView] = []
+
+    // MARK: Focus
+
+    var events = HeroForegroundEvents()
+    /// Left at the first pill should leave the hero (native sidebar on the first
+    /// slide). The left edge guide steps aside so the focus engine can reach it.
+    var escapesLeftAtFirstPill = false {
+        didSet { updateGuides() }
+    }
+    /// The pill focus returns to, and the one it stays on across a page.
+    private var focusedPillIndex = 0
+    /// Invisible focus targets just past either end of the row; see `handleEdge`.
+    private let leftEdgeCatcher = HeroEdgeCatcher(direction: .left)
+    private let rightEdgeCatcher = HeroEdgeCatcher(direction: .right)
+    /// Catch focus arriving from above (tab bar) or below (Continue Watching) and
+    /// hand it to the last focused pill. Enabled only while focus is elsewhere.
+    private let topEntryGuide = UIFocusGuide()
+    private let bottomEntryGuide = UIFocusGuide()
+    private var containsFocus = false
     /// Paging-dot views keyed by their real slide index (matching the SwiftUI hero's
     /// index-identity `ForEach`). Keying by slide — not by fixed slot — means that on
     /// a windowed page the persisting dots slide slot→slot, the dot leaving the window
@@ -167,7 +212,6 @@ final class HeroForegroundUIView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        isUserInteractionEnabled = false
         clipsToBounds = false
 
         logoImageView.contentMode = .scaleAspectFit
@@ -224,6 +268,12 @@ final class HeroForegroundUIView: UIView {
             addSubview(v)
         }
         dotsContainer.clipsToBounds = true
+        dotsContainer.isUserInteractionEnabled = false
+        addSubview(leftEdgeCatcher)
+        addSubview(rightEdgeCatcher)
+        for guide in [topEntryGuide, bottomEntryGuide] {
+            addLayoutGuide(guide)
+        }
     }
 
     @available(*, unavailable)
@@ -373,9 +423,11 @@ final class HeroForegroundUIView: UIView {
 
     // MARK: - Imperative apply
 
-    /// Applies a slide's model in place. `slideChanged` drives the metadata
-    /// snap-hide / fade-in exactly like the SwiftUI hero's `metadataVisible`.
-    func apply(_ model: HeroForegroundModel, logo: HeroUIKitLogo?, metadataVisible: Bool, slideChanged: Bool) {
+    /// Applies a slide's model in place. On a slide change the description snaps
+    /// out and fades back in once the backdrop wipe is under way, while the pills
+    /// stay where they are and cross-dissolve their content.
+    func apply(_ model: HeroForegroundModel, logo: HeroUIKitLogo?, slideChanged: Bool) {
+        let animatesSlide = slideChanged && self.model != nil && window != nil
         self.model = model
         currentItemID = model.itemID
 
@@ -414,11 +466,20 @@ final class HeroForegroundUIView: UIView {
         ratingsState.update(model.ratings, familyGuidanceAge: model.familyGuidanceAge)
         ratingsHost.view!.isHidden = model.ratings.isEmpty && model.familyGuidanceAge == nil
 
-        applyPills(model)
+        if animatesSlide {
+            UIView.transition(
+                with: pillsContainer, duration: Self.pillContentFade,
+                options: [.transitionCrossDissolve, .allowUserInteraction, .beginFromCurrentState]
+            ) {
+                self.applyPills(model)
+            }
+        } else {
+            applyPills(model)
+        }
         applyDots(model)
         setNeedsLayout()
         layoutIfNeeded()
-        applyFade(metadataVisible: metadataVisible, slideChanged: slideChanged)
+        if animatesSlide { runSlideFade() }
     }
 
     /// Late async logo assignment, identity-guarded. Cross-dissolves the logo in when
@@ -519,21 +580,172 @@ final class HeroForegroundUIView: UIView {
     // MARK: Pills
 
     private func applyPills(_ model: HeroForegroundModel) {
-        // Grow the pool as needed; reuse existing views.
+        // Grow the pool as needed; reuse existing views, so the focused pill keeps
+        // its identity (and focus) across a page.
         while pillViews.count < model.pills.count {
             let pill = HeroForegroundPillView()
             pillViews.append(pill)
             pillsContainer.addSubview(pill)
         }
+        let count = model.pills.count
+        let hadPills = !visiblePills.isEmpty
+        let clamped = count == 0 ? 0 : min(focusedPillIndex, count - 1)
+        if clamped != focusedPillIndex {
+            focusedPillIndex = clamped
+            // The focused pill is about to disappear (this slide has fewer
+            // actions). Move focus to the new last pill before hiding it, or the
+            // focus engine would relocate it on its own, down into the rows.
+            if containsFocus {
+                setNeedsFocusUpdate()
+                updateFocusIfNeeded()
+            }
+        }
         for (i, pillView) in pillViews.enumerated() {
-            if i < model.pills.count {
-                let selected = model.heroFocused && i == model.selectedIndex
-                pillView.configure(model.pills[i], selected: selected, locale: contentLocale)
+            if i < count {
+                pillView.configure(model.pills[i], locale: contentLocale)
+                pillView.slideTitle = model.title
                 pillView.isHidden = false
             } else {
                 pillView.isHidden = true
             }
         }
+        updateGuides()
+        if !hadPills { claimFocusIfUnowned() }
+    }
+
+    // MARK: Focus handling
+
+    override var preferredFocusEnvironments: [UIFocusEnvironment] {
+        let visible = visiblePills
+        guard !visible.isEmpty else { return [] }
+        return [visible[min(focusedPillIndex, visible.count - 1)]]
+    }
+
+    private var visiblePills: [HeroForegroundPillView] { pillViews.filter { !$0.isHidden } }
+
+    private func pillIndex(of item: UIFocusItem?) -> Int? {
+        guard let view = item as? HeroForegroundPillView else { return nil }
+        return visiblePills.firstIndex { $0 === view }
+    }
+
+    private func updateGuides() {
+        let pills = visiblePills
+        let preferred: [UIFocusEnvironment] = pills.isEmpty
+            ? []
+            : [pills[min(focusedPillIndex, pills.count - 1)]]
+        rightEdgeCatcher.isActive = !pills.isEmpty
+        leftEdgeCatcher.isActive = !pills.isEmpty && !escapesLeftAtFirstPill
+        topEntryGuide.preferredFocusEnvironments = preferred
+        bottomEntryGuide.preferredFocusEnvironments = preferred
+        topEntryGuide.isEnabled = !containsFocus && !pills.isEmpty
+        bottomEntryGuide.isEnabled = !containsFocus && !pills.isEmpty
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        let nextIndex = pillIndex(of: context.nextFocusedItem)
+        let catcher = context.nextFocusedItem as? HeroEdgeCatcher
+        if let nextIndex { focusedPillIndex = nextIndex }
+        let inside = nextIndex != nil || catcher != nil
+        if inside, context.previouslyFocusedItem.map(isOwnFocusItem) == true {
+            events.interaction()
+        }
+        if let catcher { handleEdge(catcher.direction) }
+        if context.previouslyFocusedItem is HeroEdgeCatcher {
+            visiblePills.forEach { $0.syncFocusAppearance() }
+        }
+        guard inside != containsFocus else {
+            updateGuides()
+            return
+        }
+        containsFocus = inside
+        updateGuides()
+        HeroFocusDiagnostics.emit("hero focus \(inside ? "ENTER" : "LEAVE") pill=\(focusedPillIndex) heading=\(context.focusHeading.rawValue)")
+        events.focusChanged(inside, context.focusHeading)
+    }
+
+    private func isOwnFocusItem(_ item: UIFocusItem) -> Bool {
+        pillIndex(of: item) != nil || item is HeroEdgeCatcher
+    }
+
+    /// Focus reached an edge catcher: a move past the first or last pill. Page
+    /// (or open the pinned sidebar), then put focus straight back on the pill it
+    /// came from. The catcher is a real focus target, so the move clicks like any
+    /// other and a native sidebar never mistakes a refused move for "open me".
+    private func handleEdge(_ direction: HeroFocusDirection) {
+        let pills = visiblePills
+        HeroFocusDiagnostics.emit("edge \(direction) at pill \(focusedPillIndex)/\(pills.count)")
+        focusedPillIndex = direction == .left ? 0 : max(0, pills.count - 1)
+        _ = events.edge(direction)
+        // A focus update cannot be requested from inside one; return on the next
+        // turn of the run loop, once the page has been applied.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let focused = UIFocusSystem.focusSystem(for: self)?.focusedItem,
+                  focused is HeroEdgeCatcher else { return }
+            self.setNeedsFocusUpdate()
+            self.updateFocusIfNeeded()
+        }
+    }
+
+    /// Takes focus when the hero appears and nothing on screen holds it, e.g.
+    /// after Home's loading placeholder that held the initial focus goes away.
+    /// Never moves focus that something else already owns.
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        claimFocusIfUnowned()
+    }
+
+    private func claimFocusIfUnowned() {
+        guard window != nil, !visiblePills.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil, let pill = self.preferredFocusEnvironments.first,
+                  let system = UIFocusSystem.focusSystem(for: self),
+                  system.focusedItem == nil else { return }
+            guard self.events.claimFocus() else { return }
+            system.requestFocusUpdate(to: pill)
+            system.updateFocusIfNeeded()
+            HeroFocusDiagnostics.emit("hero claims unowned focus accepted=\(system.focusedItem.map(self.isOwnFocusItem) ?? false)")
+        }
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard containsFocus else { return super.pressesBegan(presses, with: event) }
+        var unhandled = Set<UIPress>()
+        for press in presses {
+            switch press.type {
+            case .select, .playPause:
+                events.interaction()
+            case .leftArrow, .rightArrow, .upArrow, .downArrow:
+                events.interaction()
+                unhandled.insert(press)
+            default:
+                unhandled.insert(press)
+            }
+        }
+        if !unhandled.isEmpty { super.pressesBegan(unhandled, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard containsFocus else { return super.pressesEnded(presses, with: event) }
+        var unhandled = Set<UIPress>()
+        for press in presses {
+            switch press.type {
+            case .select:
+                if let pill = visiblePills.first(where: \.isFocused), let kind = pill.kind {
+                    events.activate(kind)
+                }
+            case .playPause:
+                events.playPause()
+            default:
+                unhandled.insert(press)
+            }
+        }
+        if !unhandled.isEmpty { super.pressesEnded(unhandled, with: event) }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let passed = containsFocus ? presses.filter { $0.type != .select && $0.type != .playPause } : presses
+        if !passed.isEmpty { super.pressesCancelled(passed, with: event) }
     }
 
     // MARK: Dots
@@ -667,30 +879,33 @@ final class HeroForegroundUIView: UIView {
         activeDwellDuration = 0
     }
 
-    // MARK: Fade (metadataVisible)
+    // MARK: Slide fade
 
-    /// The set of views that fade with the show description on a page (the SwiftUI
-    /// hero fades logo/metadata/overview + pills together; dots stay visible).
+    /// The description block that fades on a page. The pills and the dots stay
+    /// on screen: the pills hold focus, the dots show where the carousel is.
     private var fadeViews: [UIView] {
         [logoImageView, titleLabel, ratingLabel, metadataLabel,
-         overviewLabel, scheduleLabel, ratingsHost.view!, pillsContainer]
+         overviewLabel, scheduleLabel, ratingsHost.view!]
             + qualityLabels + [sourceBadge]
     }
 
-    private func applyFade(metadataVisible: Bool, slideChanged: Bool) {
-        let target: CGFloat = metadataVisible ? 1 : 0
-        if !metadataVisible {
-            // Snap hide instantly so the outgoing text never lingers over new art.
-            fadeViews.forEach { $0.layer.removeAllAnimations(); $0.alpha = 0 }
-        } else {
-            let animate = fadeViews.contains { $0.alpha < 1 }
-            if animate {
-                UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) {
-                    self.fadeViews.forEach { $0.alpha = target }
-                }
-            } else {
-                fadeViews.forEach { $0.alpha = target }
-            }
+    /// How long the description stays hidden after a page, so the outgoing title
+    /// never sits over the incoming artwork, then how long it takes to return.
+    static let descriptionHold: TimeInterval = 0.28
+    static let descriptionFade: TimeInterval = 0.3
+    static let pillContentFade: TimeInterval = 0.25
+
+    private func runSlideFade() {
+        // Snap hide so the outgoing text never lingers over new art, then fade the
+        // new slide's text in partway through the backdrop wipe. One animation on
+        // the render server; a newer page restarts it from hidden.
+        fadeViews.forEach { $0.layer.removeAllAnimations(); $0.alpha = 0 }
+        UIView.animate(
+            withDuration: Self.descriptionFade,
+            delay: Self.descriptionHold,
+            options: [.curveEaseInOut, .allowUserInteraction]
+        ) {
+            self.fadeViews.forEach { $0.alpha = 1 }
         }
     }
 
@@ -719,13 +934,16 @@ final class HeroForegroundUIView: UIView {
         if model?.dots != nil {
             layoutDots(bottom: y + buttonsToDotsGap, leading: leading)
             dotsContainer.isHidden = false
-            y -= dotsGlassHeight + columnSpacing
         } else {
             dotsContainer.isHidden = true
         }
+        // The dots' room is reserved even without dots, so the pills (and the
+        // focus on them) never jump when a curation grows a one-slide hero.
+        y -= dotsGlassHeight + columnSpacing
 
         // Pills row above the dots.
         let pillsHeight = layoutPills(bottom: y, leading: leading)
+        layoutFocusGuides(row: pillsContainer.frame)
         y -= pillsHeight + columnSpacing + pillsTopPadding
 
         if !ratingsHost.view!.isHidden {
@@ -826,6 +1044,45 @@ final class HeroForegroundUIView: UIView {
                 width: min(size.width, maxWidth),
                 height: size.height
             )
+        }
+    }
+
+    /// Places the edge catchers just outside the pill row and the entry guides as
+    /// full-width bands above and below it, so any upward or downward move into
+    /// the hero meets a guide before a pill.
+    private func layoutFocusGuides(row: CGRect) {
+        let gap = pillSpacing
+        leftEdgeCatcher.frame = CGRect(x: row.minX - gap / 2 - 1, y: row.midY, width: 1, height: 1)
+        rightEdgeCatcher.frame = CGRect(x: row.maxX + gap / 2, y: row.midY, width: 1, height: 1)
+        let band: CGFloat = 8
+        set(topEntryGuide, CGRect(x: 0, y: row.minY - columnSpacing - band, width: bounds.width, height: band))
+        set(bottomEntryGuide, CGRect(x: 0, y: row.maxY + columnSpacing, width: bounds.width, height: band))
+    }
+
+    /// Constraint constants per guide (leading, top, width, height). A focus
+    /// guide is a layout guide, so constraints are the only way to place it.
+    private var guideConstraints: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
+
+    private func set(_ guide: UIFocusGuide, _ frame: CGRect) {
+        let key = ObjectIdentifier(guide)
+        let constraints: [NSLayoutConstraint]
+        if let existing = guideConstraints[key] {
+            constraints = existing
+        } else {
+            constraints = [
+                guide.leadingAnchor.constraint(equalTo: leadingAnchor),
+                guide.topAnchor.constraint(equalTo: topAnchor),
+                guide.widthAnchor.constraint(equalToConstant: 0),
+                guide.heightAnchor.constraint(equalToConstant: 0),
+            ]
+            NSLayoutConstraint.activate(constraints)
+            guideConstraints[key] = constraints
+        }
+        // Only write a changed constant, so placing the guides never schedules
+        // another layout pass of this view.
+        for (constraint, value) in zip(constraints, [frame.minX, frame.minY, frame.width, frame.height])
+            where constraint.constant != value {
+            constraint.constant = value
         }
     }
 
@@ -1113,6 +1370,24 @@ private final class HeroPagingDotView: UIView {
             )
         }
     }
+}
+
+/// A 1×1 invisible focus target just past one end of the hero's pill row.
+final class HeroEdgeCatcher: UIView {
+    let direction: HeroFocusDirection
+    var isActive = true
+
+    init(direction: HeroFocusDirection) {
+        self.direction = direction
+        super.init(frame: .zero)
+        backgroundColor = .clear
+        isAccessibilityElement = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var canBecomeFocused: Bool { isActive }
 }
 
 /// A `UILabel` with content insets, used for the bordered rating chip.

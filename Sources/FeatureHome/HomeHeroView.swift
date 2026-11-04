@@ -74,6 +74,9 @@ struct HomeHeroView: View {
     /// so Home can restore the full-screen hero and replay the enter transition.
     /// Not fired for interior button-to-button moves.
     var onFocusGained: () -> Void = {}
+    /// Fired when focus leaves the hero downward, so Home can start the recede
+    /// together with the focus engine's scroll.
+    var onFocusLeftDown: () -> Void = {}
     /// Reports the slides on screen, so a background curation can fold new media
     /// in without ever displacing what the viewer is looking at (see
     /// ``HeroLiveMerge``). Fires on appearance and on every page.
@@ -135,20 +138,8 @@ struct HomeHeroView: View {
     /// backward/left). Set in `page(to:forward:)` alongside `index` so the backdrop
     /// receives the new slide id and its entering direction in the same update.
     @State private var lastPageForward: Bool = true
-    /// The logical action-button selection (`0` = Play), **owned by us** rather
-    /// than by the focus engine. The hero's button row is a *single* focus target
-    /// (see `actionRow`), so Left/Right are resolved against this plain `@State` —
-    /// never a `@FocusState` the engine mutates behind our back. Reading it inside
-    /// `onMoveCommand` is therefore always the true PRE-move value, which is what
-    /// makes edge detection deterministic. (The old per-button `@FocusState` +
-    /// container `onMoveCommand` read the *post-move* button on device and paged
-    /// the instant focus merely landed on an edge button — the bug this fixes.)
-    @State private var selectedButton: Int = 0
     /// Neighbour slide models from the last body pass; see ``foregroundNeighbours(for:)``.
     @State private var neighbourModels = HeroNeighbourModelCache()
-    /// Uptime of the last `activateSelected` dispatch, used to de-dupe the two
-    /// Select paths (SwiftUI tap + window recognizer) into one activation.
-    @State private var lastActivateAt: TimeInterval = 0
     /// Optimistic per-item availability overrides applied the instant the user
     /// taps Request, so the pill flips to Requested/Downloading without waiting
     /// for the next trending refresh. Keyed by `MediaItem.id`; reconciled with the
@@ -165,24 +156,11 @@ struct HomeHeroView: View {
     @State private var seasonLookupIDs: [String: UUID] = [:]
     @State private var seasonRefreshToken = 0
     @State private var showingSeasonLookupFailure = false
-    /// Which of the hero's two focus targets holds focus: the pill `row`, or the
-    /// invisible `leftGuard` that sits just left of it. The guard exists so a Left
-    /// press has an *internal* target and is captured by the hero instead of
-    /// escaping to the sidebar (a lone `.focusable()` under `.focusSection()` can't
-    /// trap Left when the sidebar TabView is its left neighbor — the engine jumps
-    /// straight to it and `onMoveCommand` never runs). We resolve the Left against
-    /// our own `selectedButton` and bounce focus straight back to the row, so the
-    /// guard never visibly holds focus. Pauses auto-advance and drives the button
-    /// highlight whenever it is non-`nil` (either target counts as "hero focused").
-    @FocusState private var focus: HeroFocus?
-    /// Tracks the physical Left/Right press lifecycle beneath SwiftUI's repeating
-    /// move commands. Early repeats are bounced so a normal click stays one-to-one;
-    /// after a deliberate hold delay, native rapid navigation resumes.
-    @State private var directionalPressGate = HeroDirectionalPressGate()
-
-    /// The hero's focus targets. `leftGuard` is an invisible 1×1 sink used purely
-    /// to capture a leftward move (see `focus`).
-    private enum HeroFocus: Hashable { case row, leftGuard, rightGuard }
+    /// Whether one of the hero's pills holds focus. Written only when focus
+    /// enters or leaves the hero (``HeroForegroundEvents/focusChanged``); moving
+    /// between pills is UIKit's business and never invalidates this view.
+    @State private var heroFocused = false
+    @FocusState private var foregroundFocused: Bool
     /// Bumped on every manual page so the auto-advance `.task` restarts its dwell
     /// from the fresh slide instead of firing early.
     @State private var advanceToken = 0
@@ -228,19 +206,8 @@ struct HomeHeroView: View {
     /// (the loaded Watchlist row can lag, especially when adding a *series* from
     /// an episode slide) and self-heals when the real data reloads.
     @State private var watchlistOverrides: [String: Bool] = [:]
-    /// Whether the fronted slide's metadata (logo / title / meta / overview /
-    /// buttons) is shown. Hidden **instantly** the moment a page starts, then
-    /// faded back in once the backdrop wipe has landed — so the old show's text
-    /// never lingers over the new artwork.
-    @State private var metadataVisible = true
-    /// The nominal box handed to `HeroLogoArtwork`.
-    ///
-    /// A fixed shared box rather than the measured button-row width: the pill set
-    /// changes from slide to slide; the logo uses its own stable baseline and
-    /// the profile's Home size preference instead.
-    private var heroLogoBox: CGSize { HeroLogoLayout.box(size: settings.logoSize) }
-    /// Bumped on every page so a late metadata fade-in from a *previous* page
-    /// can't fire after a newer page has already started.
+    /// Bumped on every page and every re-seated slide, so per-slide work (the
+    /// artwork warm window) restarts for the slide now in front.
     @State private var slideToken = 0
     /// Changes only when the curated hero identity set changes. Drives the
     /// low-resolution all-slide preview warm without restarting it on every page.
@@ -265,48 +232,6 @@ struct HomeHeroView: View {
     /// l10n guard forbids elsewhere.
     @Environment(\.locale) private var locale
     @Environment(\.plozzMediaSourceIdentities) private var mediaSourceIdentities
-
-    #if DEBUG
-    /// Debug-only live override for the hero foreground renderer, so the two
-    /// implementations can be A/B-compared on the SAME slide without a rebuild or an
-    /// app restart. `0` = follow the launch default (``HeroForegroundConfig``), `1` =
-    /// force the imperative UIKit foreground, `2` = force the SwiftUI foreground.
-    /// Set from Settings › "Hero Foreground (Debug)"; applies live on return to Home.
-    @AppStorage("PLZDebugHeroForegroundMode") private var heroForegroundModeRaw = 0
-    #endif
-
-    /// The renderer actually used this session: the launch default unless a DEBUG
-    /// live override is active.
-    private var usesUIKitForeground: Bool {
-        #if DEBUG
-        switch heroForegroundModeRaw {
-        case 1: return true
-        case 2: return false
-        default: return HeroForegroundConfig.useUIKitForeground
-        }
-        #else
-        return HeroForegroundConfig.useUIKitForeground
-        #endif
-    }
-
-    #if DEBUG
-    /// A small, persistent corner badge naming the active renderer whenever a forced
-    /// override is in effect (the two render near-identically, so it's the only way to
-    /// tell them apart during a comparison). Hidden when following the launch default.
-    @ViewBuilder
-    private var heroModeBadge: some View {
-        if heroForegroundModeRaw != 0 {
-            Text("Hero: \(usesUIKitForeground ? "UIKit" : "SwiftUI")")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .background(.black.opacity(0.55), in: Capsule())
-                .padding(24)
-                .allowsHitTesting(false)
-        }
-    }
-    #endif
 
     private var current: MediaItem? {
         guard items.indices.contains(index) else { return items.first }
@@ -349,17 +274,12 @@ struct HomeHeroView: View {
                 result.append(.watchlist)
             }
         }
-        // A right-hand chevron on a multi-slide carousel — an affordance that
-        // there's more to page through (matching the Apple TV app) and the
-        // stable right-most button, so Right only pages the carousel here.
-        if items.count > 1 { result.append(.next) }
-
         // DEBUG (env-gated by PLZHFOCUS_ALTBUTTONS): force the button COUNT to
         // vary between slides so the count-changing page transitions that trigger
         // the focus drop can be reproduced on demand even when every slide would
         // otherwise be 4 buttons. Deterministic per item id (a stable byte-sum
-        // parity), so a given slide always has the same count and `selectedButton`
-        // clamping stays consistent as you page back and forth. Only removes the
+        // parity), so a given slide always has the same count and the focused
+        // pill's clamping stays consistent as you page back and forth. Only removes the
         // Watchlist button (never fabricates one), so `activateSelected()` can
         // never dispatch a bogus action. No effect unless the flag is set.
         if HeroFocusDiagnostics.forceAlternatingButtonCounts {
@@ -410,7 +330,7 @@ struct HomeHeroView: View {
             return true
         case .moreInfo:
             return primaryButton(for: item) == nil
-        case .play, .watchlist, .next:
+        case .play, .watchlist:
             return false
         }
     }
@@ -521,10 +441,10 @@ struct HomeHeroView: View {
                         .padding(.trailing, PlozzTheme.Metrics.screenPadding)
                         .padding(.bottom, Self.contentBottomInset - Self.pagingDotsDrop)
                         .allowsHitTesting(false)
-                        .opacity(isFrontmost && !receded && metadataVisible ? 1 : 0)
-                        .accessibilityHidden(!isFrontmost || receded || !metadataVisible || !heroVisible)
+                        .opacity(isFrontmost && !receded ? 1 : 0)
+                        .accessibilityHidden(!isFrontmost || receded || !heroVisible)
                         .transaction {
-                            if !isFrontmost || receded || !metadataVisible {
+                            if !isFrontmost || receded {
                                 $0.animation = nil
                             }
                         }
@@ -535,7 +455,7 @@ struct HomeHeroView: View {
         .opacity(heroVisible ? 1 : 0)
         .trackHeroExposure(
             item: current,
-            isVisible: isFrontmost && !receded && heroVisible && metadataVisible
+            isVisible: isFrontmost && !receded && heroVisible
                 && seasonPickerItem == nil && !showingSeasonLookupFailure,
             scopeID: exposureScopeID,
             onExposure: onItemExposed
@@ -556,9 +476,6 @@ struct HomeHeroView: View {
         } message: {
             Text("Couldn’t load the season list. Try again before choosing which seasons to request.")
         }
-        #if DEBUG
-        .overlay(alignment: .topTrailing) { heroModeBadge }
-        #endif
         .onAppear {
             // Start the first dwell from appearance so the initial slide's gauge
             // and auto-advance are anchored to now, not to view construction.
@@ -596,22 +513,15 @@ struct HomeHeroView: View {
                 index = min(index, max(0, newIDs.count - 1))
                 frontedSurvived = false
             }
-            HeroFocusDiagnostics.emit("items SET-SWAP count \(oldIDs.count)->\(newIDs.count) index \(oldIdx)->\(index) frontedSurvived=\(frontedSurvived) | \(hfState())")
+            HeroFocusDiagnostics.emit("items SET-SWAP count \(oldIDs.count)->\(newIDs.count) index \(oldIdx)->\(index) frontedSurvived=\(frontedSurvived)")
             let present = Set(newIDs)
             trailerSourceCache = trailerSourceCache.filter { present.contains($0.key) }
             noFastTrailerIDs.formIntersection(present)
-            // Clamp the logical selection to the fronted slide's button count so it
-            // can never point past the last pill — the slide's own CTA can change
-            // (Request → Downloading → Play) even when the slide itself did not.
-            // Pure `@State`, so this never touches (or drops) focus.
-            if items.indices.contains(index) {
-                selectedButton = min(selectedButton, max(0, buttons(for: items[index]).count - 1))
-            }
-            // A set swap is not a page: cancel any pending metadata fade-in and
-            // show the (possibly relocated) current item. The backdrop tracks
-            // `current`'s id, so if the fronted item survived the swap its art is
-            // unchanged (no wipe); if it was clamped to a different item the
-            // backdrop wipes to it (with whatever direction was last recorded).
+            // The foreground clamps its own focused pill when the slide offers
+            // fewer actions. The backdrop tracks `current`'s id, so if the fronted
+            // item survived the swap its art is unchanged (no wipe); if it was
+            // clamped to a different item the backdrop wipes to it (with whatever
+            // direction was last recorded).
             //
             // Only when the fronted slide actually CHANGED, though. Curation folds
             // new media into the live set while the viewer sits on Home (see
@@ -621,7 +531,6 @@ struct HomeHeroView: View {
             // than the dwell is long would stop the carousel advancing at all.
             guard !frontedSurvived else { return }
             slideToken &+= 1
-            metadataVisible = true
             // The set swap re-seats the fronted slide, so start a fresh dwell for
             // it (gauge from empty, no lingering pause).
             restartDwell()
@@ -724,11 +633,7 @@ struct HomeHeroView: View {
             if trailerController.isShowing(item.id) {
                 trailerController.setEndHandler(ownerID: "home-hero") { [itemID = item.id] in
                     guard current?.id == itemID, items.count > 1 else { return }
-                    page(
-                        to: (index + 1) % items.count,
-                        keepButton: selectedButton,
-                        forward: true
-                    )
+                    page(to: (index + 1) % items.count, forward: true)
                 }
                 trailerVisible = trailerController.isPlaying
                 return
@@ -787,11 +692,7 @@ struct HomeHeroView: View {
                 if pausedAt != nil {
                     pendingTrailerAdvance = true
                 } else {
-                    page(
-                        to: (index + 1) % items.count,
-                        keepButton: selectedButton,
-                        forward: true
-                    )
+                    page(to: (index + 1) % items.count, forward: true)
                 }
             }
             trailerController.startPrepared()
@@ -823,8 +724,8 @@ struct HomeHeroView: View {
         }
         // Auto-advance: the fire is rescheduled whenever `autoAdvanceKey` changes
         // (slide change, manual page, pause/resume, or the item count settling).
-        // It runs REGARDLESS of focus — focus lands on the hero action row by
-        // default, so gating on `focus == nil` froze the carousel the entire time
+        // It runs REGARDLESS of focus — focus lands on the hero's pills by
+        // default, so gating on focus froze the carousel the entire time
         // the user was looking at it. Instead, real remote input pauses it (see
         // `noteInteraction`), so it never pages out from under an interacting user.
         .task(id: autoAdvanceKey) {
@@ -838,8 +739,8 @@ struct HomeHeroView: View {
             let remaining = max(0, duration - Date().timeIntervalSince(dwellStart))
             try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            HeroFocusDiagnostics.emit("auto-advance FIRE (from idx=\(index)) | \(hfState())")
-            page(to: (index + 1) % items.count, keepButton: selectedButton, forward: true)
+            HeroFocusDiagnostics.emit("auto-advance FIRE (from idx=\(index))")
+            page(to: (index + 1) % items.count, forward: true)
         }
     }
 
@@ -941,286 +842,64 @@ struct HomeHeroView: View {
     /// with the Continue Watching row centered below — the Apple TV "recede".
     static let recedeAnchorID = "home-hero-recede"
 
-    /// Constant identity for the single focusable action row. Never changes — so
-    /// focus is retained across a page (item id changes).
+    /// Constant identity for the hero's foreground. Never keyed on the slide, so
+    /// the UIKit view, and the pill that holds focus, survive a page.
     static let actionRowFocusID = "home-hero-action-row"
 
-    /// Reserved focus-region size for the env-gated UIKit foreground path
-    /// (``HeroForegroundConfig``). When the UIKit view draws the pill visuals, the
-    /// SwiftUI action row keeps only its (invisible) focus leaf; this fixed region
-    /// holds its place in the lower third. Left/Right are logical (resolved via the
-    /// guards), so exact pixel overlap with the drawn pills isn't required — a
-    /// deliberate POC simplification.
-    private static let uikitFocusRegionWidth: CGFloat = 620
-    private static let uikitFocusRegionHeight: CGFloat = 76
-    /// Reserved paging-dots footprint below the focus region on the UIKit-foreground
-    /// path (the UIKit view draws the real dots); keeps the focus leaf at the same
-    /// vertical position as the SwiftUI path.
-    private static let uikitDotsReserve: CGFloat = 24
-    /// Lowers the entire UIKit hero content column (metadata / buttons / pagination)
-    /// by this much. Applied as reduced bottom padding on the whole UIKit column so
-    /// the imperative visual layer AND the SwiftUI focus overlay move down together.
-    /// Net 40pt: lowered 80, then shifted back up 40 to add air between the pagination
-    /// and the Continue Watching row below.
+    /// Lowers the whole hero content column (metadata / buttons / pagination) by
+    /// this much: reduced bottom padding on the column. Net 40pt: lowered 80,
+    /// then shifted back up 40 to add air between the pagination and the
+    /// Continue Watching row below.
     private static let uikitContentDrop: CGFloat = 40
 
-    /// The base of the action row: the visible SwiftUI pills (standard path) or a
-    /// reserved clear focus region (UIKit-foreground path, which draws the pills).
-    /// The single focus leaf + row identity are attached by the caller to whichever
-    /// base this returns, so the focus/accessibility overlay stays canonical.
-    @ViewBuilder
-    private func pillsBase(for item: MediaItem, itemButtons: [HeroButton], drawPills: Bool) -> some View {
-        if drawPills {
-            HStack(spacing: 24) {
-                ForEach(Array(itemButtons.enumerated()), id: \.element) { offset, button in
-                    heroButtonVisual(button, for: item, selected: focus != nil && selectedButton == offset)
-                }
-            }
-            .opacity(metadataVisible ? 1 : 0)
-            // Snap the pills' hide instantly (matches the metadata above); the
-            // delayed fade-IN still animates.
-            .transaction { if !metadataVisible { $0.animation = nil } }
-            .allowsHitTesting(false)
-        } else {
-            Color.clear.frame(width: Self.uikitFocusRegionWidth, height: Self.uikitFocusRegionHeight)
-        }
-    }
-
-    @ViewBuilder
+    /// The hero's foreground: one persistent UIKit view that draws the logo,
+    /// metadata, overview, pills and paging dots and owns the pills' focus. SwiftUI
+    /// positions it and hands it the slide; it reports activation, edge paging and
+    /// focus entering or leaving back through ``HeroForegroundEvents``.
     private func content(for item: MediaItem) -> some View {
-        if usesUIKitForeground {
-            uikitContent(for: item)
-        } else {
-            swiftUIContent(for: item)
-        }
-    }
-
-    @ViewBuilder
-    private func swiftUIContent(for item: MediaItem) -> some View {
-        let hideText = spoilerSettings.shouldHideText(for: item)
-        let textWidth = HeroLogoSizing.homeTextWidth(for: .television, logoSize: settings.logoSize)
-        VStack(alignment: .leading, spacing: 12) {
-            // Absorbs the vertical slack at the TOP of the (fixed-height) column so
-            // the bottom block — logo/metadata/overview + buttons + dots — is pinned
-            // to an integer offset from the frame's bottom edge. Previously the whole
-            // column was bottom-anchored as one unit, so the metadata block's
-            // *fractional*, per-slide-varying height (different overviews / metadata)
-            // nudged the column's rounded origin by 1–2pt every page — the reported
-            // paging jitter where the buttons and dots crept up/down. With this
-            // Spacer taking the fractional slack, a taller/shorter metadata block
-            // only changes the Spacer's height; the buttons and dots stay put.
-            Spacer(minLength: 0)
-
-            // The show *description* (logo/title/metadata/overview). ONLY this
-            // fades: hidden instantly on a page and faded back in once the new
-            // backdrop has wiped into place, so the old title/overview never sit
-            // over the incoming artwork. The action row is deliberately NOT inside
-            // this fade — a focusable view at opacity 0 is un-focusable on tvOS, so
-            // fading the buttons dropped focus mid-page and the ScrollView scrolled
-            // down to the next focusable (a Continue Watching card). Keeping the
-            // buttons opaque and focusable throughout the transition pins focus and
-            // the scroll in place.
-            VStack(alignment: .leading, spacing: 12) {
-                if let scheduleLine = schedules.line(for: item) {
-                    scheduleBadge(scheduleLine)
-                }
-                HeroLogoArtwork(
-                    references: item.artworkReferences(for: .logo),
-                    asyncFallbackURL: logoFallback(for: item),
-                    displayedArtworkID: item.id,
-                    // The logo is sized from a shared hero box, not from this
-                    // hero's own button row — the pill set changes per slide, and
-                    // the detail page's column is wider again. See
-                    // ``HeroLogoLayout``.
-                    maxWidth: heroLogoBox.width,
-                    maxHeight: heroLogoBox.height,
-                    // The parent keeps metadata hidden for 280ms during a wipe. A
-                    // cache-hot logo lands inside that window; a later result warms
-                    // the next visit but never pops into an already-settled slide.
-                    presentationPolicy: .onArrival(maximumWait: 0.2)
-                ) {
-                    heroTitleText(for: item, hideText: hideText)
-                        .font(.system(size: PlozzTypography.heroFallbackTitle.scaled(by: textScale).pointSize, weight: .bold))
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.5)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: textWidth, alignment: .leading)
-                        .contentTransition(.opacity)
-                }
-                .id("logo-\(item.id)")
-                // Matches the UIKit foreground's extra room under the wordmark.
-                .padding(.bottom, 14)
-
-                metadataLine(for: item)
-                    .frame(maxWidth: textWidth, alignment: .leading)
-                    .modifier(HeroTextLegibilityShadow(colorScheme: colorScheme))
-
-                if let heroText = HeroContentPolicy.homeDescription(
-                    for: HeroPresentation(item: item, artworkStyle: .landscape, surface: .home)
-                ) {
-                    // tvOS can't tap links, so flatten inline markdown to plain
-                    // label text ("[Sei](url)" → "Sei") — never leak raw brackets
-                    // or a URL into the hero. (iPadOS renders tappable links; this
-                    // hero is tvOS-only.)
-                    Text(heroText.overviewPlainText)
-                        .font(.system(size: PlozzTypography.heroDescription.scaled(by: textScale).pointSize))
-                        .foregroundStyle(.primary)
-                        .lineSpacing(PlozzTypography.heroDescription.scaled(by: textScale).lineSpacing)
-                        .lineLimit(settings.textSize.descriptionLineLimit(base: 3), reservesSpace: true)
-                        .frame(maxWidth: textWidth, alignment: .topLeading)
-                        // Subtle legibility shadow so the description reads clearly
-                        // over the (now more dissolved) lower hero — see modifier.
-                        .modifier(HeroTextLegibilityShadow(colorScheme: colorScheme))
-                        .contentTransition(.opacity)
-                }
-
-                if settings.shouldShowRatings(for: item, spoilerSettings: spoilerSettings) {
-                    let presentation = HeroPresentation(item: item, artworkStyle: .landscape, surface: .home)
-                    RatingsBadgeRow(
-                        ratings: settings.ratingPreferences.headerRatings(
-                            from: item.ratings, isAnime: presentation.isAnime, hidesRatings: false
-                        ),
-                        familyGuidanceAge: settings.ratingPreferences.headerFamilyGuidanceAge(
-                            from: presentation.familyGuidanceAge, hidesRatings: false
-                        )
-                    )
-                        .frame(maxWidth: textWidth, alignment: .leading)
-                        .contentTransition(.opacity)
-                }
-            }
-            .environment(\.metadataTextScale, textScale)
-            .opacity(metadataVisible ? 1 : 0)
-            // Snap the metadata *hide* instantly (so the outgoing text vanishes as
-            // the wipe starts instead of fading out over the incoming art) while
-            // still allowing the delayed fade-IN once the wipe has landed.
-            .transaction { if !metadataVisible { $0.animation = nil } }
-
-            // Zero-height recede target: sits just above the buttons so a
-            // down-press lifts the logo/title off the top of the screen.
-            Color.clear
-                .frame(height: 0)
-                .id(Self.recedeAnchorID)
-
-            // The pills fade with the metadata (see `actionRow`), but their focus
-            // target is an always-opaque overlay — so a page never drops focus or
-            // shifts the scroll even as the buttons disappear and reappear.
-            actionRow(for: item)
-
-            pagingDots
-                // Center the page indicators across the full hero width (leading
-                // and trailing padding are equal, so this is true screen-center)
-                // while the logo / metadata / buttons stay left-aligned. Kept
-                // visible through the wipe so paging stays legible.
-                .frame(maxWidth: .infinity, alignment: .center)
-                // The whole column was lifted 120pt (contentBottomInset 132→252) to
-                // raise the logo / metadata / buttons. The dots should stay at their
-                // original screen position, so push them back down by the same 120pt.
-                .offset(y: Self.pagingDotsDrop)
-        }
-        // Fixed, INTEGER height for the column so its origin never rounds to a
-        // different pixel per slide (the paging-jitter root cause). The height is
-        // the full hero height minus the bottom inset; the top Spacer inside then
-        // absorbs the fractional slack, and the bottom block (buttons + dots) sits
-        // at an integer offset from this frame's bottom. `screenHeight` and
-        // `contentBottomInset` are whole numbers, so the frame bottom is integral.
+        HeroForegroundRepresentable(
+            model: foregroundModel(for: item),
+            neighbours: foregroundNeighbours(for: item),
+            logoFallbacks: foregroundLogoFallbacks(for: item),
+            logoReferences: foregroundLogoReferences(for: item),
+            backgroundSample: displayedArtwork?.sample(for: item.id),
+            events: foregroundEvents,
+            escapesLeftAtFirstPill: escapesLeftAtFirstPill,
+            logoSize: settings.logoSize,
+            textSize: settings.textSize,
+            width: HomeHeroLayout.screenWidth,
+            height: HomeHeroLayout.screenHeight - Self.contentBottomInset
+        )
         .frame(height: HomeHeroLayout.screenHeight - Self.contentBottomInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, PlozzTheme.Metrics.screenPadding)
         .padding(.leading, PlozzTheme.Metrics.heroLeadingPadding + navigationContentInset)
-        // Lift the content column off the very bottom of the full-screen hero so
-        // the logo / metadata / buttons / dots sit near the lower third and the
-        // Continue Watching row can peek in just beneath the dots. This inset is
-        // STATIC so it never re-runs layout during the recede.
-        .padding(.bottom, Self.contentBottomInset)
-        // When receded, lift the whole column further toward the top (buttons/dots
-        // stay visible but move up). Expressed as an `.offset` — a post-layout GPU
-        // transform — NOT padding, so the recede animation never triggers a relayout
-        // of this column or the rows below it. Padding-based lifts on a non-lazy
-        // stack re-run full layout every animation frame, which is what made the
-        // slow recede stutter; a transform is free at any duration.
-        .modifier(HomeVerticalMotion(y: receded ? -Self.recedeContentLift : 0))
-    }
-
-    /// Env-gated (``HeroForegroundConfig``) imperative **UIKit** visual foreground.
-    /// The persistent ``HeroForegroundRepresentable`` draws the logo/metadata/
-    /// overview/pill/dot *visuals* imperatively (no SwiftUI foreground rebuild per
-    /// page — the measured hitch source). The SwiftUI layer here keeps ONLY the
-    /// canonical focus/navigation/accessibility overlay (`actionRow(drawPills:false)`
-    /// plus the L/R guards) so focus, selection dispatch, recede and VoiceOver are
-    /// byte-for-byte unchanged. Both bottom-anchor to the same column frame.
-    @ViewBuilder
-    private func uikitContent(for item: MediaItem) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Spacer(minLength: 0)
-            // Zero-height recede target (identical to the SwiftUI path).
-            Color.clear
-                .frame(height: 0)
-                .id(Self.recedeAnchorID)
-            // Focus/accessibility overlay only — the UIKit view draws the pills.
-            actionRow(for: item, drawPills: false)
-            // Reserve the paging-dots footprint so the focus region sits at the same
-            // height as the SwiftUI path (the UIKit view draws the real dots).
-            Color.clear
-                .frame(maxWidth: .infinity)
-                .frame(height: Self.uikitDotsReserve)
-        }
-        .frame(height: HomeHeroLayout.screenHeight - Self.contentBottomInset)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // The imperative UIKit visual layer fills the same column frame, bottom-
-        // anchored, behind the focus overlay. Instantiated only on this gated path,
-        // so the standard SwiftUI path pays nothing.
-        .background(alignment: .bottomLeading) {
-            HeroForegroundRepresentable(
-                model: foregroundModel(for: item),
-                neighbours: foregroundNeighbours(for: item),
-                logoFallbacks: foregroundLogoFallbacks(for: item),
-                logoReferences: foregroundLogoReferences(for: item),
-                backgroundSample: displayedArtwork?.sample(for: item.id),
-                metadataVisible: metadataVisible,
-                logoSize: settings.logoSize,
-                textSize: settings.textSize,
-                width: HomeHeroLayout.screenWidth,
-                height: HomeHeroLayout.screenHeight - Self.contentBottomInset
-            )
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
-        .padding(.trailing, PlozzTheme.Metrics.screenPadding)
-        .padding(.leading, PlozzTheme.Metrics.heroLeadingPadding + navigationContentInset)
-        // Lower the whole UIKit column (visuals + focus overlay) by `uikitContentDrop`.
+        // Lower the whole column (visuals + pills) by `uikitContentDrop`.
         .padding(.bottom, Self.contentBottomInset - Self.uikitContentDrop)
+        // Lets SwiftUI treat the UIKit pills as this view's focus, so the default
+        // focus below can land on them.
+        .focused($foregroundFocused)
+        // Initial Home focus lands on the hero, not a Continue Watching card.
+        .prefersDefaultFocus(true, in: focusScope)
+        .id(Self.actionRowFocusID)
+        .preloadDetailBackdropOnFocus(for: current, isFocused: heroFocused && isFrontmost)
+        .onChange(of: receded) { _, isReceded in
+            if isReceded { pauseWhileReceded() } else { resumeFromRecede() }
+        }
+        .onDisappear {
+            pinnedSidebarInteraction?.setHeroFocused(false)
+        }
         .modifier(HomeVerticalMotion(y: receded ? -Self.recedeContentLift : 0))
-    }
-
-    /// SwiftUI-only counterpart to `HeroForegroundModelBuilder.titleText`: same
-    /// parentTitle → masked → item.title precedence, but composes a `Text`
-    /// directly so the masked branch (our own copy) stays a live-translatable
-    /// resource instead of being flattened through `Text(String)` — which
-    /// always renders verbatim and would otherwise permanently freeze the
-    /// mask in English. Not used by the imperative UIKit foreground, which
-    /// can only hold a plain `String` (see `foregroundModel(for:...)` below).
-    private func heroTitleText(for item: MediaItem, hideText: Bool) -> Text {
-        if item.kind == .episode,
-           let parentTitle = item.parentTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !parentTitle.isEmpty {
-            return Text(verbatim: parentTitle)
-        }
-        if hideText {
-            return Text(spoilerSettings.maskedTitle(for: item))
-        }
-        return Text(verbatim: item.title)
     }
 
     /// Builds the current slide's ``HeroForegroundModel`` from the view's already
-    /// resolved focus/selection/CTA/spoiler state (pure mapping lives in
+    /// resolved CTA/spoiler state (pure mapping lives in
     /// ``HeroForegroundModelBuilder``).
     private func foregroundModel(for item: MediaItem) -> HeroForegroundModel {
         // paging pill can render the "time until next page" gauge; neighbours are
         // built neutral and re-applied with the real dwell when they front.
         foregroundModel(
             for: item,
-            selectedIndex: selectedButton,
-            heroFocused: focus != nil,
             dotsAutoAdvance: settings.autoAdvance && items.count > 1,
             dotsDwellStart: dwellStart,
             dotsDwellDuration: currentDwellDuration,
@@ -1234,8 +913,6 @@ struct HomeHeroView: View {
 
     private func foregroundModel(
         for item: MediaItem,
-        selectedIndex: Int,
-        heroFocused: Bool,
         dotsAutoAdvance: Bool = false,
         dotsDwellStart: Date? = nil,
         dotsDwellDuration: Double = 0,
@@ -1247,7 +924,7 @@ struct HomeHeroView: View {
         // `Text`/`LocalizedStringResource`. Resolving with the SwiftUI `locale`
         // environment (not the device's `Locale.current`) here is safe, not the
         // eager-resolution anti-pattern: `foregroundModel(for:)` is only ever
-        // called from this view's own `body`/`uikitContent`, which re-evaluates
+        // called from this view's own `body`/`content(for:)`, which re-evaluates
         // whenever that environment value changes (see `AppLanguageScope`), so
         // this resolves fresh on every relevant render rather than being cached
         // once and frozen.
@@ -1280,8 +957,6 @@ struct HomeHeroView: View {
             ratingPreferences: settings.ratingPreferences,
             maskedTitle: masked,
             pillInputs: foregroundPillInputs(for: item),
-            selectedIndex: selectedIndex,
-            heroFocused: heroFocused,
             slideCount: items.count,
             slideIndex: slideIndex,
             scheduleLine: resolvedScheduleLine,
@@ -1341,15 +1016,12 @@ struct HomeHeroView: View {
                     kind: .watchlist,
                     isFavorite: isWatchlistedForHero(item)
                 )
-            case .next:
-                return .init(kind: .next)
             }
         }
     }
 
     /// Bounded neighbour models (previous / next slide) handed to the coordinator to
-    /// prepare off-transition so a page finds the model + logo already warm. Built
-    /// with a neutral selection/focus (the real page re-applies the correct one).
+    /// prepare off-transition so a page finds the model + logo already warm.
     ///
     /// Reused while the window's titles and locale are unchanged. The hero body
     /// re-runs on every focus move, recede and dwell change, and rebuilding two
@@ -1371,7 +1043,7 @@ struct HomeHeroView: View {
         var result: [HeroForegroundModel] = []
         for neighbour in window where !seen.contains(neighbour) {
             seen.insert(neighbour)
-            result.append(foregroundModel(for: items[neighbour], selectedIndex: 0, heroFocused: false))
+            result.append(foregroundModel(for: items[neighbour]))
         }
         neighbourModels.store(result, for: key)
         return result
@@ -1414,393 +1086,100 @@ struct HomeHeroView: View {
         return result
     }
 
-    /// The air-schedule badge above the logo. Mirrors the detail hero's badge so a
-    /// series reads the same on both screens; this is the SwiftUI fallback path,
-    /// with the UIKit renderer drawing its own flat equivalent.
-    private func scheduleBadge(_ text: LocalizedStringResource) -> some View {
-        HeroScheduleBadge(text: text)
+    // MARK: - Focus and actions
+
+    /// The foreground's callbacks. Built per body pass; the closures read `@State`
+    /// through its storage, so a press between two renders still sees the slide
+    /// that is actually in front.
+    private var foregroundEvents: HeroForegroundEvents {
+        HeroForegroundEvents(
+            activate: { activate($0) },
+            playPause: {
+                noteInteraction()
+                if let item = current, primaryButton(for: item) == .play {
+                    trailerController.stopHero()
+                    onPlay(item)
+                }
+            },
+            edge: { handleEdge($0) },
+            interaction: { noteInteraction() },
+            focusChanged: { focused, heading in heroFocusChanged(focused, heading: heading) },
+            claimFocus: {
+                guard isFrontmost else { return false }
+                foregroundFocused = true
+                return true
+            }
+        )
     }
 
-    private func metadataLine(for item: MediaItem) -> some View {
-        HeroMetadataLine(item: item)
-    }
-
-    // MARK: - Action row + focus/paging
-
-    @ViewBuilder
-    private func actionRow(for item: MediaItem, drawPills: Bool = true) -> some View {
-        let itemButtons = buttons(for: item)
-        // Named VoiceOver actions for *every* visible pill (the row is a single
-        // a11y element, so without these only the highlighted action would be
-        // reachable). Order matches the visible pills.
-        let a11yActions: [(LocalizedStringResource, () -> Void)] = itemButtons.map { button in
-            switch button {
-            case .play: return (item.resumeProgressFraction != nil ? "Resume" : "Play", { onPlay(item) })
-            case .request: return (requestTitle(for: item), { performRequest(for: item) })
-            case .downloadStatus: return (downloadStatusText(for: item), {})
-            // Opens the SHOW, not the episode. "More info" about episode 4 of a
-            // series the viewer is midway through is the series — that is where
-            // the seasons, the cast and the rest of it live.
-            case .moreInfo: return ("More Info", { onSelect(item.watchlistSubject) })
-            case .watchlist:
-                let fav = isWatchlistedForHero(item)
-                return (fav ? "Remove from Watchlist" : "Add to Watchlist", { performWatchlist(for: item) })
-            case .next: return ("Next", { advanceForward() })
-            }
-        }
-        // spacing: 0 so the 1pt invisible focus guard below adds no gap ahead of the
-        // pills — otherwise the guard + gap pushed the whole button row right of the
-        // logo/metadata. The pills keep their own 24pt spacing in the inner HStack.
-        HStack(spacing: 0) {
-            // Invisible directional target, just left of the pills and inside the
-            // same focus section. Native focus movement preserves the familiar tvOS
-            // click sound. The UIKit surface tracks physical press phases so only
-            // the first move from one held press is handled; touch-surface swipes
-            // still pass through normally. It steps aside only at the native
-            // Sidebar escape spot; Pinned Sidebar opening stays explicit.
-            //
-            // Crucially the inactivation is gated on `focus == .row`, NOT on
-            // `allowsNativeSidebarEscape` alone: `handleLeft()` can move to the
-            // native escape spot in the same transaction that bounces guard→row. If
-            // the guard became non-focusable while still focused, the focus engine
-            // could relocate to a lower row or strand focus.
-            Color.clear
-                .frame(width: 1, height: 1)
-                .focusable(leftGuardActive)
-                .focused($focus, equals: .leftGuard)
-                .accessibilityHidden(true)
-
-            // The VISIBLE pills. Non-focusable and free to fade with the rest of
-            // the metadata on a page — exactly like the Apple TV hero, where the
-            // buttons vanish on press and reappear on landing. Focus is NOT here
-            // (it lives on the overlay below), so fading these to opacity 0 can't
-            // drop focus or shift the scroll.
-            //
-            // The button COUNT can differ per slide (e.g. a Continue Watching slide
-            // has no Watchlist action), which once caused an intermittent focus
-            // drop when paging between different-count slides. That is fixed by
-            // `restoreFocusAfterPage()` (a next-tick focus reassert), NOT by
-            // stabilising this row — and the pills are hidden (opacity 0, snapped)
-            // during the ~280ms page window anyway, so a one-tick focus/highlight
-            // blip here is invisible. So this stays the simple, direct row.
-            pillsBase(for: item, itemButtons: itemButtons, drawPills: drawPills)
-            // ── The single hero focus target: an always-opaque, invisible SwiftUI
-            // leaf layered *over* the pills. Because `.overlay` is applied after the
-            // pills' `.opacity`, it stays fully opaque and focusable even while the
-            // pills fade to 0 — so focus (and therefore the scroll position) is
-            // pinned throughout a page, while the buttons still disappear and
-            // reappear. There is NO per-button `@FocusState`.
-            //
-            // A passive UIKit recognizer attached to the window observes physical
-            // Left/Right begin/end phases without becoming the focus leaf or
-            // recognizing/cancelling the gesture. The guards below use that
-            // lifecycle to accept only the first move from one held click while
-            // native focus feedback and indirect-touch swipes remain unchanged.
-            //
-            // Select is `.onTapGesture` (the select-press fires the tap) — the SAME
-            // pattern the Continue Watching cards use (`focusableCard`), NOT a
-            // `Button` (a `Button` paints tvOS's white focus platter over the
-            // backdrop, which `.focusEffectDisabled()` can't fully remove). Crucially
-            // `.onMoveCommand` is NOT attached here: on tvOS a move-command handler on
-            // the same view as `.onTapGesture` intercepts the select press, so the
-            // tap only landed intermittently (Select "needed five presses"). Moving
-            // the move handling up to the `.focusSection()` container (Apple's
-            // recommended placement) leaves this leaf a clean tap target. ──
-            .overlay {
-                Color.clear
-                    .background {
-                        HeroDirectionalPressMonitor(
-                            capturesLeft: !allowsNativeSidebarEscape,
-                            gate: directionalPressGate,
-                            // Reliable Select activation. Gated to when the hero holds
-                            // focus (so a Select on a detail page / another tab is
-                            // ignored) and de-duped inside `activateSelected` against
-                            // the `.onTapGesture` path, so a healthy press activates
-                            // exactly once while a swallowed tap (the focus-desync
-                            // dead state) still fires here.
-                            onSelect: { if focus != nil { activateSelected() } }
-                        )
-                    }
-                    .contentShape(Rectangle())
-                    .focusable(true)
-                    .focused($focus, equals: .row)
-                    // Initial Home focus lands on the hero (not a CW card).
-                    .prefersDefaultFocus(true, in: focusScope)
-                    // No system focus platter on the clear overlay — we draw our own
-                    // selection styling via `selectedButton`.
-                    .focusEffectDisabled()
-                    // Remote **Select** activates the selected pill. Stands alone
-                    // (no `.onMoveCommand` here) so the tap can't be intercepted.
-                    .onTapGesture { activateSelected() }
-                    // Play/Pause is a shortcut straight to playback.
-                    .onPlayPauseCommand {
-                        noteInteraction()
-                        if let item = current, primaryButton(for: item) == .play {
-                            onPlay(item)
-                        }
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityIdentifier(Self.actionRowFocusID)
-                    .accessibilityLabel(accessibilityLabel(for: item))
-                    .accessibilityAction { activateSelected() }
-                    .modifier(HeroActionAccessibility(actions: a11yActions))
-            }
-            // Pin a *constant* identity so focus is retained across a page (item
-            // id changes). Never key this on the item id — that would drop focus.
-            .id(Self.actionRowFocusID)
-
-            // Invisible directional target just right of the pills. Physical clicks
-            // retain native focus feedback and are de-repeated by the press gate;
-            // touch-surface swipes route through the same `handleRight()` path.
-            // Unlike the left guard it is always focusable: Right never escapes.
-            Color.clear
-                .frame(width: 1, height: 1)
-                .focusable(true)
-                .focused($focus, equals: .rightGuard)
-                .accessibilityHidden(true)
-        }
-        .padding(.top, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // Always-on (never toggled): a lone focusable under a *conditional* focus
-        // section churned structure on every interior move on the first slide,
-        // which jostled the scroll position. Constant confinement keeps Down going
-        // to Continue Watching and Right paging cleanly.
-        .focusSection()
-        // Move handling lives HERE, on the section container, not on the focus
-        // target leaf. Apple's guidance is to put `.onMoveCommand` on a container
-        // rather than the focused element, and doing so is what lets the leaf's
-        // `.onTapGesture` (Select) fire reliably — a move handler on the same view
-        // was intercepting the select press. Its ONLY job now is to pause the
-        // auto-advance on any directional input (see `handleMove`): all
-        // paging/interior behaviour is driven by the invisible Left/Right guards,
-        // Up is left to the system, and the Down-recede is driven by the page
-        // scroll in `HomeView` — not by this handler.
-        .onMoveCommand { _ in handleMove() }
-        .preloadDetailBackdropOnFocus(for: current, isFocused: focus != nil && isFrontmost)
-        .onChange(of: focus) { old, new in
-            pinnedSidebarInteraction?.setHeroFocused(new != nil)
-            let oldName = old.map { "\($0)" } ?? "nil"
-            let newName = new.map { "\($0)" } ?? "nil"
-            HeroFocusDiagnostics.emit("focus \(oldName)->\(newName) | \(hfState())")
-            switch new {
-            case .leftGuard:
-                if directionalPressGate.shouldHandle(.left) {
-                    handleLeft()
-                } else {
-                    HeroFocusDiagnostics.emit("suppressed repeated physical Left")
-                    noteInteraction()
-                    focus = .row
-                }
-            case .rightGuard:
-                if directionalPressGate.shouldHandle(.right) {
-                    handleRight()
-                } else {
-                    HeroFocusDiagnostics.emit("suppressed repeated physical Right")
-                    noteInteraction()
-                    focus = .row
-                }
-            case .row:
-                // Focus arriving into the hero from *outside* (a row below / the
-                // tab bar): snap back to full-screen and scroll the page to the top.
-                // Auto-advance pause/resume is NOT driven from here — it's keyed off
-                // the `receded` state (see `.onChange(of: receded)` below), which is
-                // the reliable "focus moved DOWN to Continue Watching" signal.
-                if old == nil {
-                    HeroFocusDiagnostics.emit("focus ENTER hero (row, from outside) | \(hfState())")
-                    if let item = current {
-                        selectedButton = min(selectedButton, max(0, buttons(for: item).count - 1))
-                    }
-                    onFocusGained()
-                }
-            case .none:
-                // Focus left the hero (down to a row, up to the tab bar, or out to
-                // the sidebar). Nothing to do here: the auto-advance pause is keyed
-                // off `receded` (down-only), and the recede itself is driven by the
-                // page scroll in `HomeView`.
-                HeroFocusDiagnostics.emit("focus LEFT hero (->nil) from \(oldName) | \(hfState())")
-            }
-        }
-        // Pause the auto-advance whenever the hero is RECEDED — i.e. focus moved
-        // DOWN onto Continue Watching (the page scrolled past the recede threshold;
-        // see `HomeView`). Matches the Apple TV app: the hero stops rotating while
-        // you browse the row beneath it, and resumes (with a fresh dwell) when
-        // focus returns to the hero. Moving focus UP to the tab bar (or LEFT to the
-        // sidebar) does NOT scroll the page down, so `receded` stays false there and
-        // the carousel keeps playing — exactly the requested behavior.
-        .onChange(of: receded) { _, isReceded in
-            if isReceded { pauseWhileReceded() } else { resumeFromRecede() }
-        }
-        .onDisappear {
-            pinnedSidebarInteraction?.setHeroFocused(false)
-        }
-    }
-
-    /// Whether Left should fall through to the system so the native Sidebar opens.
-    /// The custom Pinned Sidebar stays inside the guard and is opened explicitly.
-    private var allowsNativeSidebarEscape: Bool {
+    /// Left at the first pill hands focus to the native sidebar on the first
+    /// slide; everywhere else it pages back (or opens the pinned sidebar).
+    private var escapesLeftAtFirstPill: Bool {
         HeroCarouselFocus.resolve(
             direction: .left,
             itemIndex: index,
             itemCount: items.count,
-            focusedButton: selectedButton,
+            focusedButton: 0,
             buttonCount: max(1, current.map { buttons(for: $0).count } ?? 1),
             navigationStyle: navigationStyle
         ) == .escape
     }
 
-    /// Whether the invisible left swipe fallback should be focusable. It captures
-    /// a focus-engine move so the hero handles it internally instead of escaping
-    /// to the sidebar. It steps aside (non-focusable) *only* at the escape spot AND
-    /// while focus is resting on the row — never while the guard itself holds
-    /// focus. Gating on `focus == .row` keeps the guard→row bounce race-free.
-    private var leftGuardActive: Bool {
-        !(allowsNativeSidebarEscape && focus == .row)
-    }
-
-    /// The container-level move handler. Its ONLY job is to pause the auto-advance
-    /// on any directional input so the carousel can't page out from under the user.
-    /// It does NOT resolve paging for any direction: Left/Right clicks use the
-    /// UIKit press surface, touch swipes use the invisible focus fallbacks, Up is
-    /// left to the system, and Down-recede is driven by the page scroll in
-    /// `HomeView`. It only observes (never consumes) the move.
-    private func handleMove() {
-        noteInteraction()
-    }
-
-    /// One-line snapshot of the hero's focus/paging state for
-    /// ``HeroFocusDiagnostics``. Reads only view state (no mutation), so it is
-    /// safe to call from any focus/paging site. Temporary debugging aid.
-    private func hfState() -> String {   // l10n:content — hero-runtime diagnostic string
-        let btnCount = current.map { buttons(for: $0).count } ?? 0
-        let focusName = focus.map { "\($0)" } ?? "nil"
-        return "idx=\(index)/\(items.count) selBtn=\(selectedButton)/\(btnCount) "
-            + "focus=\(focusName) leftGuardActive=\(leftGuardActive) "
-            + "sidebarEscape=\(allowsNativeSidebarEscape) metaVisible=\(metadataVisible)"
-    }
-
-    /// Resolves one discrete Left click from the UIKit surface or a swipe captured
-    /// by the invisible left fallback, then ensures focus is on the pill row.
-    /// Interior moves adjust `selectedButton`; `.advance` pages backward. The one
-    /// `.escape` case (first item, left-most button, sidebar) cannot arrive from a
-    /// swipe because the guard is non-focusable there; Left falls through instead.
-    private func handleLeft() {
-        noteInteraction()
-        defer { focus = .row }
-        guard let item = current else { return }
+    /// A move past the first or last pill. Right pages forward from the last pill,
+    /// Left pages back from the first; the focused pill stays where it is.
+    private func handleEdge(_ direction: HeroFocusDirection) -> Bool {
+        guard let item = current else { return false }
         let buttonCount = buttons(for: item).count
-        selectedButton = min(selectedButton, max(0, buttonCount - 1))
         let outcome = HeroCarouselFocus.resolve(
-            direction: .left,
+            direction: direction,
             itemIndex: index,
             itemCount: items.count,
-            focusedButton: selectedButton,
+            focusedButton: direction == .left ? 0 : max(0, buttonCount - 1),
             buttonCount: buttonCount,
             navigationStyle: navigationStyle
         )
-        HeroFocusDiagnostics.emit("handleLeft outcome=\(outcome) | \(hfState())")
+        HeroFocusDiagnostics.emit("edge \(direction) outcome=\(outcome) idx=\(index)/\(items.count)")
         switch outcome {
-        case let .moveButton(newIndex):
-            selectedButton = newIndex
-        case let .advance(toItem, keepButton):
-            page(to: toItem, keepButton: keepButton, forward: false)
-            // (Focus recovery is handled centrally in `page(to:)`.)
+        case let .advance(toItem, _):
+            page(to: toItem, forward: direction == .right)
+            return true
         case .openPinnedSidebar:
             pinnedSidebarInteraction?.requestOpen()
-        case .escape, .blocked:
-            break
+            return true
+        case .moveButton, .escape, .blocked:
+            return false
         }
     }
 
-    /// Backstop for the intermittent focus drop on a page that changes the hero's
-    /// action-button count. `handleLeft()`/`handleRight()` re-pin focus with the
-    /// synchronous `defer { focus = .row }` above — but that runs from INSIDE
-    /// `focus`'s own `onChange` (we're handling the guard bounce) and in the SAME
-    /// transaction that `page()` swaps `index` (new pill content). Device tracing
-    /// (`PLZHFOCUS`) proved that on a page where the button count changes the extra
-    /// layout work makes the tvOS focus engine DROP that reassignment: focus lands
-    /// on `nil` and is stranded ~1–2s until the next press, then returns on the
-    /// wrong control (the reported bug). Reasserting `.row` on the NEXT runloop
-    /// tick — after SwiftUI has committed the paged layout — lands reliably because
-    /// it no longer races the content change. It only fires if focus was actually
-    /// dropped (`== nil`) AND no newer page has happened since (`advanceToken`
-    /// unchanged), and is a no-op on the ~80% of pages where the synchronous re-pin
-    /// already worked (so it adds no flicker there). Note the `advanceToken` guard
-    /// rules out a *newer page* superseding this reassert; it does NOT by itself
-    /// distinguish an engine-dropped re-pin from a deliberate non-paging exit (Down
-    /// to a row / Up to the tab bar / Left to the sidebar all also leave
-    /// `focus == nil`). We rely on timing instead: this block drains on the very
-    /// next main-runloop turn — well before a second physical remote press can
-    /// arrive (~100ms+) — so a deliberate exit that happens *after* the restore
-    /// still wins normally. (A multi-frame main-thread stall could theoretically
-    /// let a second press land first; not observed on device.)
-    private func restoreFocusAfterPage() {
-        let token = advanceToken
-        DispatchQueue.main.async {
-            guard focus == nil, token == advanceToken else { return }
-            HeroFocusDiagnostics.emit("restoreFocusAfterPage: focus was dropped, reasserting .row | \(hfState())")
-            focus = .row
+    private func heroFocusChanged(_ focused: Bool, heading: UIFocusHeading) {
+        heroFocused = focused
+        pinnedSidebarInteraction?.setHeroFocused(focused)
+        if focused {
+            // Focus arriving from outside (a row below, the tab bar, the sidebar):
+            // Home snaps back to the full-screen hero and scrolls to the top.
+            onFocusGained()
+        } else if heading.contains(.down) {
+            // Leaving downward starts the recede in the same frame the focus
+            // engine starts scrolling, instead of when the scroll later crosses
+            // Home's threshold.
+            onFocusLeftDown()
         }
     }
 
-    /// Resolves one discrete Right click from the UIKit surface or a swipe captured
-    /// by the invisible right fallback, then ensures focus is on the pill row.
-    /// Interior moves adjust `selectedButton`; `.advance` pages forward. Right
-    /// never escapes, so there is no fall-through case.
-    private func handleRight() {
-        noteInteraction()
-        defer { focus = .row }
-        guard let item = current else { return }
-        let buttonCount = buttons(for: item).count
-        selectedButton = min(selectedButton, max(0, buttonCount - 1))
-        let outcome = HeroCarouselFocus.resolve(
-            direction: .right,
-            itemIndex: index,
-            itemCount: items.count,
-            focusedButton: selectedButton,
-            buttonCount: buttonCount,
-            navigationStyle: navigationStyle
-        )
-        HeroFocusDiagnostics.emit("handleRight outcome=\(outcome) | \(hfState())")
-        switch outcome {
-        case let .moveButton(newIndex):
-            selectedButton = newIndex
-        case let .advance(toItem, keepButton):
-            page(to: toItem, keepButton: keepButton, forward: true)
-            // (Focus recovery is handled centrally in `page(to:)`.)
-        case .escape, .openPinnedSidebar, .blocked:
-            break
-        }
-    }
-
-    /// Fires the currently-selected pill's action (remote Select / Play-Pause).
-    /// Resolves the live slide and clamps the index defensively so a stale
-    /// selection can never dispatch the wrong (or an out-of-range) action.
-    ///
-    /// Called from BOTH the SwiftUI `.onTapGesture` and the window-level press
-    /// recognizer's Select route. They fire within a frame of each other on a
-    /// healthy press, so a short de-dupe window collapses the two into a single
-    /// activation; in the focus-desync dead state only the recognizer path fires,
-    /// and it passes the de-dupe because the tap never ran.
-    private func activateSelected() {
-        let now = ProcessInfo.processInfo.systemUptime
-        guard now - lastActivateAt > 0.2 else { return }
-        lastActivateAt = now
+    /// Remote Select on a pill.
+    private func activate(_ kind: HeroForegroundModel.Pill.Kind) {
         noteInteraction()
         guard let item = current else { return }
-        let itemButtons = buttons(for: item)
-        let idx = min(selectedButton, max(0, itemButtons.count - 1))
-        guard itemButtons.indices.contains(idx) else { return }
-        switch itemButtons[idx] {
+        switch kind {
         case .play:
             trailerController.stopHero()
             onPlay(item)
         case .request: performRequest(for: item)
         case .downloadStatus: break // informational status pill — no action
-        // Same destination as the SwiftUI pill path above: the show.
+        // "More info" about episode 4 of a series is the series: that is where the
+        // seasons, the cast and the rest of it live.
         case .moreInfo: onSelect(item.watchlistSubject)
         case .watchlist: performWatchlist(for: item)
-        case .next: advanceForward()
         }
     }
 
@@ -2007,203 +1386,6 @@ struct HomeHeroView: View {
         return seasonLookupFailures.contains(key) ? "arrow.clockwise" : "clock"
     }
 
-    /// Spoken/label text for a request/download status pill.
-    private func downloadStatusText(for item: MediaItem) -> LocalizedStringResource {
-        switch heroCTA(for: item) {
-        case let .downloading(progress): return "Downloading \(Int((progress * 100).rounded()))%"
-        default: return heroCTA(for: item).requestStatusTitle
-        }
-    }
-
-    /// Inner label of the request/download status pill: a download glyph plus a
-    /// live progress bar + percentage while actually fetching (reusing the shared
-    /// resume capsule so it matches the Play button's bar), or a plain "Requested"
-    /// status for a request that isn't downloading yet.
-    @ViewBuilder
-    private func downloadStatusLabel(for item: MediaItem, selected: Bool) -> some View {
-        switch heroCTA(for: item) {
-        case let .downloading(progress):
-            HStack(spacing: 16) {
-                Image(systemName: "arrow.down.circle")
-                ResumeProgressCapsule(progress: progress, onLight: selected || colorScheme == .light, floorsMinimumFill: false)
-                Text("\(Int((progress * 100).rounded()))%")
-                    .lineLimit(1)
-            }
-            .font(.system(size: 28, weight: .semibold))
-        default:
-            Label(
-                heroCTA(for: item).requestStatusTitle,
-                systemImage: heroCTA(for: item).requestStatusSystemImage
-            )
-                .font(.system(size: 28, weight: .semibold))
-        }
-    }
-
-    /// VoiceOver label for the row's currently-selected action.
-    ///
-    /// `Text` rather than a resource: the media title is content and the action
-    /// name is copy, so a single resource would be the key "%@, %@" — nothing to
-    /// translate — and resolving the name eagerly to splice it in would freeze it
-    /// at the language in effect when the row was built.
-    private func accessibilityLabel(for item: MediaItem) -> Text {
-        let itemButtons = buttons(for: item)
-        guard itemButtons.indices.contains(selectedButton) else { return Text(verbatim: item.title) }
-        let name: LocalizedStringResource
-        switch itemButtons[selectedButton] {
-        case .play: name = item.resumeProgressFraction != nil ? "Resume" : "Play"
-        case .request: name = requestTitle(for: item)
-        case .downloadStatus: name = downloadStatusText(for: item)
-        case .moreInfo: name = "More Info"
-        case .watchlist:
-            name = isWatchlistedForHero(item)
-                ? "Remove from Watchlist"
-                : "Add to Watchlist"
-        case .next: name = "Next"
-        }
-        return Text(verbatim: "\(item.title), ") + Text(name)
-    }
-
-    /// Adds a named VoiceOver action per visible pill so every hero action stays
-    /// reachable even though the row is a single accessibility element.
-    private struct HeroActionAccessibility: ViewModifier {
-        let actions: [(LocalizedStringResource, () -> Void)]
-        func body(content: Content) -> some View {
-            actions.reduce(AnyView(content)) { view, entry in
-                AnyView(view.accessibilityAction(named: Text(entry.0), entry.1))
-            }
-        }
-    }
-
-    /// One hero action rendered as a **non-focusable** glass pill. Selection is
-    /// ours (`selected`), not the focus engine's — the whole row is a single focus
-    /// target — so the bright "focused" treatment rides `selectedButton` with no
-    /// focus-engine round trip. Mirrors the detail hero's Liquid Glass look: a
-    /// translucent glass pill normally; the bright white fill + dark glyph + lift
-    /// when it's the selected pill and the hero holds focus.
-    @ViewBuilder
-    private func heroButtonVisual(_ button: HeroButton, for item: MediaItem, selected: Bool) -> some View {
-        switch button {
-        case .play:
-            heroPill(selected: selected) {
-                PlayResumeButtonLabel(
-                    title: item.resumeProgressFraction != nil ? "Resume" : item.playActionTitle,
-                    progress: item.resumeProgressFraction,
-                    remainingText: item.resumeRemainingText,
-                    seasonEpisodeText: HeroForegroundModelBuilder.seasonEpisodeButtonText(for: item),
-                    onLight: selected || colorScheme == .light,
-                    separatesEpisodeText: item.startsWatching
-                )
-                .font(.system(size: 28, weight: .semibold))
-            }
-        case .request:
-            heroPill(selected: selected, prominent: isProminentPrimary(.request, for: item)) {
-                Label(requestTitle(for: item), systemImage: requestSystemImage(for: item))
-                    .font(.system(size: 28, weight: .semibold))
-            }
-        case .downloadStatus:
-            heroPill(selected: selected, prominent: isProminentPrimary(.downloadStatus, for: item)) {
-                downloadStatusLabel(for: item, selected: selected)
-            }
-        case .moreInfo:
-            let prominent = isProminentPrimary(.moreInfo, for: item)
-            heroPill(selected: selected, prominent: prominent) {
-                if prominent {
-                    Label("More Info", systemImage: "info.circle")
-                        .font(.system(size: 28, weight: .semibold))
-                } else {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 28, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                }
-            }
-        case .watchlist:
-            let isWatchlisted = isWatchlistedForHero(item)
-            heroPill(selected: selected) {
-                Image(systemName: isWatchlisted ? "bookmark.fill" : "bookmark")
-                    .font(.system(size: 28, weight: .semibold))
-                    .symbolEffect(.bounce, value: isWatchlisted)
-                    .frame(width: 34, height: 34)
-            }
-            .accessibilityLabel(
-                isWatchlisted ? "Remove from Watchlist" : "Add to Watchlist"
-            )
-            .accessibilityValue(
-                isWatchlisted ? "In Watchlist" : "Not in Watchlist"
-            )
-        case .next:
-            heroPill(selected: selected) {
-                Image(systemName: "chevron.forward")
-                    .font(.system(size: 28, weight: .semibold))
-                    .frame(width: 34, height: 34)
-            }
-        }
-    }
-
-    /// The pill chrome shared by every hero action. Identity-stable (only
-    /// animatable properties vary with `selected`), so nothing here can disturb
-    /// focus. Every idle pill is the same translucent glass; the selected pill (when
-    /// the hero holds focus) gets the bright white fill + dark glyph + lift.
-    /// Colour/fill snap instantly (no comet trail); only the scale/shadow lift
-    /// animates as selection moves.
-    @ViewBuilder
-    private func heroPill<Content: View>(
-        selected: Bool,
-        prominent: Bool = false,
-        @ViewBuilder _ label: () -> Content
-    ) -> some View {
-        let shape = Capsule(style: .continuous)
-        // tvOS: only the *focused* (selected) pill goes bright white — `prominent`
-        // no longer forces an always-lit fill, because focus alone marks the active
-        // button. The parameter is kept so callers still drive the More Info label.
-        let bright = selected
-        // Glyph/label tint. When focused the pill is a bright WHITE platter, so the
-        // glyph is black. When idle it sits on Liquid Glass — which renders LIGHT
-        // (frosted) in light mode and dark in dark mode — so the glyph must follow
-        // the appearance: dark ink in light mode, white in dark mode. (Forcing white
-        // unconditionally made idle pills white-on-light = invisible in light mode;
-        // the frosted glass lightens whatever art is behind it, so the dark backdrop
-        // doesn't rescue it.) This also matches the Play button's `onLight` flag, so
-        // the resume progress bar and its glyph/text now flip together.
-        let idleTint: Color = colorScheme == .light ? .black : .white
-        label()
-            .foregroundStyle(bright ? Color.black : idleTint)
-            .transaction { $0.animation = nil }
-            .padding(.horizontal, 30)
-            .padding(.vertical, 18)
-            .background {
-                ZStack {
-                    heroPillIdleBackground(shape: shape)
-                        .opacity(bright ? 0 : 1)
-                    shape.fill(.white).opacity(bright ? 1 : 0)
-                }
-                .transaction { $0.animation = nil }
-            }
-            .clipShape(shape)
-            .scaleEffect(selected ? 1.06 : 1.0)
-            .shadow(color: .black.opacity(selected ? 0.30 : 0), radius: selected ? 14 : 0, y: selected ? 8 : 0)
-            .animation(.easeOut(duration: 0.16), value: selected)
-    }
-
-    @ViewBuilder
-    private func heroPillIdleBackground(shape: Capsule) -> some View {
-        if HeroForegroundConfig.useSwiftUIFlatChrome {
-            shape
-                .fill(Color(uiColor: HeroForegroundGlass.flatFill()))
-                .overlay {
-                    shape.stroke(
-                        Color(uiColor: HeroForegroundGlass.flatBorder()),
-                        lineWidth: HeroForegroundGlass.borderWidth
-                    )
-                }
-        } else if #available(tvOS 26.0, *) {
-            // Liquid Glass for every idle pill.
-            shape.fill(.clear)
-                .glassEffect(.regular, in: shape)
-        } else {
-            shape.fill(.ultraThinMaterial)
-        }
-    }
-
     /// Fronts `toItem` and restarts the auto-advance dwell. Callers only ever page
     /// by ±1 (Right/Left/chevron/auto-advance). This is now purely a *state* change:
     /// updating `index` swaps the fronted slide's id / candidate URLs, and the
@@ -2211,30 +1393,20 @@ struct HomeHeroView: View {
     /// to the new art on its own. There is no SwiftUI backdrop animation here at all
     /// — that is the whole point of the redesign. `isForward` is recorded into
     /// `lastPageForward` so the wipe enters from the correct edge.
-    private func page(to toItem: Int, keepButton: Int, forward isForward: Bool) {
+    private func page(to toItem: Int, forward isForward: Bool) {
         guard items.indices.contains(toItem), toItem != index else {
-            HeroFocusDiagnostics.emit("page IGNORED to=\(toItem) keepButton=\(keepButton) forward=\(isForward) | \(hfState())")
+            HeroFocusDiagnostics.emit("page IGNORED to=\(toItem) forward=\(isForward) idx=\(index)")
             return
         }
-        HeroFocusDiagnostics.emit("page BEGIN from=\(index) to=\(toItem) keepButton=\(keepButton) forward=\(isForward) | \(hfState())")
-        // Whether the hero currently holds focus (row leaf or a directional guard).
-        // A page that changes the action-button count can make the tvOS focus engine
-        // DROP focus to `nil` (see `restoreFocusAfterPage`); we reassert `.row` on the
-        // next tick — but ONLY when the hero already had focus, so a background
-        // auto-advance while the user is browsing Continue Watching below never yanks
-        // focus back up to the hero.
-        let heroWasFocused = focus != nil
+        HeroFocusDiagnostics.emit("page from=\(index) to=\(toItem) forward=\(isForward)")
         // Perf marker (PLZPERF stream only): lets a capture attribute frame hitches
         // to specific slide transitions vs idle. Zero-cost unless PLZPERF_STDOUT=1.
         HomePerfDiagnostics.emitLine("TRANSITION from=\(index) to=\(toItem) forward=\(isForward)")
-        // Record the entering direction so the backdrop wipe pushes from the
-        // correct edge. Batched with `index` below into one SwiftUI update.
+        // One state change. The backdrop starts its wipe from the new slide id and
+        // direction; the foreground fades its own description on the slide change.
+        // Focus stays on the same UIKit pill throughout, so nothing re-pins it.
         lastPageForward = isForward
-
-        // Restart the metadata fade cycle: hide the outgoing show's text instantly,
-        // fade the new show's text back in once the wipe has landed.
-        beginTransition()
-
+        slideToken &+= 1
         resetTrailer(stopPlayer: true)
         pendingTrailerAdvance = false
         index = toItem
@@ -2243,17 +1415,6 @@ struct HomeHeroView: View {
         // dot opens from empty instead of flashing the outgoing dot's progress)
         // and clear any pause so the new slide counts down normally.
         restartDwell()
-        metadataVisible = false
-        selectedButton = min(keepButton, max(0, buttons(for: items[toItem]).count - 1))
-
-        // Recover focus for EVERY paging path — Left/Right, the Next chevron
-        // (`advanceForward`), and the auto-advance timer. Previously only the
-        // Left/Right handlers reasserted focus, so an auto-advance (or Next) onto a
-        // slide with a different button count could strand focus at `nil`, leaving
-        // the whole hero action row unresponsive until the user nudged focus.
-        if heroWasFocused {
-            restoreFocusAfterPage()
-        }
     }
 
     /// Begins a fresh auto-advance dwell from now: the progress gauge fills from
@@ -2384,170 +1545,15 @@ struct HomeHeroView: View {
         runEpoch &+= 1
     }
 
-    /// Pages one slide forward (wrapping), keeping focus on the destination's
-    /// chevron so repeated chevron presses / right-edge presses walk through the
-    /// carousel. Used by the chevron button and the auto-advance timer.
+    /// Pages one slide forward (wrapping). Used when a finished trailer's page
+    /// was held back by interaction or the recede.
     private func advanceForward() {
         guard items.count > 1 else { return }
-        let next = (index + 1) % items.count
-        let destinationButtons = buttons(for: items[next]).count
-        page(to: next, keepButton: destinationButtons - 1, forward: true)
+        page(to: (index + 1) % items.count, forward: true)
     }
 
-    /// Schedules the fronted show's metadata (logo/title/meta/overview/buttons) to
-    /// fade back in after a page. The text is hidden **instantly** when the page
-    /// starts (see `content(for:)`/`actionRow(for:)`) so the outgoing show's text
-    /// never lingers over the incoming art. All of it (metadata, overview, and the
-    /// action buttons) shares the single `metadataVisible` flag, so it fades in
-    /// together, part-way through the backdrop wipe rather than waiting for it to
-    /// fully land. Guarded by ``slideToken`` so a rapid second page cancels the
-    /// first page's pending fade-in.
-    private func beginTransition() {
-        slideToken &+= 1
-        let token = slideToken
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 280_000_000)
-            guard slideToken == token else { return }
-            withAnimation(.easeInOut(duration: 0.3)) { metadataVisible = true }
-            HeroFocusDiagnostics.emit("metadata fade-in (token=\(token)) | \(hfState())")
-        }
-    }
-
-    // MARK: - Paging dots
-
-    @ViewBuilder
-    private var pagingDots: some View {
-        if items.count > 1 {
-            HStack(spacing: Self.dotSpacing) {
-                // Windowed: at most `maxVisibleDots` are shown. When there are more
-                // slides than fit, the row scrolls and the dots nearest a hidden
-                // edge shrink to signal "more this way" (see `HeroPagingDots`). Keyed
-                // by the slide's real index so a scroll SLIDES the shared dots (and
-                // fades the one leaving / entering) rather than snapping.
-                ForEach(HeroPagingDots.layout(count: items.count, index: index, maxVisible: Self.maxVisibleDots, edgeShrink: Self.edgeShrinkCount)) { dot in
-                    pagingIndicator(active: dot.index == index, scale: Self.dotScale(for: dot.size))
-                }
-            }
-            // Pin the row to the dot height so its vertical centering can NEVER
-            // change. Without this, the active dot's animating frame let the HStack
-            // recompute a sub-pixel-different vertical center mid-morph, drifting the
-            // dots down a few px on every page (the reported jitter). When windowed,
-            // also pin the WIDTH: a scroll momentarily renders a 9th (entering/leaving)
-            // dot, which would otherwise widen the row and make the glass pill breathe
-            // — the fixed width holds the pill steady while the extra dot fades at the
-            // edge.
-            .frame(width: windowedRowWidth, height: Self.dotSize)
-            .padding(.top, 10)
-            // ONE coordinated morph for the whole row, keyed on the fronted slide.
-            // Both the outgoing and incoming dot (and their fills) animate in a
-            // single transaction, so there are no dueling per-dot `.animation`s whose
-            // independent interpolations nudged each dot's origin on both axes. The
-            // row width is constant while windowed (always `maxVisibleDots` fixed-pitch
-            // slots, exactly one of which is the wide pill), so the glass pill never
-            // resizes; the shrunk edge dots scale WITHIN their fixed slots.
-            .animation(.easeInOut(duration: Self.dotMorph), value: index)
-            .accessibilityHidden(true)
-        }
-    }
-
-    private static let dotSize = HeroPagingIndicatorMetrics.dotSize
-    private static let dotSpacing = HeroPagingIndicatorMetrics.dotSpacing
-    private static let activeDotWidth = HeroPagingIndicatorMetrics.activeWidth
-    /// Duration of the simultaneous dot→pill / pill→dot open/close on a page.
-    private static let dotMorph = HeroPagingIndicatorMetrics.morphDuration
-
-    /// Maximum page indicators shown at once. Beyond this the row becomes a scrolling
-    /// window with shrinking edge dots — a fixed UX cap independent of how many
-    /// titles the user lets the hero rotate through (`HeroSettings.maxItems`).
-    private static let maxVisibleDots = HeroPagingIndicatorMetrics.maxVisible
-    /// How many dots shrink on each edge that has hidden content (outermost first).
-    private static let edgeShrinkCount = HeroPagingIndicatorMetrics.edgeShrink
-
-    /// Fixed width of the windowed dot row (nil when not windowed, so the classic
-    /// row sizes naturally to its dots). Exactly `maxVisibleDots` slots: one active
-    /// pill plus the rest full-size dots, with uniform spacing. Holding this constant
-    /// keeps the glass pill from resizing when a scroll transiently renders an extra
-    /// entering/leaving dot.
-    private var windowedRowWidth: CGFloat? {
-        HeroPagingIndicatorMetrics.rowWidth(count: items.count)
-    }
-
-    /// Theme-aware ink for the paging indicators — dark in light mode, white in dark
-    /// mode — mirroring the action pills' `idleTint`. The dots sit on the same
-    /// Liquid Glass (which renders light/frosted in light mode), so hardcoded white
-    /// dots washed out in light mode; this keeps them legible in both appearances.
-    private var dotTint: Color { colorScheme == .light ? .black : .white }
-
-    /// One rendered page indicator: the slide it represents and how large to draw it
-    /// (1 = full dot/pill, <1 = a shrunk edge dot signalling more content that way).
-    /// Maps `HeroPagingDots.Size` (the pure windowing result) to a render scale. The
-    /// falloff is deliberately gentle — the outermost dot stays clearly visible (a
-    /// tiny speck read as "too small" on device) rather than shrinking to a dot.
-    private static func dotScale(for size: HeroPagingDots.Size) -> CGFloat {
-        HeroPagingIndicatorMetrics.scale(for: size)
-    }
-
-    /// A single page indicator. It is always the same `Capsule` so its width can
-    /// smoothly animate between a dot (inactive) and a pill (active) — the active
-    /// one opening exactly as the outgoing one closes, keeping the container width
-    /// constant. The active pill fills left→right as the auto-advance dwell elapses
-    /// (a live "time until next page" gauge). The width morph is animated once, by
-    /// the container's `value: index` animation — NOT per-dot here — so the outgoing
-    /// and incoming dots interpolate in the same transaction and never drift.
-    ///
-    /// `scale` shrinks a non-active edge dot toward the hidden-content side. The
-    /// shrunk circle is rendered INSIDE a full-size (`dotSize`) slot so the row's
-    /// pitch and total width stay constant as dots shrink/grow — the glass pill
-    /// never resizes, and there's no per-page width jitter.
-    private func pagingIndicator(active: Bool, scale: CGFloat) -> some View {
-        Capsule()
-            .fill(dotTint.opacity(0.28))
-            .overlay(alignment: .leading) {
-                activeDotFill(active: active, trackWidth: Self.activeDotWidth, height: Self.dotSize)
-            }
-            .frame(width: active ? Self.activeDotWidth : Self.dotSize * scale, height: Self.dotSize * scale)
-            .clipShape(Capsule())
-            // Reserve a full-size slot so the pitch is uniform regardless of `scale`.
-            .frame(width: active ? Self.activeDotWidth : Self.dotSize, height: Self.dotSize)
-    }
-
-    /// The bright progress fill inside an indicator. Every dot keeps stable view
-    /// identity for the coordinated morph, but only the active dot's timeline ticks;
-    /// inactive dots stay paused at zero instead of each invalidating at 30 Hz.
-    private func activeDotFill(active: Bool, trackWidth: CGFloat, height: CGFloat) -> some View {
-        TimelineView(.animation(
-            minimumInterval: HeroPagingIndicatorMetrics.fillUpdateInterval(
-                dwellSeconds: Double(settings.autoAdvanceSeconds)
-            ),
-            paused: !active || !settings.autoAdvance || pausedAt != nil
-        )) { timeline in
-            Capsule()
-                .fill(dotTint)
-                .frame(
-                    width: brightFillWidth(active: active, trackWidth: trackWidth, height: height, now: timeline.date),
-                    height: height
-                )
-        }
-    }
-
-    /// Width of an indicator's bright fill: `0` when inactive, the full pill when
-    /// auto-advance is off, otherwise a dot growing to the full pill across the
-    /// dwell. Interpolating from `height` (a dot) up to `trackWidth` — rather than
-    /// `max(height, trackWidth * progress)` — means the fill starts moving the
-    /// instant the dwell begins instead of sitting pinned at a dot until progress
-    /// passes `height / trackWidth`. While paused it freezes at `pausedAt`.
-    private func brightFillWidth(active: Bool, trackWidth: CGFloat, height: CGFloat, now: Date) -> CGFloat {
-        guard active else { return 0 }
-        guard settings.autoAdvance else { return trackWidth }
-        let duration = max(1, Double(settings.autoAdvanceSeconds))
-        let reference = pausedAt ?? now
-        let progress = min(1, max(0, reference.timeIntervalSince(dwellStart) / duration))
-        return height + (trackWidth - height) * progress
-    }
-
-    /// The hero's action buttons, in visual order.
     private enum HeroButton: Hashable {
-        case play, request, downloadStatus, moreInfo, watchlist, next
+        case play, request, downloadStatus, moreInfo, watchlist
     }
 
     /// A cheap `Equatable` fingerprint of a featured item's request state, so the
@@ -2567,6 +1573,19 @@ struct HomeHeroView: View {
     private struct ArtworkPrewarmKey: Equatable {
         let setToken: Int
         let policyIdentity: String
+    }
+}
+
+/// A barely visible, mode-aware edge that separates solid hero text from artwork.
+struct HeroTextLegibilityShadow: ViewModifier {
+    let colorScheme: ColorScheme
+
+    func body(content: Content) -> some View {
+        content.shadow(
+            color: (colorScheme == .dark ? Color.black : Color.white).opacity(0.4),
+            radius: 4,
+            y: 1
+        )
     }
 }
 

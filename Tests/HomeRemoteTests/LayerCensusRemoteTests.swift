@@ -25,7 +25,7 @@ final class LayerCensusRemoteTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["Production Home ready"].waitForExistence(timeout: 30))
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 20))
         if let entry: XCUIRemote.Button = shell == "top-bar" ? .down : shell == "sidebar" ? .right : nil {
             Thread.sleep(forTimeInterval: 2)
