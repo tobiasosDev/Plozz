@@ -429,9 +429,17 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
             // engine. Cached telemetry is journaled separately below.
             let isStallDiag = line.contains("[LagDiag]")
                 || (line.contains("[HLSLocalServer]") && line.contains("GET "))
+            // Audio route, format, channel layout and Atmos decisions, so a wrong
+            // speaker mapping on a soundbar can be traced to the HDMI route state.
+            let isAudioDiag = !line.contains("[AudioOutput]") && [
+                "audioroute", "audio format", "audio delivery", "audio session", "atmos", "joc",
+                "e-ac-3", "eac3", "ec-3", "dec3", "layouttag", "channels=", " ch=", "[swhost] audio",
+                "spatial", "apac", "objectaudio", "object audio", "bridge", " sr="
+            ].contains { lowered.contains($0) }
             if handoff,
                line.contains("[TTFF]")
                 || line.contains("[DisplayCriteria]")
+                || isAudioDiag
                 || isStallDiag
                 || isFailureDetail {
                 HandoffDiagnostics.emit(

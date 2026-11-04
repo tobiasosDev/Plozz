@@ -141,7 +141,7 @@ public enum HandoffDiagnostics {
             label: "com.thatcube.Plozz.HandoffDiagnostics",
             qos: .utility
         )
-        private let maximumBytes = 64 * 1024
+        private let maximumBytes = 512 * 1024
 
         func append(_ line: String) {
             #if PLOZZ_DIAGNOSTICS
