@@ -297,6 +297,7 @@ struct LargeNativeNavigationFixture: View {
         case .allLibraries: "All Libraries"
         case .settings: "Settings"
         case .library: "Library"
+        case .tonight: "Tonight"
         }
     }
 }
