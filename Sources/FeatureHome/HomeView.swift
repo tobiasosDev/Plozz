@@ -625,22 +625,29 @@ public struct HomeView: View {
                                             onReload: { Task { await viewModel.load() } }
                                         )
                                     }
-                                    ForEach(presentationRows) { presentation in
-                                        switch presentation.source {
-                                        case let .home(row):
-                                            rowView(
-                                                row,
-                                                reservesLoadingFocus: !heroLayoutActive
-                                                    && presentation.id == presentationRows.first?.id
+                                    // The rows a Down from the hero scrolls into view stay
+                                    // mounted. In the lazy stack they were built on every Down
+                                    // (dozens of native posters with hosted overlays, mid-
+                                    // scroll) and dropped again on the way back up, which is
+                                    // what stalled the hero -> Continue Watching move on A10X.
+                                    // As one eager child they are kept while the top of Home
+                                    // is near; rows further down remain lazy.
+                                    let eagerCount = heroLayoutActive ? Self.eagerRowsBelowHero : 0
+                                    if eagerCount > 0, !presentationRows.isEmpty {
+                                        VStack(alignment: .leading, spacing: metrics.rowSpacing) {
+                                            ForEach(presentationRows.prefix(eagerCount)) { presentation in
+                                                presentationRowView(
+                                                presentation, firstRowID: presentationRows.first?.id,
+                                                heroLayoutActive: heroLayoutActive
                                             )
-                                        case let .library(row):
-                                            libraryRowView(row)
-                                        case let .liveTV(channels):
-                                            MediaRowView(
-                                                title: Text("Live TV"), items: [], style: .landscape,
-                                                liveChannels: channels, onSelect: { _ in }
-                                            )
+                                            }
                                         }
+                                    }
+                                    ForEach(presentationRows.dropFirst(eagerCount)) { presentation in
+                                        presentationRowView(
+                                                presentation, firstRowID: presentationRows.first?.id,
+                                                heroLayoutActive: heroLayoutActive
+                                            )
                                     }
                                 }
                                 // When the hero is present, pull the rows up so the first row
@@ -839,9 +846,9 @@ public struct HomeView: View {
                 ? AmbientGradientBackground.fullscreenHeroTintSaturation : 1
         )
         .background(
-            HomeShareScanRefreshObserver(
+            HomeShareScanRefreshTrailerGate(
+                trailerController: heroTrailerController,
                 onRefresh: { Task { await viewModel.load(showLoadingState: false) } },
-                isTrailerPlaying: heroTrailerController.isPlaying,
                 isFrontmost: heroIsFrontmost,
                 onPollShares: onPollShares,
                 navigationActivity: navigationActivity
@@ -935,6 +942,30 @@ public struct HomeView: View {
     /// Extra upward lift applied to the rows when the hero recedes, placing
     /// Continue Watching in its intended centered reading position.
     private static let recedeRowLift: CGFloat = 110
+
+    /// Rows kept mounted under the hero; see the eager stack in the rows column.
+    private static let eagerRowsBelowHero = 4
+
+    @ViewBuilder
+    private func presentationRowView(
+        _ presentation: HomePresentationRow, firstRowID: HomePresentationRow.ID?,
+        heroLayoutActive: Bool
+    ) -> some View {
+        switch presentation.source {
+        case let .home(row):
+            rowView(
+                row,
+                reservesLoadingFocus: !heroLayoutActive && presentation.id == firstRowID
+            )
+        case let .library(row):
+            libraryRowView(row)
+        case let .liveTV(channels):
+            MediaRowView(
+                title: Text("Live TV"), items: [], style: .landscape,
+                liveChannels: channels, onSelect: { _ in }
+            )
+        }
+    }
 
     /// Scroll anchor for the hero, so focus returning to it can snap the scroll
     /// back to the top and re-expand the hero to full-screen.
@@ -2086,6 +2117,27 @@ enum HomeHeroDisplayResolver {
 /// a bare gray box), so the empty state is a themed accent→surface gradient with
 /// a large, low-contrast per-kind glyph rather than a flat fill — an imageless
 /// library still reads as an intentional, on-brand tile.
+
+/// Reads the trailer's playing state for ``HomeShareScanRefreshObserver`` so
+/// that a trailer starting or stopping (twice per hero page) invalidates only
+/// this zero-size view, not Home's body and every rail with it.
+private struct HomeShareScanRefreshTrailerGate: View {
+    let trailerController: HeroTrailerController
+    let onRefresh: () -> Void
+    let isFrontmost: Bool
+    let onPollShares: () -> Void
+    let navigationActivity: HomeNavigationActivity
+
+    var body: some View {
+        HomeShareScanRefreshObserver(
+            onRefresh: onRefresh,
+            isTrailerPlaying: trailerController.isPlaying,
+            isFrontmost: isFrontmost,
+            onPollShares: onPollShares,
+            navigationActivity: navigationActivity
+        )
+    }
+}
 
 /// Keeps Home current while the viewer sits on it: polls the share catalogs, and
 /// reloads when a scan finishes.

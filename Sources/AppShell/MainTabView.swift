@@ -81,6 +81,32 @@ struct DebugSettingsActions {
     }
 }
 
+/// Applies ``View/themeMusicScope`` with the hero trailer's state read here,
+/// not in `MainTabView.body`. A Home hero trailer starts and stops on every
+/// page; reading `isPlaying` in the shell's body re-ran the whole shell, Home
+/// and every rail on each of those flips.
+private struct TrailerAwareThemeMusicScope: ViewModifier {
+    let trailerController: HeroTrailerController
+    let controller: ThemeMusicController
+    let model: ThemeMusicSettingsModel
+    let background: HeroBackgroundSettings
+    let isBlockedOtherwise: Bool
+    let authorization: ThemeMusicPlaybackAuthorization
+    let authenticatedHTTPResolver: any AuthenticatedHTTPResourceResolving
+
+    func body(content: Content) -> some View {
+        content.themeMusicScope(
+            controller: controller,
+            model: model,
+            background: background,
+            isBlocked: isBlockedOtherwise || trailerController.isPlaying
+                || trailerController.isPlaybackSuppressed,
+            authorization: authorization,
+            authenticatedHTTPResolver: authenticatedHTTPResolver
+        )
+    }
+}
+
 private struct RootNavigationTabLabel: View {
     let title: Text
     let systemImage: String
@@ -1925,16 +1951,16 @@ struct MainTabView: View {
             .frame(width: 0, height: 0)
         )
         #endif
-        .themeMusicScope(
+        .modifier(TrailerAwareThemeMusicScope(
+            trailerController: heroTrailerController,
             controller: themeMusicController,
             model: themeMusicModel,
             background: heroBackgroundModel.settings,
-            isBlocked: audioController.hasActivePlayback || heroTrailerController.isPlaying
-                || heroTrailerController.isPlaybackSuppressed || playRequest != nil
+            isBlockedOtherwise: audioController.hasActivePlayback || playRequest != nil
                 || isLiveTVDestinationActive,
             authorization: themeMusicAuthorization,
             authenticatedHTTPResolver: authenticatedHTTPResolver
-        )
+        ))
         .environment(\.themeMusicPreviewResolver, {
             try await ThemeMusicPreviewResolver.resolve(
                 content: homeRuntime.homeViewModel.existingValue(forKey: homeRuntime.scopeKey)?.state.value,

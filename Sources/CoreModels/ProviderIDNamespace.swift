@@ -60,6 +60,9 @@ public enum ProviderIDNamespace: String, Codable, Hashable, Sendable, CaseIterab
         }
     }
 
+    /// The alias table, for tests that compare lookups with the normalized map.
+    var aliasesForTesting: [String] { aliases }
+
     fileprivate var aliases: [String] {
         switch self {
         // Spellings vary by whoever wrote the id. Jellyfin writes "Tmdb"; Shoko
@@ -102,13 +105,20 @@ public extension Dictionary where Key == String, Value == String {
     /// Returns a normalized id value for `namespace`, resolving known key aliases
     /// case-insensitively and punctuation-insensitively.
     func providerID(_ namespace: ProviderIDNamespace) -> String? {
-        let normalized = normalizedProviderIDs
-        for alias in namespace.aliases {
-            if let value = normalized[normalizeProviderIDKey(alias)] {
-                return value
-            }
+        // Same answer as looking each alias up in `normalizedProviderIDs` (the
+        // first key per normalized spelling wins, then alias order decides),
+        // without building that whole map per call: cards and the Home hero ask
+        // for several namespaces per item on every body pass. Aliases are already
+        // in normalized form.
+        let aliases = namespace.aliases
+        var found: [Int: String] = [:]
+        for (key, value) in self {
+            let normalizedKey = normalizeProviderIDKey(key)
+            guard let index = aliases.firstIndex(of: normalizedKey), found[index] == nil,
+                  let cleanedValue = sanitizeProviderIDValue(value) else { continue }
+            found[index] = cleanedValue
         }
-        return nil
+        return found.min { $0.key < $1.key }?.value
     }
 
     /// Removes every spelling of the supplied provider-id namespaces.
@@ -201,7 +211,30 @@ public extension MediaItem {
 }
 
 private func normalizeProviderIDKey(_ raw: String) -> String {
-    raw.unicodeScalars
+    // Provider keys are ASCII in practice ("Tmdb", "TheMovieDb", "IMDb ID"); keep
+    // that path byte-wise. For ASCII, `CharacterSet.alphanumerics` is exactly
+    // [0-9A-Za-z], so the result is identical to the general path below.
+    var isASCII = true
+    var alreadyNormalized = true
+    for byte in raw.utf8 {
+        if byte >= 0x80 { isASCII = false; break }
+        let lowerAlnum = (byte >= 0x30 && byte <= 0x39) || (byte >= 0x61 && byte <= 0x7A)
+        if !lowerAlnum { alreadyNormalized = false }
+    }
+    if isASCII {
+        if alreadyNormalized { return raw }
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(raw.utf8.count)
+        for byte in raw.utf8 {
+            if (byte >= 0x30 && byte <= 0x39) || (byte >= 0x61 && byte <= 0x7A) {
+                bytes.append(byte)
+            } else if byte >= 0x41 && byte <= 0x5A {
+                bytes.append(byte + 0x20)
+            }
+        }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+    return raw.unicodeScalars
         .filter { CharacterSet.alphanumerics.contains($0) }
         .map { Character($0).lowercased() }
         .joined()
