@@ -1,4 +1,5 @@
 import Foundation
+import os
 #if canImport(VideoToolbox)
 import VideoToolbox
 #endif
@@ -218,13 +219,10 @@ extension MediaCapabilities {
         var caps = MediaCapabilities.default
 
         #if canImport(VideoToolbox)
-        let hevc = VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)
+        let decode = hardwareDecode
+        let hevc = decode.hevc
         caps.supportsHEVC = hevc
-        if #available(tvOS 16.0, iOS 16.0, macOS 13.0, *) {
-            caps.supportsAV1 = VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)
-        } else {
-            caps.supportsAV1 = false
-        }
+        caps.supportsAV1 = decode.av1
         // HDR signalling over HDMI is gated on the same HEVC-capable pipeline.
         caps.supportsHDR10 = hevc
         caps.supportsHLG = hevc
@@ -249,9 +247,40 @@ extension MediaCapabilities {
         return caps
     }
 
+    #if canImport(VideoToolbox)
+    /// Hardware decode support is fixed for the life of the process; probed once.
+    private static let hardwareDecode: (hevc: Bool, av1: Bool) = {
+        let hevc = VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)
+        guard #available(tvOS 16.0, iOS 16.0, macOS 13.0, *) else { return (hevc, false) }
+        return (hevc, VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1))
+    }()
+    #endif
+
     #if canImport(AVFoundation) && (os(iOS) || os(tvOS) || os(watchOS) || os(visionOS))
-    /// Best-effort maximum output channel count from the active audio session.
+    /// The last channel count read from the audio session, until the route
+    /// changes. Detail pages are rebuilt on every Home body pass and each build
+    /// asked for capabilities; the session reads are synchronous calls into the
+    /// audio server on the main thread.
+    private static let cachedOutputChannels = OSAllocatedUnfairLock<Int?>(initialState: nil)
+    nonisolated(unsafe) private static let routeObservers: [any NSObjectProtocol] = [
+        AVAudioSession.routeChangeNotification,
+        AVAudioSession.mediaServicesWereResetNotification,
+    ].map { name in
+        NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in
+            cachedOutputChannels.withLock { $0 = nil }
+        }
+    }
+
     private static func detectedMaxOutputChannels() -> Int {
+        _ = routeObservers
+        if let cached = cachedOutputChannels.withLock({ $0 }) { return cached }
+        let channels = readMaxOutputChannels()
+        cachedOutputChannels.withLock { $0 = channels }
+        return channels
+    }
+
+    /// Best-effort maximum output channel count from the active audio session.
+    private static func readMaxOutputChannels() -> Int {
         let session = AVAudioSession.sharedInstance()
         let sessionMax = session.maximumOutputNumberOfChannels
         let routeMax = session.currentRoute.outputs

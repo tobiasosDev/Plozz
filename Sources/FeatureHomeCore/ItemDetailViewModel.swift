@@ -1350,6 +1350,13 @@ public final class ItemDetailViewModel {
         provider: any MediaProvider,
         sourceGeneration: UInt64
     ) async {
+        // Play waits for the title's original spoken language before the engine
+        // loads (the "Original" audio default). Asking while the viewer reads the
+        // page moves that TMDb round trip off the press; the router remembers the
+        // answer, hit or miss, for the session.
+        if [.movie, .series, .episode].contains(item.kind) {
+            Task(priority: .utility) { _ = await ArtworkRouter.shared.originalAudioLanguage(for: item) }
+        }
         async let trailersDone: Void = loadTrailers(
             for: item,
             provider: provider,

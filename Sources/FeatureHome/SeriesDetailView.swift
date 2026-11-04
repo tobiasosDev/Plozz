@@ -383,6 +383,13 @@ struct SeriesDetailView: View {
 
     private var scroll: some View {
         ScrollViewReader { proxy in
+            // Resolved once per pass. Each of these is a chain (next-up search over
+            // the season, version list, a JSON-decoded version preference), and the
+            // hero arguments below read them about twenty times per body pass, which
+            // runs on every season focus change and every view-model publish.
+            let playTarget = self.playTarget
+            let playVersions = versions(forPlayTarget: playTarget)
+            let effectivePlayVersionID = playVersionID(for: playTarget, versions: playVersions)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     DetailHeroView(
@@ -434,7 +441,7 @@ struct SeriesDetailView: View {
                         offlineSourceAccountIDs: viewModel.unreachableSourceAccountIDs,
                         selectedSourceAccountID: series.sourceAccountID,
                         onSelectSource: serverPickerAction,
-                        fallbackTechnicalBadges: playTargetTechnicalBadges,
+                        fallbackTechnicalBadges: technicalBadges(ofPlayTarget: playTarget),
                         playButtonFocus: $playFocused,
                         // Keep the whole hero action row pinned to the top for every
                         // button, not just Play — moving right to Trailer / the "…"
@@ -1421,7 +1428,11 @@ struct SeriesDetailView: View {
     /// only appears when an episode genuinely has more than one file — matching the
     /// movie behaviour.
     private var playVersions: [MediaVersion] {
-        guard let target = playTarget else { return [] }
+        versions(forPlayTarget: playTarget)
+    }
+
+    private func versions(forPlayTarget target: MediaItem?) -> [MediaVersion] {
+        guard let target else { return [] }
         return DetailPlaybackSelection.versions(
             for: target, sources: target.sources, activeAccountID: target.sourceAccountID
         )
@@ -1467,7 +1478,11 @@ struct SeriesDetailView: View {
     /// the in-session override when it's still valid for this episode, else the
     /// device-recommended pick.
     private var effectivePlayVersionID: String? {
-        guard let target = playTarget else { return nil }
+        playVersionID(for: playTarget, versions: playVersions)
+    }
+
+    private func playVersionID(for target: MediaItem?, versions playVersions: [MediaVersion]) -> String? {
+        guard let target else { return nil }
         // The same resolver the movie page uses, so both honour an explicit
         // choice the same way — and so an episode can inherit the shape chosen
         // on a sibling episode.
@@ -1491,7 +1506,7 @@ struct SeriesDetailView: View {
     /// Empty until the play target's media info is known — showing nothing beats
     /// showing the wrong thing, the same reasoning the version branch in
     /// `DetailHeroView.featureBadges` already applies.
-    private var playTargetTechnicalBadges: [MediaBadge] {
+    private func technicalBadges(ofPlayTarget playTarget: MediaItem?) -> [MediaBadge] {
         playTarget?.technicalBadges ?? []
     }
 
