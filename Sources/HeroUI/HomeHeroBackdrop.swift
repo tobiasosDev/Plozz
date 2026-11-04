@@ -242,8 +242,17 @@ public struct HomeHeroBackdrop: View {
     private var dissolvedSurface: some View {
         if paintsDissolve {
             backdropSurface.overlay {
-                paintedVerticalFade(start: receded ? recededMeltStart : meltStart)
-                    .allowsHitTesting(false)
+                // Two fixed fades crossfaded by opacity, not one fade whose stops
+                // move. Animating the stop locations re-rasterized a full-screen
+                // gradient on every frame of the 0.96 s recede, on top of the
+                // scroll and row lifts it runs alongside; opacity only recomposites.
+                ZStack {
+                    paintedVerticalFade(start: meltStart)
+                        .opacity(receded ? 0 : 1)
+                    paintedVerticalFade(start: recededMeltStart)
+                        .opacity(receded ? 1 : 0)
+                }
+                .allowsHitTesting(false)
             }
         } else {
             backdropSurface.mask(dissolveMask)
@@ -269,13 +278,19 @@ public struct HomeHeroBackdrop: View {
                         )
                         // Keep detail's separate layer decoding/current before the
                         // push. Nearly transparent rather than hidden so AVPlayerLayer
-                        // stays in the render tree and has a frame ready.
+                        // stays in the render tree and has a frame ready. A tiny
+                        // frame, not full screen: a full-screen layer at 0.001 is
+                        // still blended every video frame, a second 4K video pass on
+                        // A10X. The push re-parents the surface into the detail host,
+                        // which sizes it to the page.
                         HeroTrailerVideoLayer(
                             controller: trailerController,
                             role: .detail
                         )
+                        .frame(width: 2, height: 2)
                         .opacity(0.001)
                         .allowsHitTesting(false)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
                     .transition(.opacity)
                 }

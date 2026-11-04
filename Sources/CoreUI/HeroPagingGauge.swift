@@ -141,6 +141,9 @@ public enum HeroPagingGauge {
     /// never cancels the other.
     public static let collapseKey = "plozz.heroPagingGauge.collapse"
 
+    /// Frame rate for the dwell ramp; see ``animate(_:from:remaining:trackWidth:height:)``.
+    public static let rampFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 15, preferred: 12)
+
     public static func animate(
         _ layer: CALayer,
         from fraction: CGFloat,
@@ -171,6 +174,12 @@ public enum HeroPagingGauge {
         // lie about how long is left.
         animation.timingFunction = CAMediaTimingFunction(name: .linear)
         animation.fillMode = .forwards
+        // The bar grows a few points per second, so 60 Hz draws mostly identical
+        // frames. On a still slide it was the only thing keeping the render
+        // server compositing the whole screen (and its rounded clips) every
+        // frame; a low rate keeps the ramp smooth to the eye at a fraction of
+        // that cost. The surrounding dot morph keeps its own full rate.
+        animation.preferredFrameRateRange = rampFrameRateRange
         layer.add(animation, forKey: animationKey)
     }
 }

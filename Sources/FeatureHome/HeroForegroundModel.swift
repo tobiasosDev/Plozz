@@ -1,4 +1,5 @@
 import Foundation
+import os
 import CoreModels
 
 /// Pure, UIKit-free description of the Home **hero** *visual foreground* for one
@@ -112,6 +113,32 @@ struct HeroForegroundModel: Equatable {
 /// Pure builder mapping a slide's ``MediaItem`` plus the SwiftUI hero's resolved
 /// state into a ``HeroForegroundModel``. Every function here is deterministic and
 /// side-effect free so the mapping can be unit-tested directly.
+/// The hero's ``HeroPresentation`` per title, reused while the item is unchanged.
+///
+/// The Home hero rebuilds its foreground model on every body pass (focus moves,
+/// the Continue Watching recede, dwell and trailer pauses), and resolving the
+/// presentation (artwork reference ladders, URL sanitizing, provider ids) was
+/// the largest part of that on an A10X. It is a pure function of the item, so an
+/// equal item gets the same value back.
+enum HomeHeroPresentationCache {
+    private static let entries = OSAllocatedUnfairLock<[String: (item: MediaItem, value: HeroPresentation)]>(
+        initialState: [:]
+    )
+    private static let capacity = 24
+
+    static func presentation(for item: MediaItem) -> HeroPresentation {
+        if let hit = entries.withLock({ $0[item.id] }), hit.item == item {
+            return hit.value
+        }
+        let value = HeroPresentation(item: item, artworkStyle: .landscape, surface: .home)
+        entries.withLock { entries in
+            if entries.count >= capacity, entries[item.id] == nil { entries.removeAll(keepingCapacity: true) }
+            entries[item.id] = (item, value)
+        }
+        return value
+    }
+}
+
 enum HeroForegroundModelBuilder {
     /// The dynamic per-pill inputs the SwiftUI hero has already resolved (watchlist
     /// membership, the availability-derived CTA). Passing these in keeps the
@@ -320,7 +347,7 @@ enum HeroForegroundModelBuilder {
         dotsDwellDuration: Double = 0,
         dotsPausedAt: Date? = nil
     ) -> HeroForegroundModel {
-        let presentation = HeroPresentation(item: item, artworkStyle: .landscape, surface: .home)
+        let presentation = HomeHeroPresentationCache.presentation(for: item)
         let pills = pillInputs.map(pill(for:))
         let clamped = pills.isEmpty ? 0 : min(max(selectedIndex, 0), pills.count - 1)
         let dots: HeroForegroundModel.Dots? =
