@@ -14,9 +14,11 @@ private final class InstrumentedFileIO: MetadataDiskCache.FileIO, @unchecked Sen
     private var readCountStorage = 0
     private var writeCountStorage = 0
     private let readGate: DispatchSemaphore?
+    private let writeDelay: TimeInterval
 
-    init(blockReadUntilSignaled: DispatchSemaphore? = nil) {
+    init(blockReadUntilSignaled: DispatchSemaphore? = nil, writeDelay: TimeInterval = 0) {
         self.readGate = blockReadUntilSignaled
+        self.writeDelay = writeDelay
     }
 
     var events: [String] { lock.withLock { eventsStorage } }
@@ -54,6 +56,7 @@ private final class InstrumentedFileIO: MetadataDiskCache.FileIO, @unchecked Sen
     func write(_ data: Data, to url: URL) {
         record("write")
         lock.withLock { writeCountStorage += 1 }
+        if writeDelay > 0 { Thread.sleep(forTimeInterval: writeDelay) }
         try? data.write(to: url, options: .atomic)
     }
 }
@@ -215,6 +218,41 @@ final class MetadataDiskCacheConcurrencyTests: XCTestCase {
         for index in 0..<40 {
             XCTAssertNotNil(decoded["key-\(index)"], "key-\(index) was lost to a stale overwrite")
         }
+    }
+
+    func testRememberedLookupsAreReadableAtOnceAndCoalesceTheirWrites() async throws {
+        let directory = tempDir()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // A slow disk: while one whole-map write is in flight, later lookups queue
+        // theirs behind it. Only the newest snapshot needs to land.
+        let fileIO = InstrumentedFileIO(writeDelay: 0.05)
+        let cache = MetadataDiskCache(
+            directory: directory, maxBytes: 1_000_000, fileIO: fileIO, coding: CountingCoding()
+        )
+        let count = 30
+
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<count {
+                group.addTask {
+                    await cache.remember(URL(string: "https://example.com/\(index).jpg"), for: "key-\(index)")
+                }
+            }
+        }
+        for index in 0..<count {
+            let hit = await cache.cached("key-\(index)")
+            XCTAssertEqual(hit, .some(URL(string: "https://example.com/\(index).jpg")))
+        }
+
+        let url = directory.appendingPathComponent(MetadataDiskCache.cacheFileName)
+        var decoded: [String: MetadataDiskCache.Entry] = [:]
+        let deadline = Date().addingTimeInterval(10)
+        while decoded.count < count, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            decoded = (try? Data(contentsOf: url))
+                .flatMap { try? JSONDecoder().decode([String: MetadataDiskCache.Entry].self, from: $0) } ?? [:]
+        }
+        XCTAssertEqual(decoded.count, count, "the newest snapshot must reach disk")
+        XCTAssertLessThan(fileIO.writeCount, count / 2, "superseded snapshots must not each be written")
     }
 
     // MARK: - TTL + reopen preserved

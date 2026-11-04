@@ -154,10 +154,24 @@ public actor MetadataDiskCache {
     /// Stores a resolved result (positive or negative) for `key`.
     public func store(_ url: URL?, for key: String) async {
         await loadIfNeeded()
+        insert(url, for: key)
+        await persist()
+    }
+
+    /// Stores a resolved result for `key` in memory at once and writes the file
+    /// in the background. For lookups that return the URL to a waiting screen:
+    /// every write encodes the whole map, and a hero or poster should not wait
+    /// for that to reach disk. Bursts coalesce into the newest snapshot.
+    public func remember(_ url: URL?, for key: String) async {
+        await loadIfNeeded()
+        insert(url, for: key)
+        Task(priority: .utility) { await self.persist() }
+    }
+
+    private func insert(_ url: URL?, for key: String) {
         let ttl = url == nil ? negativeTTL : positiveTTL
         entries[key] = Entry(url: url?.absoluteString, expires: Date().addingTimeInterval(ttl))
         revision += 1
-        await persist()
     }
 
     /// The current serialized size of the cache in bytes (Step 6 diagnostics). It

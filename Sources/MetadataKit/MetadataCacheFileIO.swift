@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Serial-queue executor that owns **all** blocking filesystem and
 /// (de)serialization work for `MetadataDiskCache`, keeping the cache actor's own
@@ -54,6 +55,11 @@ final class MetadataCacheFileIO: @unchecked Sendable {
     private let policy: MetadataCacheBudgetPolicy
     /// Confined to `queue`; the monotonic high-water mark of persisted revisions.
     private var lastWrittenRevision = Int.min
+    /// The newest revision any caller has asked to write. A queued write older
+    /// than this is superseded before it starts: the newer snapshot already holds
+    /// its entries. Without it a burst of artwork lookups (each `store` persists)
+    /// encoded and rewrote the whole multi-megabyte map once per lookup, in order.
+    private let newestRequestedRevision = OSAllocatedUnfairLock(initialState: Int.min)
 
     init(
         fileIO: any MetadataDiskCache.FileIO,
@@ -109,9 +115,11 @@ final class MetadataCacheFileIO: @unchecked Sendable {
         fileURL: URL,
         maxBytes: Int
     ) async -> WriteResult {
-        await withCheckedContinuation { continuation in
+        newestRequestedRevision.withLock { $0 = max($0, revision) }
+        return await withCheckedContinuation { continuation in
             queue.async {
-                guard revision >= self.lastWrittenRevision else {
+                guard revision >= self.lastWrittenRevision,
+                      revision >= self.newestRequestedRevision.withLock({ $0 }) else {
                     continuation.resume(returning: WriteResult(evicted: [], didWrite: false, wholeMapEncodeCount: 0))
                     return
                 }
