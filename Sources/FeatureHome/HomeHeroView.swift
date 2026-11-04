@@ -144,6 +144,8 @@ struct HomeHeroView: View {
     /// container `onMoveCommand` read the *post-move* button on device and paged
     /// the instant focus merely landed on an edge button — the bug this fixes.)
     @State private var selectedButton: Int = 0
+    /// Neighbour slide models from the last body pass; see ``foregroundNeighbours(for:)``.
+    @State private var neighbourModels = HeroNeighbourModelCache()
     /// Uptime of the last `activateSelected` dispatch, used to de-dupe the two
     /// Select paths (SwiftUI tap + window recognizer) into one activation.
     @State private var lastActivateAt: TimeInterval = 0
@@ -732,6 +734,7 @@ struct HomeHeroView: View {
                 return
             }
             resetTrailer(stopPlayer: !trailerController.isShowing(item.id))
+            let pageStarted = ContinuousClock.now
             let source: HeroTrailerSource?
             if let cached = trailerSourceCache[item.id] {
                 source = cached
@@ -748,6 +751,16 @@ struct HomeHeroView: View {
             guard let source,
                   !Task.isCancelled,
                   current?.id == item.id else { return }
+            // Let the page wipe land before touching AVPlayer. A cached source used
+            // to create the item, start its network load and activate audio inside
+            // the wipe, and paging quickly through the hero did that (and tore it
+            // down again) on every press. The still image covers the wait; the lead-in
+            // only starts once the player is ready, so the timeline stays exact.
+            let settle = Self.trailerPrepareSettle - (ContinuousClock.now - pageStarted)
+            if settle > .zero {
+                try? await Task.sleep(for: settle)
+                guard !Task.isCancelled, current?.id == item.id else { return }
+            }
             // Fix the timeline BEFORE the visible 3-second lead-in starts. The
             // progress gauge now has one immutable duration from 0→end and never
             // jumps when the player becomes ready or the video crossfades in.
@@ -794,6 +807,8 @@ struct HomeHeroView: View {
         }
         .onChange(of: trailerController.isPaused) { _, paused in
             if paused {
+                // Already recorded when the hero receded.
+                guard trailerPausedAt == nil else { return }
                 trailerPausedAt = trailerController.pauseStartedAt ?? .now
                 runEpoch &+= 1
             } else if let trailerPausedAt {
@@ -1335,17 +1350,30 @@ struct HomeHeroView: View {
     /// Bounded neighbour models (previous / next slide) handed to the coordinator to
     /// prepare off-transition so a page finds the model + logo already warm. Built
     /// with a neutral selection/focus (the real page re-applies the correct one).
+    ///
+    /// Reused while the window's titles and locale are unchanged. The hero body
+    /// re-runs on every focus move, recede and dwell change, and rebuilding two
+    /// neighbour models each time (artwork references, overview, ratings) was the
+    /// largest app-side cost of moving between the hero and Continue Watching on
+    /// an A10X. These models only pre-warm the coordinator; the slide that fronts
+    /// is always built fresh by ``foregroundModel(for:)``.
     private func foregroundNeighbours(for item: MediaItem) -> [HeroForegroundModel] {
         guard items.count > 1 else { return [] }
         let current = items.firstIndex(where: { $0.id == item.id }) ?? index
         let previous = (current - 1 + items.count) % items.count
         let next = (current + 1) % items.count
+        let window = [previous, next].filter { $0 != current && items.indices.contains($0) }
+        let key = HeroNeighbourModelCache.Key(
+            itemIDs: window.map { items[$0].id }.uniqued(), locale: locale.identifier
+        )
+        if let cached = neighbourModels.models(for: key) { return cached }
         var seen: Set<Int> = [current]
         var result: [HeroForegroundModel] = []
-        for neighbour in [previous, next] where !seen.contains(neighbour) && items.indices.contains(neighbour) {
+        for neighbour in window where !seen.contains(neighbour) {
             seen.insert(neighbour)
             result.append(foregroundModel(for: items[neighbour], selectedIndex: 0, heroFocused: false))
         }
+        neighbourModels.store(result, for: key)
         return result
     }
 
@@ -2240,6 +2268,9 @@ struct HomeHeroView: View {
         resumeWork = nil
     }
 
+    /// How long after a page the trailer waits before preparing its player.
+    static let trailerPrepareSettle: Duration = .milliseconds(900)
+
     private func resetTrailer(stopPlayer: Bool) {
         trailerVisible = false
         activeTrailerDuration = 0
@@ -2281,6 +2312,14 @@ struct HomeHeroView: View {
             runEpoch &+= 1
         }
         trailerController.setPaused(true)
+        // Record the transport pause here, in the same update as the recede,
+        // rather than in the `isPaused` onChange one pass later. Each extra pass
+        // re-ran this whole hero body inside the Continue Watching transition,
+        // which is where the A10X stalled. The onChange then finds it recorded.
+        if trailerController.isPaused, trailerPausedAt == nil {
+            trailerPausedAt = trailerController.pauseStartedAt ?? .now
+            runEpoch &+= 1
+        }
     }
 
     /// Resumes the auto-advance when the hero un-recedes (focus returns to the hero
@@ -2298,6 +2337,12 @@ struct HomeHeroView: View {
         if activeTrailerDuration > 0 {
             pausedAt = nil
             trailerController.setPaused(false)
+            // Same timeline shift the `isPaused` onChange applies, done in this
+            // update for the reason given in ``pauseWhileReceded()``.
+            if !trailerController.isPaused, let trailerPausedAt {
+                dwellStart = dwellStart.addingTimeInterval(Date().timeIntervalSince(trailerPausedAt))
+                self.trailerPausedAt = nil
+            }
         } else {
             restartDwell()
             trailerController.setPaused(false)
@@ -2571,6 +2616,35 @@ struct HeroScheduleBadge: View {
             .overlay { shape.stroke(Color.primary.opacity(0.16), lineWidth: textScale) }
             .contentTransition(.opacity)
             .accessibilityLabel(text)
+    }
+}
+
+/// Holds the last neighbour models built by ``HomeHeroView``. A reference so
+/// filling it from `body` is not a state change.
+@MainActor
+final class HeroNeighbourModelCache {
+    struct Key: Equatable {
+        let itemIDs: [String]
+        let locale: String
+    }
+
+    private var key: Key?
+    private var models: [HeroForegroundModel] = []
+
+    func models(for key: Key) -> [HeroForegroundModel]? {
+        self.key == key ? models : nil
+    }
+
+    func store(_ models: [HeroForegroundModel], for key: Key) {
+        self.key = key
+        self.models = models
+    }
+}
+
+private extension Array where Element == String {
+    func uniqued() -> [String] {
+        var seen = Set<String>()
+        return filter { seen.insert($0).inserted }
     }
 }
 #endif

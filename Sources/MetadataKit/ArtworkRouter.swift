@@ -270,7 +270,7 @@ public actor ArtworkRouter {
                     let url = prefersPortraitHero
                         ? await entry.provider.portraitHeroURL(for: query)
                         : await entry.provider.artworkURL(kind, for: query)
-                    await cache.store(url, for: key)
+                    await cache.remember(url, for: key)
                     return (
                         index,
                         url.map { SourcedValue(value: $0, source: entry.source) } ?? saved
@@ -495,7 +495,7 @@ public actor ArtworkRouter {
         let key = "music|artist|\(artist.lowercased())|provider:deezer"
         if let hit = await cache.cached(key) { return hit }
         let url = await deezer.artistImageURL(artist: artist)
-        await cache.store(url, for: key)
+        await cache.remember(url, for: key)
         return url
     }
 
@@ -513,7 +513,7 @@ public actor ArtworkRouter {
             case .musicbrainz: url = await musicBrainz.albumCoverURL(artist: artist, album: album)
             default: continue
             }
-            await cache.store(url, for: key)
+            await cache.remember(url, for: key)
             if let url { return url }
         }
         return nil

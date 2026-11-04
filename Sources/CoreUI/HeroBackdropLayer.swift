@@ -188,7 +188,12 @@ private struct DetailBackdropFocusWarmup: ViewModifier {
         content.task(id: source?.key) {
             guard let source else { return }
             do {
-                try await Task.sleep(for: .milliseconds(80))
+                // Long enough that ordinary step-by-step presses (about every
+                // 150-300 ms) pass a card without fetching and decoding its
+                // detail backdrop; on A10X those decodes competed with the
+                // posters coming on screen. A viewer resting on a title still
+                // has it warm well before they press Select.
+                try await Task.sleep(for: .milliseconds(350))
                 await DetailBackdropFocusPrewarmer.warm(source)
             } catch is CancellationError {
                 // Moving past a title must not start an artwork lookup.

@@ -293,7 +293,12 @@ public final class AppState {
                 )
             },
             additionalSources: { [unowned self] item in
-                self.identityIndex.identitySnapshot.sourceRefs(for: item)
+                // The unobserved mirror: every visible card resolves its actions
+                // in its body, so reading the observed snapshot subscribed each
+                // card to the index and re-rendered all of them on every publish
+                // while a large library warmed. Home re-folds sources on
+                // `identityIndexDidUpdate` itself.
+                self.identityIndex.identitySnapshotStore.current.sourceRefs(for: item)
             },
             primaryAccountID: { [unowned self] in
                 self.accountsProviders.primaryActiveAccount?.id

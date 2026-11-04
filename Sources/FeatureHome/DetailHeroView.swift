@@ -2341,6 +2341,20 @@ private struct SeriesDetailHeroBackdrop: View {
         // so its mask/artwork do not re-render on every animation frame.
         .offset(y: receded ? -SeriesEpisodeBrowserLayout.heroBackdropRecedeLift : 0)
         .animation(reduceMotion ? nil : SeriesHeroRevealTransition.ambient, value: receded)
+        // Browsing episodes lifts the backdrop almost fully off screen. A trailer
+        // still playing under it kept decoding and made the whole page recomposite
+        // at video rate while the viewer moved through the rail; hold it the way
+        // Home holds its hero trailer when the rows take over.
+        .onChange(of: receded) { _, receded in
+            guard trailerController.isShowing(itemID) else { return }
+            trailerController.setPaused(receded)
+        }
+        .onChange(of: showsTrailer) { _, showing in
+            // A trailer that only starts once the viewer is already in the rail.
+            if showing, receded, trailerController.isShowing(itemID) {
+                trailerController.setPaused(true)
+            }
+        }
     }
 }
 #endif

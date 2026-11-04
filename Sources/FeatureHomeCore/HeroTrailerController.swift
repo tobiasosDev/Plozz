@@ -226,10 +226,13 @@ public final class HeroTrailerController {
         activateSession()
 
         let item = AVPlayerItem(url: resolvedURL)
+        // The decoder's own bi-planar format: the output only serves the rare
+        // handoff frame (CIImage converts that one), and asking for BGRA made
+        // every trailer frame pay a colour conversion it never used.
         let output = AVPlayerItemVideoOutput(
             pixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String:
-                    Int(kCVPixelFormatType_32BGRA)
+                    Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
             ]
         )
         item.add(output)
@@ -494,17 +497,29 @@ public final class HeroTrailerController {
 
     private func activateSession() {
         #if !os(macOS)
-        do {
-            let session = AVAudioSession.sharedInstance()
-            // Mix so a muted trailer never disturbs other audio; a sound-on trailer
-            // still coexists (and theme music is blocked separately at the app level).
-            try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
-            try session.setActive(true)
-        } catch {
-            PlozzLog.app.error("Hero trailer: audio session activation failed error=\(String(describing: error))")
+        // Both calls are synchronous round trips to the audio server and can
+        // block for tens of milliseconds. Home pages run this inside the hero
+        // wipe, so it goes to a serial queue instead of the main thread; the
+        // order of activations is kept, and a muted trailer needs no audio.
+        Self.audioSessionQueue.async {
+            do {
+                let session = AVAudioSession.sharedInstance()
+                // Mix so a muted trailer never disturbs other audio; a sound-on trailer
+                // still coexists (and theme music is blocked separately at the app level).
+                try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+                try session.setActive(true)
+            } catch {
+                PlozzLog.app.error("Hero trailer: audio session activation failed error=\(String(describing: error))")
+            }
         }
         #endif
     }
+
+    #if !os(macOS)
+    private static let audioSessionQueue = DispatchQueue(
+        label: "com.thatcube.Plozz.heroTrailer.audioSession", qos: .userInitiated
+    )
+    #endif
 }
 
 #if canImport(UIKit)

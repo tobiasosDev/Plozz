@@ -307,6 +307,27 @@ enum NativePosterImageTreatment: Equatable {
     case upcoming(Color)
 }
 
+/// Which native focus surface a poster uses.
+///
+/// Portraits used UIKit's rectangular surface with opaque artwork: at rest a
+/// rounded clip hides the corners, but focus has to drop that clip, so the
+/// corners squared off on every focus move. On trial, portraits now take the
+/// same alpha-masked path as landscape artwork, keeping their rounded corners
+/// while lifted. That path showed an offset highlight crescent at extreme
+/// tilt in earlier physical testing (see CoreUI README, Native poster focus);
+/// `PLZPOSTER_SQUARE_FOCUS=1` restores the rectangular surface for comparison.
+enum NativePosterFocusShape {
+    static let roundsPortraits = ProcessInfo.processInfo.environment["PLZPOSTER_SQUARE_FOCUS"] != "1"
+
+    static func masksToContents(_ aspectRatio: CGFloat) -> Bool {
+        roundsPortraits || aspectRatio >= 1
+    }
+
+    static func clipsArtwork(_ size: CGSize) -> Bool {
+        roundsPortraits || size.height <= size.width
+    }
+}
+
 final class NativePosterImageView: UIImageView {
     let indicatorView = UIImageView()
     private var indicatorPlacement: NativePosterOverlayPlacement?
@@ -377,7 +398,8 @@ final class NativePosterImageView: UIImageView {
         }
         let size = bounds.size
         let viewport = artworkFocused ? focusedFrameGuide.layoutFrame : bounds
-        let crop = artworkFocused && indicatorPlacement == .croppedCount
+        // Only UIKit's rectangular surface crops inside the artwork.
+        let crop = artworkFocused && indicatorPlacement == .croppedCount && !masksFocusEffectToContents
             ? NativePosterArtworkBitmap.portraitFocusCrop(for: size) : .zero
         let artworkScale = viewport.width / (size.width - 2 * crop.width)
         let scale = artworkScale / (projected.width / overlayView.bounds.width)
@@ -557,8 +579,11 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
             let scale = environment.displayScale
             // UIKit's rectangular focus surface requires opaque artwork. A
             // second, baked alpha corner separates from its highlight under tilt.
-            let clipsToArtwork = size.height <= size.width
-            let backgroundColor: UIColor? = clipsToArtwork ? nil : .darkGray
+            // Rounded portraits instead use the alpha-masked surface, see
+            // ``NativePosterFocusShape``.
+            let clipsToArtwork = NativePosterFocusShape.clipsArtwork(size)
+            // Transparent portrait sources keep their dark backing, rounded or not.
+            let backgroundColor: UIColor? = size.height <= size.width ? nil : .darkGray
             let key = NativePosterPresentationKey(
                 image: image, treatment: treatment, size: size, scale: scale,
                 indicators: indicators.flatMap {
@@ -725,7 +750,7 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
         let size = CGSize(width: fallbackWidth, height: fallbackWidth / aspectRatio)
         let view = NativePosterButton(image: NativePosterArtworkBitmap.placeholder(
             size: size, scale: context.environment.displayScale
-        ), masksFocusEffectToContents: aspectRatio >= 1)
+        ), masksFocusEffectToContents: NativePosterFocusShape.masksToContents(aspectRatio))
         view.defaultAccessibilityElement = view.isAccessibilityElement
         view.contentSize = size
         configureArtwork(view, context: context)
@@ -787,8 +812,8 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
         view.hostedOverlay?.layer.shouldRasterize = rasterizesOverlay
         view.hostedOverlay?.layer.rasterizationScale = context.environment.displayScale
         container.aspectRatio = aspectRatio
-        if view.artworkView.masksFocusEffectToContents != (aspectRatio >= 1) {
-            view.artworkView.masksFocusEffectToContents = aspectRatio >= 1
+        if view.artworkView.masksFocusEffectToContents != NativePosterFocusShape.masksToContents(aspectRatio) {
+            view.artworkView.masksFocusEffectToContents = NativePosterFocusShape.masksToContents(aspectRatio)
             view.artworkView.adjustsImageWhenAncestorFocused = view.isFocused
         }
         configureArtwork(view, context: context)
@@ -1016,7 +1041,10 @@ struct NativePosterPlaceholder: UIViewRepresentable {
 
     func makeUIView(context: Context) -> Container {
         let size = CGSize(width: fallbackWidth, height: fallbackWidth / aspectRatio)
-        let poster = NativePosterButton(image: Self.blank(size, fill: fill), masksFocusEffectToContents: aspectRatio >= 1)
+        let poster = NativePosterButton(
+            image: Self.blank(size, fill: fill),
+            masksFocusEffectToContents: NativePosterFocusShape.masksToContents(aspectRatio)
+        )
         poster.contentSize = size
         poster.isEnabled = focus != nil && context.environment.isEnabled
         poster.isUserInteractionEnabled = focus != nil
@@ -1041,8 +1069,8 @@ struct NativePosterPlaceholder: UIViewRepresentable {
 
     func updateUIView(_ container: Container, context: Context) {
         let poster = container.poster
-        if poster.artworkView.masksFocusEffectToContents != (aspectRatio >= 1) {
-            poster.artworkView.masksFocusEffectToContents = aspectRatio >= 1
+        if poster.artworkView.masksFocusEffectToContents != NativePosterFocusShape.masksToContents(aspectRatio) {
+            poster.artworkView.masksFocusEffectToContents = NativePosterFocusShape.masksToContents(aspectRatio)
         }
         poster.updateImage(Self.blank(poster.contentSize, fill: fill))
         poster.hostedOverlay?.configuration = configuration(in: context)
@@ -1088,14 +1116,16 @@ struct NativePosterPlaceholder: UIViewRepresentable {
         if let image = blanks[key] { return image }
         guard let image = NativePosterArtworkBitmap.image(
             source: nil, size: size, scale: 1, backgroundColor: .darkGray,
-            clipsToArtwork: size.height <= size.width,
+            clipsToArtwork: NativePosterFocusShape.clipsArtwork(size),
             drawOverlay: { context in
                 context.setFillColor(UIColor(fill).cgColor)
                 context.fill(CGRect(origin: .zero, size: size))
             }
         ) else {
             PlozzLog.app.error("Unable to prepare native loading artwork")
-            return NativePosterArtworkBitmap.placeholder(size: size, scale: 1, clipsToArtwork: size.height <= size.width)
+            return NativePosterArtworkBitmap.placeholder(
+                size: size, scale: 1, clipsToArtwork: NativePosterFocusShape.clipsArtwork(size)
+            )
         }
         if blanks.count >= 16 { blanks.removeAll(keepingCapacity: true) }
         blanks[key] = image

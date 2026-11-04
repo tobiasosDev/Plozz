@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import ImageIO
 import UIKit
 import CoreModels
 import CoreNetworking
@@ -101,7 +102,13 @@ final class PlexBIFThumbnailLoader: ScrubThumbnailProviding {
     /// to the main actor inside an `@unchecked Sendable` box.
     private static func decodeJPEG(_ data: Data) async -> CGImage? {
         await Task.detached(priority: .userInitiated) { () -> SendableCGImage? in
-            guard let cgImage = UIImage(data: data)?.cgImage else { return nil }
+            // Decode here, not lazily: a `UIImage(data:)` JPEG defers its pixels
+            // until first draw, which put every scrub thumbnail's decode back on
+            // the main thread mid-scrub.
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(
+                      source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+                  ) else { return nil }
             return SendableCGImage(cgImage)
         }.value?.image
     }
