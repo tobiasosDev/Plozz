@@ -11,7 +11,7 @@ final class HomeNavigationCaptureTests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "com.thatcube.Plozz")
         XCTAssertNotEqual(app.state, .notRunning, "Launch the desired capture configuration first.")
         app.activate()
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 45), "Home hero must be loaded, not a profile picker.")
         XCTAssertEqual(app.state, .runningForeground, "Launch the desired capture configuration first.")
         focusHero(hero, in: app)
@@ -46,7 +46,7 @@ final class HomeNavigationCaptureTests: XCTestCase {
     }
 
     @MainActor
-    private func focusHero(_ hero: XCUIElement, in app: XCUIApplication) {
+    private func focusHero(_ hero: HomeHeroRemoteElement, in app: XCUIApplication) {
         var previousFrame: CGRect?
         var lastMoveWasUp = false
         for _ in 0..<12 {
@@ -68,7 +68,7 @@ final class HomeNavigationCaptureTests: XCTestCase {
     }
 
     @MainActor
-    private func navigationCycle(hero: XCUIElement) {
+    private func navigationCycle(hero: HomeHeroRemoteElement) {
         XCUIRemote.shared.press(.down)
         Thread.sleep(forTimeInterval: 2)
         XCTAssertFalse(hero.hasFocus, "Down must reach the rows.")

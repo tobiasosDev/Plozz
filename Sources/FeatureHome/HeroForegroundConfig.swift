@@ -3,23 +3,9 @@ import Foundation
 import OSLog
 #endif
 
-/// Runtime selection + telemetry for the imperative UIKit hero foreground.
-///
-/// UIKit is the production default after the on-device A/B showed fewer hitches and
-/// no 50ms transition spikes. The complete SwiftUI renderer remains available as a
-/// runtime safety fallback with `PLZHERO_UIKIT_FOREGROUND=0`.
+/// Runtime tuning + telemetry for the UIKit hero foreground, the only Home hero
+/// renderer on tvOS.
 enum HeroForegroundConfig {
-    /// Read once at startup. UIKit is on unless explicitly disabled with
-    /// `PLZHERO_UIKIT_FOREGROUND=0`; `1` remains accepted for existing A/B scripts.
-    static let useUIKitForeground: Bool =
-        ProcessInfo.processInfo.environment["PLZHERO_UIKIT_FOREGROUND"] != "0"
-
-    /// Independent A/B gate that gives the standard SwiftUI foreground the same
-    /// non-sampling flat capsule chrome as the UIKit `clean` style. Default off, so
-    /// the production SwiftUI path remains unchanged unless explicitly measured.
-    static let useSwiftUIFlatChrome: Bool =
-        ProcessInfo.processInfo.environment["PLZHERO_SWIFTUI_FLAT"] == "1"
-
     /// The idle pill / paging-container background treatment. Chosen because real
     /// Liquid Glass (`UIGlassEffect`) live-re-blurs the moving backdrop **every
     /// transition frame** — the measured 42–49ms hitch we're eliminating. The two

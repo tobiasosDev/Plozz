@@ -4,15 +4,14 @@ import UIKit
 import CoreModels
 import CoreUI
 
-/// SwiftUI bridge for the **imperative UIKit hero foreground** (POC, gated by
-/// ``HeroForegroundConfig``). It hosts a single persistent ``HeroForegroundUIView``
-/// and, on every SwiftUI update, hands the coordinator the current slide's
-/// ``HeroForegroundModel`` plus a bounded set of neighbour models to pre-prepare.
+/// SwiftUI bridge for the **UIKit hero foreground**. It hosts a single
+/// persistent ``HeroForegroundUIView`` and, on every SwiftUI update, hands the
+/// coordinator the current slide's ``HeroForegroundModel`` plus a bounded set of
+/// neighbour models to pre-prepare.
 ///
 /// The persistent view is never rebuilt across a page: the coordinator only
-/// *applies* the new model's values in place (labels/images/frames), which is the
-/// whole point — no SwiftUI view-tree diff/relayout of the foreground per
-/// transition (the measured source of the hero page hitch).
+/// *applies* the new model's values in place (labels/images/frames). It also owns
+/// the hero's focus items, so moving between pills never re-renders SwiftUI.
 struct HeroForegroundRepresentable: UIViewRepresentable {
     /// The fronted slide's visuals.
     let model: HeroForegroundModel
@@ -27,10 +26,9 @@ struct HeroForegroundRepresentable: UIViewRepresentable {
     /// Persisted local-first logo candidates for the same bounded slide window.
     let logoReferences: [String: [ArtworkReference]]
     let backgroundSample: HeroBackgroundSample?
-    /// Whether the show description (logo/metadata/overview/pills) is currently
-    /// shown; the SwiftUI hero snaps this to `false` on a page and back to `true`
-    /// ~280ms later. The renderer mirrors it as an imperative alpha animation.
-    let metadataVisible: Bool
+    let events: HeroForegroundEvents
+    /// Left at the first pill leaves the hero for the native sidebar.
+    let escapesLeftAtFirstPill: Bool
     var logoSize: HeroLogoSize = .default
     var textSize: HeroTextSize = .default
     let width: CGFloat
@@ -54,7 +52,9 @@ struct HeroForegroundRepresentable: UIViewRepresentable {
         context.coordinator.updateArtworkPolicy(context.environment.plozzArtworkPolicy)
         context.coordinator.configure(width: width, height: height)
         context.coordinator.prepare(neighbours)
-        context.coordinator.apply(model, metadataVisible: metadataVisible, backgroundSample: backgroundSample)
+        view.events = events
+        view.escapesLeftAtFirstPill = escapesLeftAtFirstPill
+        context.coordinator.apply(model, backgroundSample: backgroundSample)
         return view
     }
 
@@ -73,7 +73,11 @@ struct HeroForegroundRepresentable: UIViewRepresentable {
         context.coordinator.updateArtworkPolicy(context.environment.plozzArtworkPolicy)
         context.coordinator.configure(width: width, height: height)
         context.coordinator.prepare(neighbours)
-        context.coordinator.apply(model, metadataVisible: metadataVisible, backgroundSample: backgroundSample)
+        uiView.events = events
+        if uiView.escapesLeftAtFirstPill != escapesLeftAtFirstPill {
+            uiView.escapesLeftAtFirstPill = escapesLeftAtFirstPill
+        }
+        context.coordinator.apply(model, backgroundSample: backgroundSample)
     }
 
     static func dismantleUIView(_ uiView: HeroForegroundUIView, coordinator: HeroForegroundCoordinator) {
@@ -94,8 +98,6 @@ final class HeroForegroundCoordinator {
     /// The model currently rendered on screen. A same-value re-apply is skipped.
     private var appliedModel: HeroForegroundModel?
     private var appliedLocale: Locale?
-    /// Whether the description block is currently shown (mirrors `metadataVisible`).
-    private var appliedMetadataVisible = true
     private var appliedBackgroundSample: HeroBackgroundSample?
     private var configuredWidth: CGFloat = 0
     private var configuredHeight: CGFloat = 0
@@ -160,9 +162,9 @@ final class HeroForegroundCoordinator {
 
     /// Applies a slide's visuals in place. Emits a gated HIT/MISS marker (was the
     /// model already prepared?) and times the imperative update.
-    func apply(_ model: HeroForegroundModel, metadataVisible: Bool, backgroundSample: HeroBackgroundSample? = nil) {
+    func apply(_ model: HeroForegroundModel, backgroundSample: HeroBackgroundSample? = nil) {
         guard let view else { return }
-        let unchanged = appliedModel == model && appliedMetadataVisible == metadataVisible
+        let unchanged = appliedModel == model
             && appliedLocale == locale && appliedBackgroundSample == backgroundSample
         guard !unchanged else { return }
 
@@ -173,7 +175,6 @@ final class HeroForegroundCoordinator {
         appliedModel = model
         appliedLocale = locale
         view.contentLocale = locale
-        appliedMetadataVisible = metadataVisible
         appliedBackgroundSample = backgroundSample
         prepared[model.itemID] = model
 
@@ -184,7 +185,6 @@ final class HeroForegroundCoordinator {
             view.apply(
                 model,
                 logo: warmedLogos[model.itemID]?.matchingBackground(backgroundSample),
-                metadataVisible: metadataVisible,
                 slideChanged: slideChanged
             )
         }

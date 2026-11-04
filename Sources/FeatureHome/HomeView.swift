@@ -256,6 +256,23 @@ public struct HomeView: View {
     /// it lags behind and settles last — the Apple TV parallax feel.
     private static let recedeAnimationDuration = HomeHeroRecedeModel.animationDuration
 
+    /// Starts or ends the hero recede. Called when focus leaves the hero downward
+    /// and, as a backstop, when the page scroll crosses `recedeScrollThreshold`;
+    /// a repeat of the current state is a no-op, so the two never restart it.
+    private func setHeroReceded(_ receded: Bool) {
+        #if os(tvOS)
+        guard !DetailTransitionNavigation.isRestoringSourcePage else { return }
+        #endif
+        guard heroRecedeModel.isReceded != receded else { return }
+        HomePerfDiagnostics.emitLine("HOME-TRANSITION receded=\(receded)")
+        if receded {
+            HomePerfDiagnostics.recordNavigationAnimation(receding: true)
+        }
+        withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
+            heroRecedeModel.isReceded = receded
+        }
+    }
+
     /// Page-scroll distance (points) past which the hero is considered "receded".
     /// The focus engine scrolls the page ~480pt in a single frame the instant
     /// focus lands on Continue Watching, so any threshold comfortably below that
@@ -583,6 +600,12 @@ public struct HomeView: View {
                                                 heroScrollProxy.scrollTo(Self.heroTopID, anchor: .top)
                                             }
                                         },
+                                        // Focus leaving downward is the earliest signal of
+                                        // the move to Continue Watching: recede now, on the
+                                        // same frame the focus engine starts its scroll,
+                                        // rather than when that scroll later crosses the
+                                        // threshold below (which stays as the backstop).
+                                        onFocusLeftDown: { setHeroReceded(true) },
                                         onPinnedItemsChanged: { heroRuntime.pinnedItemIDs = $0 },
                                         onTrailerReturnItemChanged: { heroRuntime.trailerReturnItemID = $0 },
                                         onItemExposed: { viewModel.recordHeroExposure($0) },
@@ -697,16 +720,7 @@ public struct HomeView: View {
                         .onScrollGeometryChange(for: Bool.self) { geometry in
                             heroLayoutActive && geometry.contentOffset.y > Self.recedeScrollThreshold
                         } action: { _, shouldRecede in
-                            #if os(tvOS)
-                            guard !DetailTransitionNavigation.isRestoringSourcePage else { return }
-                            #endif
-                            HomePerfDiagnostics.emitLine("HOME-TRANSITION receded=\(shouldRecede)")
-                            if shouldRecede {
-                                HomePerfDiagnostics.recordNavigationAnimation(receding: true)
-                            }
-                            withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
-                                heroRecedeModel.isReceded = shouldRecede
-                            }
+                            setHeroReceded(shouldRecede)
                         }
                         // When the hero is active, let it bleed into the top overscan
                         // inset instead of the ScrollView reserving it as a blank bar

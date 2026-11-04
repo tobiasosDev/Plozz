@@ -786,6 +786,8 @@ class Lane:
             if workload == "vertical-navigation"
             else "DetailReturnFocusRemoteTests/testProfilePopulatedShowcaseDetailReturns"
             if workload == "detail-return"
+            else "HomeHeroPagingRemoteTests/testProfileHeroPaging"
+            if workload == "hero-paging"
             else "ProductionHomeNavigationTests/testNavigateProductionHomeWithNativeCards"
         )
         command = [
@@ -1032,7 +1034,7 @@ def main(argv=None):
     profile.add_argument("--sim-id", required=True)
     profile.add_argument("--timeout", type=int, default=2400)
     profile.add_argument("--template", choices=("Time Profiler", "SwiftUI", "Process Sample"), default="Process Sample")
-    profile.add_argument("--workload", choices=("home-navigation", "detail-return", "horizontal-navigation", "vertical-navigation"), default="home-navigation")
+    profile.add_argument("--workload", choices=("home-navigation", "hero-paging", "detail-return", "horizontal-navigation", "vertical-navigation"), default="home-navigation")
     profile.add_argument("--home-shell", choices=tuple(HOME_SHELL_ARGUMENTS), default="none",
                          help="Navigation chrome around the home-navigation fixture; other workloads choose their own.")
     comparison = commands.add_parser("compare", help="Compare saved runs; never updates a baseline.")

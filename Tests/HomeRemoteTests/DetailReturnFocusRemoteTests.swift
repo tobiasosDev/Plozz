@@ -332,7 +332,7 @@ final class DetailReturnFocusRemoteTests: XCTestCase {
         if showcase {
             assertFocused("Fixture movie 0", in: app)
         } else {
-            let hero = app.buttons["home-hero-action-row"]
+            let hero = app.homeHero
             XCTAssertTrue(hero.waitForExistence(timeout: 20))
             XCTAssertTrue(hero.hasFocus)
             XCUIRemote.shared.press(.down)

@@ -815,6 +815,20 @@ records on both platforms; error dialogs, playback routing and timeouts are unch
   grids, and covered detail pages cannot retain background audio. A cancelled
   or no-longer-frontmost detail resolver cannot start a trailer after departure.
 
+## Home hero navigation
+
+On tvOS the carousel hero has one renderer, the UIKit `HeroForegroundUIView`.
+Its action pills are real focus items: Left/Right between them is native focus
+movement, and SwiftUI is not re-rendered for it. A move past the last pill pages
+forward and a move past the first pages back, with focus staying on the same
+pill; on the first slide Left leaves for the native sidebar (Top Bar wraps, the
+pinned rail opens). Invisible 1×1 edge catchers take those moves so the system
+still clicks and a native sidebar never treats a refused move as "open". There
+is no paging chevron. Focus returning from the tab bar or Continue Watching lands
+on the pill focused last, and the pills keep their position whether or not the
+paging dots are shown. Leaving the hero downward starts the recede immediately;
+the page-scroll threshold in `HomeView` remains the backstop.
+
 ## Home loading
 
 On iPhone and iPad, the loading and loaded Home layouts share the hero visibility

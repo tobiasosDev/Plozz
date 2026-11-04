@@ -12,7 +12,7 @@ import notify
 @MainActor
 final class PhysicalHomeRowsFirstTests: XCTestCase {
     private static var positionedSweep = false
-    private let heroID = "home-hero-action-row"
+    private let heroID = HomeHeroRemoteElement.identifierPrefix + "*"
     private var started: TimeInterval = 0
     private var confirmed: TimeInterval = 0
     private var events: [String] = []
@@ -1285,7 +1285,7 @@ final class PhysicalHomeRowsFirstTests: XCTestCase {
         }
         func mediaButtons(_ node: XCUIElementSnapshot) -> [Card] {
             if node.elementType == .button || node.elementType == .cell {
-                guard node.isEnabled, node.identifier != heroID,
+                guard node.isEnabled, !HomeHeroRemoteElement.isPillIdentifier(node.identifier),
                       node.identifier != "episode-entry-placeholder",
                       node.frame.width > 0, node.frame.height > 0 else { return [] }
                 let text = node.label.isEmpty
@@ -1338,8 +1338,8 @@ final class PhysicalHomeRowsFirstTests: XCTestCase {
         for collection in collections.prefix(12) {
             event("\(phase) native-collection identifier=\(collection.identifier.debugDescription) label=\(collection.label.debugDescription) frame=\(collection.frame)")
         }
-        let heroPresent = elements.contains { $0.identifier == heroID }
-        let heroFocused = elements.contains { $0.identifier == heroID && containsFocus($0) }
+        let heroPresent = elements.contains { HomeHeroRemoteElement.isPillIdentifier($0.identifier) }
+        let heroFocused = elements.contains { HomeHeroRemoteElement.isPillIdentifier($0.identifier) && containsFocus($0) }
         let focusedControl = elements.first { $0.elementType == .button && containsFocus($0) }
         let homeLabel = ProcessInfo.processInfo.environment["PLOZZ_HOME_NAVIGATION_LABEL"] ?? "Home"
         let sidebarLabels: Set<String> = [homeLabel, "Search", "Watchlist", "Live TV", "Music", "Settings"]
