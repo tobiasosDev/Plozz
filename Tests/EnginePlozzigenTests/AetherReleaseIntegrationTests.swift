@@ -52,7 +52,6 @@ final class AetherReleaseIntegrationTests: XCTestCase {
         XCTAssertFalse(options.preferDualLayerDolbyVision)
         XCTAssertFalse(options.upscalesLowResolutionVideo)
         XCTAssertFalse(options.audioShaping.isActive)
-        XCTAssertFalse(PlozzigenVideoEngine.onDemandLoadOptions().preferDualLayerDolbyVision)
     }
 
     @MainActor
@@ -87,10 +86,10 @@ final class AetherReleaseIntegrationTests: XCTestCase {
         XCTAssertEqual(diagnostics.audioEncodingDescription, "No re-encoding")
     }
 
-    func testOnDemandOptionsUseProfile7BaseLayerWithoutChangingAudio() {
+    func testOnDemandOptionsKeepProfile7DolbyVisionWithoutChangingAudio() {
         let options = PlozzigenVideoEngine.onDemandLoadOptions()
-        XCTAssertFalse(options.preferDualLayerDolbyVision)
-        XCTAssertEqual(options.dolbyVisionHandling, .profile7BaseLayer)
+        XCTAssertTrue(options.preferDualLayerDolbyVision)
+        XCTAssertEqual(options.dolbyVisionHandling, .automatic)
         XCTAssertFalse(options.isLive)
         XCTAssertTrue(options.matchContentEnabled)
         XCTAssertEqual(options.audioBridgeMode, .lossless)
@@ -98,7 +97,7 @@ final class AetherReleaseIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testResolvedRequestsNeverEnableFELOrHeightConversionAcrossProviders() throws {
+    func testResolvedRequestsRequestLosslessFELWithoutHeightConversionAcrossProviders() throws {
         let engine = try PlozzigenVideoEngine()
         defer { engine.stop() }
         for provider in [ProviderKind.plex, .jellyfin, .emby, .mediaShare, .silo] {
@@ -111,8 +110,8 @@ final class AetherReleaseIntegrationTests: XCTestCase {
                 )
                 request.sourceProvider = provider
                 let options = engine.onDemandLoadOptions(for: request)
-                XCTAssertFalse(options.preferDualLayerDolbyVision)
-                XCTAssertEqual(options.dolbyVisionHandling, .profile7BaseLayer)
+                XCTAssertTrue(options.preferDualLayerDolbyVision)
+                XCTAssertEqual(options.dolbyVisionHandling, .automatic)
                 XCTAssertEqual(options.objectAudioRendering, .off)
             }
         }
@@ -125,7 +124,7 @@ final class AetherReleaseIntegrationTests: XCTestCase {
             )
             XCTAssertTrue(options.isLive)
             XCTAssertFalse(options.preferDualLayerDolbyVision)
-            XCTAssertEqual(options.dolbyVisionHandling, .profile7BaseLayer)
+            XCTAssertEqual(options.dolbyVisionHandling, .automatic)
             XCTAssertEqual(options.objectAudioRendering, .off)
         }
     }
@@ -157,7 +156,7 @@ final class AetherReleaseIntegrationTests: XCTestCase {
             )
             XCTAssertEqual(options.objectAudioRendering, .off)
             XCTAssertFalse(options.preferDualLayerDolbyVision)
-            XCTAssertEqual(options.dolbyVisionHandling, .profile7BaseLayer)
+            XCTAssertEqual(options.dolbyVisionHandling, .automatic)
             XCTAssertEqual(options.audioBridgeMode, .lossless)
             XCTAssertEqual(options.suppressDisplayCriteria, policy.suppressesDisplayMatching)
             XCTAssertEqual(options.matchContentEnabled, !policy.suppressesDisplayMatching)
@@ -169,11 +168,11 @@ final class AetherReleaseIntegrationTests: XCTestCase {
             outputPolicy: .init(isAudible: true, suppressesDisplayMatching: true)
         )
         XCTAssertFalse(options.preferDualLayerDolbyVision)
-        XCTAssertEqual(options.dolbyVisionHandling, .profile7BaseLayer)
+        XCTAssertEqual(options.dolbyVisionHandling, .automatic)
     }
 
     @MainActor
-    func testProfile7PolicyDoesNotTrustMissingOrMislabeledProviderMetadata() throws {
+    func testProfile7PolicyDoesNotDependOnProviderMetadata() throws {
         let engine = try PlozzigenVideoEngine()
         defer { engine.stop() }
         for profile in [nil, 5, 7, 8] as [Int?] {
@@ -185,7 +184,9 @@ final class AetherReleaseIntegrationTests: XCTestCase {
                 request.sourceMetadata = .init(
                     video: .init(codec: "hevc", dolbyVisionProfile: profile))
             }
-            XCTAssertEqual(engine.onDemandLoadOptions(for: request).dolbyVisionHandling, .profile7BaseLayer)
+            let options = engine.onDemandLoadOptions(for: request)
+            XCTAssertEqual(options.dolbyVisionHandling, .automatic)
+            XCTAssertTrue(options.preferDualLayerDolbyVision)
         }
     }
 

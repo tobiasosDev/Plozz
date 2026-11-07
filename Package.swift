@@ -228,7 +228,8 @@ let package = Package(
         // life.
         //
         // The current fork retains that correction and exports the engine dynamically.
-        // Height-channel conversion and FEL reconstruction are disabled.
+        // Height-channel conversion is disabled. The fork keeps Dolby Vision
+        // Profile 7: FEL reconstruction and Profile 5 stills are compiled in.
         // Progressive segment delivery remains off.
         // Both apps embed the engine framework and its dependency notices.
         //
@@ -250,11 +251,12 @@ let package = Package(
         // Audio shaping and low-resolution upscaling remain opt-in and disabled.
         // Resume preroll backfill no longer opens a false native-scrub landing watch.
         // Native media-selection IPC uses bounded off-main readers during media-service stalls.
-        // Profile 7-only HDR10 fallback preserves other Dolby Vision routes.
+        // Profile 7-only HDR10 fallback preserves other Dolby Vision routes; the
+        // fork does not select it.
         .package(
             url: "https://github.com/brandomoore/AetherEngine",
             revision: "8c7f919a4cff9f0d27d27f464657578ec08fc221",
-            traits: []
+            traits: ["DualLayerDolbyVision", "DolbyVisionStillReshaping"]
         ),
         // NOTE: FFmpegBuild (FFmpeg n8.1.x media libraries) and LibDovi (Dolby Vision
         // RPU parser) are transitive dependencies — AetherEngine declares and

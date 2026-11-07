@@ -1,20 +1,30 @@
 @testable import AetherEngine
 import CoreModels
 import FeaturePlayback
+import UIKit
 import XCTest
 @testable import EnginePlozzigen
 
 @MainActor
 final class SpatialAudioLayoutPreferenceTests: XCTestCase {
-    func testOptionalEngineComponentsAreExcluded() {
+    /// The app's engine traits apply where the generated project builds the
+    /// engine (the app and its hosted tests). A package logic run builds the
+    /// engine without them and has no application scene.
+    private var runsInsideTheApp: Bool { !UIApplication.shared.connectedScenes.isEmpty }
+
+    func testOnlyTheDolbyVisionEngineComponentsAreBuiltIn() throws {
         XCTAssertFalse(AetherEngine.OptionalComponent.trueHDObjectAudio.isBuiltIn)
         XCTAssertFalse(AetherEngine.OptionalComponent.dtsxObjectAudio.isBuiltIn)
-        XCTAssertFalse(AetherEngine.OptionalComponent.dualLayerDolbyVision.isBuiltIn)
-        XCTAssertFalse(AetherEngine.OptionalComponent.dolbyVisionStillReshaping.isBuiltIn)
+        try XCTSkipUnless(runsInsideTheApp, "Engine traits are verified in the hosted run")
+        XCTAssertTrue(AetherEngine.OptionalComponent.dualLayerDolbyVision.isBuiltIn)
+        XCTAssertTrue(AetherEngine.OptionalComponent.dolbyVisionStillReshaping.isBuiltIn)
     }
 
-    func testStillExtractionRequiresAnOrdinaryBaseLayer() {
-        XCTAssertFalse(FrameDecodeContext.yieldsStill(dolbyVisionNoBaseLayer: true))
+    func testDolbyVisionStillsFollowTheReshapingComponent() {
+        XCTAssertEqual(
+            FrameDecodeContext.yieldsStill(dolbyVisionNoBaseLayer: true),
+            AetherEngine.OptionalComponent.dolbyVisionStillReshaping.isBuiltIn
+        )
         XCTAssertTrue(FrameDecodeContext.yieldsStill(dolbyVisionNoBaseLayer: false))
     }
 
@@ -62,7 +72,6 @@ final class SpatialAudioLayoutPreferenceTests: XCTestCase {
     func testHeightConversionStaysOffForOnDemandAndLiveStreams() {
         let onDemand = PlozzigenVideoEngine.onDemandLoadOptions()
         XCTAssertEqual(onDemand.objectAudioRendering, .off)
-        XCTAssertFalse(onDemand.preferDualLayerDolbyVision)
         for suffix in ["ts", "m3u8"] {
             let options = PlozzigenVideoEngine.liveLoadOptions(
                 httpHeaders: [:], url: URL(string: "https://example.invalid/live.\(suffix)")

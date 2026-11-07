@@ -505,10 +505,10 @@ Upstream 7.44.0 replaced LibDTSX with FFmpeg's patched `dca` decoder.
 `DTSX.framework` and the retired LibDTSX notices are no longer shipped;
 existing FFmpeg notices remain.
 
-Plozz explicitly enables no optional engine traits. `DolbyVisionStillReshaping`,
-`DualLayerDolbyVision`, `TrueHDObjectAudio` and `DTSXObjectAudio` are disabled:
-their engine implementations are excluded, and LibTrueHD is not resolved or
-linked. The existing FFmpegBuild binary still contains its dormant DTS:X
+This fork enables the `DualLayerDolbyVision` and `DolbyVisionStillReshaping`
+engine traits, which compile code only and link no extra library.
+`TrueHDObjectAudio` and `DTSXObjectAudio` stay disabled: their engine
+implementations are excluded, and LibTrueHD is not resolved or linked. The existing FFmpegBuild binary still contains its dormant DTS:X
 `x_heights` decoder option; Plozz does not enable it. This is not a stripped
 FFmpeg build. Ordinary FFmpeg audio decoding is unchanged. Both apps consume
 this same local package, so no generated-project trait patch is needed. Engine
@@ -516,10 +516,8 @@ integration tests inspect the linked engine's `OptionalComponent.isBuiltIn`
 flags, not just its load options. Upstream's licensing notices remain applicable;
 this configuration does not establish patent clearance.
 
-Dolby Vision Profile 5 / AV1 Profile 10.0 sources no longer receive software-
-reshaped scrub or I-frame stills. Ordinary base-layer thumbnails remain available.
-Native Dolby Vision playback is unchanged; the pinned engine can retain a held
-picture through the system compositor instead of applying its own reshaping.
+Dolby Vision Profile 5 / AV1 Profile 10.0 sources receive software-reshaped
+scrub and I-frame stills again, as the still-reshaping trait is enabled.
 
 The 7.23.0-to-7.34.1 range adds live-start/holdback and source-open recovery
 fixes, corrected software resume/seek timelines, transport-intent preservation
@@ -665,33 +663,20 @@ size probes. FFmpegBuild 3.4.x adds AV1 Dolby Vision sample-entry support.
 
 ## Dolby Vision FEL
 
-**Experimental FEL reconstruction is unavailable.** Its Settings control and
-search result are removed on tvOS and iOS/iPadOS. The adapter explicitly sets
-`LoadOptions.preferDualLayerDolbyVision = false`, and the `DualLayerDolbyVision`
-package trait is disabled. Legacy `dolbyVisionFELEnabled` values are ignored when
-loading or transferring profile settings and omitted on the next save.
+The fork keeps Profile 7 Dolby Vision, unlike upstream's HDR10-base policy.
+On-demand playback uses `DolbyVisionHandling.automatic` with
+`LoadOptions.preferDualLayerDolbyVision` on for audible, unshared,
+display-matched players: Profile 7 MEL converts to single-layer 8.1, and FEL is
+reconstructed losslessly where the engine judges the source and device eligible,
+falling back to the 8.1 conversion otherwise. There is no Settings control.
+Shared players, muted previews and display-suppressed previews do not request
+FEL. Engine-demuxed live playback uses `.automatic` without FEL reconstruction.
+Legacy `dolbyVisionFELEnabled` values are ignored when loading or transferring
+profile settings and omitted on the next save. Where spatial conversion is
+unavailable, FEL sessions use channel-based audio.
 
-Plozz selects `DolbyVisionHandling.profile7BaseLayer` for on-demand playback,
-previews and engine-demuxed live playback. Both Profile 7 MEL and FEL play their
-authored HDR10 base, without P7-to-8.1 RPU conversion or enhancement-layer
-reconstruction. The engine classifies its demuxed source, including verified
-record corrections, rather than trusting possibly missing or inaccurate provider
-metadata. Its native remux uses plain `hvc1`, strips the Dolby configuration
-record, omits Dolby supplemental codecs, and requests base-layer display criteria.
-Source diagnostics can still identify Profile 7; output must not claim converted
-Profile 8.1. RPU/EL NALs remain unconverted and are ignored by the base-layer decoder.
-
-This intentionally gives up Profile 7 dynamic metadata, including MEL, and FEL
-residual detail. Supported single-layer Dolby Vision profiles, ordinary audio
-paths, and native E-AC-3/JOC stream-copy remain unchanged. Software still-image
-reshaping remains disabled. Direct remote HLS handed to AVPlayer, server
-transcoding, and external players own their delivered format; this policy does not
-rewrite those streams or infer their format from original-file metadata.
-
-Removing the optional reconstruction path does not establish licensing clearance
-for every remaining video or audio feature. Avoiding P7 conversion reduces custom
-processing; it does not remove all Dolby-related code from the distributed engine
-or establish patent permission. Open-source licensing and Apple API availability
+Keeping the optional reconstruction path does not establish licensing clearance
+for every video or audio feature, nor patent permission. Open-source licensing and Apple API availability
 are not a substitute for reviewing the actual shipped implementation and applicable
 third-party rights.
 
@@ -917,7 +902,7 @@ retention assertions; they do not establish physical-device frame pacing.
 
 | Feature | Plozzigen | Native |
 |---------|-----------|--------|
-| Dolby Vision | ✅ (Profile 5/8; optional dual-layer path, see above) | ✅ (if server delivers DV) |
+| Dolby Vision | ✅ (Profile 5/8 and Profile 7 MEL; Profile 7 FEL dual-layer by default, see above) | ✅ (if server delivers DV) |
 | Directly compatible spatial audio | ✅ (E-AC-3 JOC on the native path; software playback uses channel PCM) | ✅ (if stream has E-AC-3 JOC) |
 | HDR10 / HLG | ✅ | ✅ |
 | Full-timeline seek | ✅ | ✅ (if not live transcode) |

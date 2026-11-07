@@ -909,8 +909,13 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
             audioBridgeMode: losslessAudioEnabled ? .lossless : .surroundCompat
         )
         options.objectAudioRendering = .off
-        options.preferDualLayerDolbyVision = false
-        options.dolbyVisionHandling = .profile7BaseLayer
+        // Profile 7 keeps Dolby Vision: MEL converts to 8.1 and FEL is reconstructed
+        // losslessly where the engine judges the source and device eligible, else it
+        // falls back to the 8.1 conversion. Shared, muted and display-suppressed
+        // players stay on the ordinary route.
+        options.preferDualLayerDolbyVision = outputPolicy.isAudible
+            && !outputPolicy.sharesAudioSession && !outputPolicy.suppressesDisplayMatching
+        options.dolbyVisionHandling = .automatic
         // Aether uses approximately four-second segments and clamps the maximum
         // to 2,700, retaining its free-space budget and producer backpressure.
         switch readAhead {
@@ -963,7 +968,8 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
             nativeRemoteHLS: format == .hls,
             nativeRemoteHLSIngestFallback: true
         )
-        options.dolbyVisionHandling = .profile7BaseLayer
+        // Live Profile 7 converts to 8.1; FEL reconstruction stays on-demand only.
+        options.dolbyVisionHandling = .automatic
         return options
     }
 

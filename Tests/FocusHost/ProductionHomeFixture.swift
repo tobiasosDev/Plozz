@@ -859,7 +859,7 @@ struct ProductionHomeFixture: View {
         var foreground: UIView?
         var foregroundViews = [stage.hero.view!]
         while let view = foregroundViews.popLast() {
-            if view is HeroDirectionalPressMonitor.InstallerView { foreground = view; break }
+            if view is HeroForegroundUIView { foreground = view; break }
             foregroundViews.append(contentsOf: view.subviews)
         }
         let foregroundOrigin = foreground.map { $0.convert($0.bounds, to: stage.view) }
