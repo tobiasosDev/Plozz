@@ -164,8 +164,10 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
     /// key so saved Off choices and transferred profile preferences survive.
     public var trueHDAtmosEnabled: Bool
 
-    /// Experimental Profile 7 FEL reconstruction. Off by default; applies to new
-    /// on-demand sessions, retaining eligible spatial audio on OS 26 and later.
+    /// Profile 7 FEL reconstruction, which keeps the enhancement layer's residual
+    /// instead of discarding it in a Profile 8.1 conversion. On by default; applies
+    /// to new on-demand sessions the engine judges eligible. Where spatial
+    /// conversion is unavailable, those sessions use channel-based audio.
     public var dolbyVisionFELEnabled: Bool
 
     /// Remember the chosen **audio language** per series: switching audio on any
@@ -226,7 +228,7 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
         upNextLeadSeconds: Int = 30,
         audioLanguagePreference: AudioLanguagePreference = .original,
         trueHDAtmosEnabled: Bool = true,
-        dolbyVisionFELEnabled: Bool = false,
+        dolbyVisionFELEnabled: Bool = true,
         rememberAudioTrackPerSeries: Bool = true,
         rememberSubtitleTrackPerSeries: Bool = true,
         identifySongs: Bool = true,
@@ -453,7 +455,9 @@ public extension PlaybackSettings {
         case upNextLeadSeconds
         case audioLanguagePreference
         case trueHDAtmosEnabled
-        case dolbyVisionFELEnabled
+        /// The off-by-default experiment stored `dolbyVisionFELEnabled`; that key is
+        /// retired so profiles which only saved its default adopt lossless Profile 7.
+        case dolbyVisionFELEnabled = "dolbyVisionLosslessFEL"
         /// Legacy boolean predecessor of `audioLanguagePreference`, still read for
         /// migration (`true` → `.original`, `false` → `.device`).
         case preferOriginalLanguageAudio
@@ -485,6 +489,10 @@ public extension PlaybackSettings {
     /// wants the resume-rewind nudge on for upgrading installs too, not just fresh
     /// ones (`.off` is available for anyone who prefers exact resume).
     /// Spatial audio defaults on when absent, while an existing Off choice survives.
+    /// Profile 7 FEL reconstruction defaults on when absent. The retired
+    /// experimental `dolbyVisionFELEnabled` key is ignored, including in imported
+    /// profiles: every saved profile wrote its Off default, and an opt-in already
+    /// matches the new default.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = PlaybackSettings.default

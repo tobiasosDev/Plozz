@@ -44,10 +44,10 @@ final class SettingsWorkspaceNavigationTests: XCTestCase {
         XCTAssertEqual(rows.map(\.id), expectedIDs)
         XCTAssertEqual(rows.first?.presentation, .page)
         XCTAssertNil(rows.first(where: { $0.id == "dolby-vision-fel" })?.childRows)
-        XCTAssertFalse(playback.settings.dolbyVisionFELEnabled)
-        playback.settings.dolbyVisionFELEnabled = true
-        XCTAssertTrue(PlaybackSettingsStore(defaults: defaults, namespace: "guest").load().dolbyVisionFELEnabled)
-        XCTAssertFalse(PlaybackSettingsStore(defaults: defaults).load().dolbyVisionFELEnabled)
+        XCTAssertTrue(playback.settings.dolbyVisionFELEnabled)
+        playback.settings.dolbyVisionFELEnabled = false
+        XCTAssertFalse(PlaybackSettingsStore(defaults: defaults, namespace: "guest").load().dolbyVisionFELEnabled)
+        XCTAssertTrue(PlaybackSettingsStore(defaults: defaults).load().dolbyVisionFELEnabled)
         XCTAssertEqual(external.settings.player, .builtIn)
     }
 

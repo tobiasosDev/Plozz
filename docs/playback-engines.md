@@ -692,13 +692,15 @@ size probes. FFmpegBuild 3.4.x adds AV1 Dolby Vision sample-entry support.
 
 **Settings > Playback > Advanced > Dolby Vision FEL (experimental)** is on by
 default, saved per profile, and applied to new built-in on-demand playback
-sessions on tvOS and iOS/iPadOS. The choice is stored under
+sessions on tvOS and iOS/iPadOS. Profile 5, Profile 8 and Profile 7 MEL already
+reach the display without loss; this preference keeps Profile 7 FEL lossless too
+instead of discarding its residual. The choice is stored under
 `dolbyVisionLosslessFEL`; the earlier default-off `dolbyVisionFELEnabled` key is
 ignored, so existing and imported profiles start on until a user turns it off.
-Profile transfer carries the choice. The adapter passes it through
-`LoadOptions.preferDualLayerDolbyVision`; it does not enable FEL for live
-streams, shared players, muted previews or display-suppressed previews. External
-players own their own decoding preferences.
+Missing or malformed values use the default. Profile transfer carries the
+choice. The adapter passes it through `LoadOptions.preferDualLayerDolbyVision`;
+it does not enable FEL for live streams, shared players, muted previews or
+display-suppressed previews. External players own their own decoding preferences.
 
 Upstream now presents every Profile 7 file from its HDR10 base
 (`DolbyVisionHandling.profile7BaseLayer`). The fork keeps `.automatic` for
