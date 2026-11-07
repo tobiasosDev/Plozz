@@ -234,7 +234,7 @@ struct PlayerTimelineLabels: View, Equatable {
     let model: PlayerControlsModel
     let curLabel: String
     let remLabel: String
-    let endsAt: LocalizedStringResource?
+    var endsAt: LocalizedStringResource? = nil
     let showsClock: Bool
     /// The "Ends at" label's rendered width, for the collision fade. Measured
     /// from the visible label itself; it is localized copy, so it cannot be
