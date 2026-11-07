@@ -26,7 +26,7 @@ final class ShowcaseNavigationTests: XCTestCase {
         app.launchEnvironment["PLZHFOCUS_STDOUT"] = "1"
         app.launch()
         defer { app.terminate() }
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(app.staticTexts["Production Home ready"].waitForExistence(timeout: 30))
         func awaitFocus(_ element: XCUIElement) {
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
@@ -69,7 +69,7 @@ final class ShowcaseNavigationTests: XCTestCase {
             ]
             app.launch()
             defer { app.terminate() }
-            let hero = app.buttons["home-hero-action-row"]
+            let hero = app.homeHero
             XCTAssertTrue(hero.waitForExistence(timeout: 30))
             if !hero.hasFocus { XCUIRemote.shared.press(style == "--top-bar-home" ? .down : .select) }
             let report = app.staticTexts["hero-boundary-latency"]
@@ -104,7 +104,7 @@ final class ShowcaseNavigationTests: XCTestCase {
         ]
         app.launch()
         defer { app.terminate() }
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 30))
         let heroFocused = NSPredicate { _, _ in hero.hasFocus }
         XCTAssertEqual(XCTWaiter.wait(
@@ -492,7 +492,7 @@ final class ShowcaseNavigationTests: XCTestCase {
         ]
         app.launch()
         defer { app.terminate() }
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 30))
         if !hero.hasFocus { XCUIRemote.shared.press(.select) }
         let heroFocused = NSPredicate { _, _ in hero.hasFocus }

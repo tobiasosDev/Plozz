@@ -19,7 +19,7 @@ final class LiveJellyfinHomeRemoteTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [focused], timeout: 5), .completed)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.staticTexts["Real Home data ready"].waitForExistence(timeout: 35))
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 20))
         Thread.sleep(forTimeInterval: 5)
         XCTAssertTrue(hero.hasFocus)

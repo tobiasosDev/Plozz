@@ -13,8 +13,9 @@ final class ProductionHomeNavigationTests: XCTestCase {
                         + (delayed ? ["--slow-home-load"] : [])
                     app.launch()
                     defer { app.terminate() }
-                    let first = app.buttons[layout.contains("--immersive-home") || layout.contains("--hero-disabled-home")
-                        ? "Fixture movie 0" : "home-hero-action-row"]
+                    let first: any RemoteFocusTarget = layout.contains("--immersive-home")
+                        || layout.contains("--hero-disabled-home")
+                        ? app.buttons["Fixture movie 0"] : app.homeHero
                     XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                         predicate: NSPredicate { _, _ in first.exists && first.hasFocus }, object: nil
                     )], timeout: 30), .completed, "\(navigation) \(layout) delayed=\(delayed)\n\(app.debugDescription)")

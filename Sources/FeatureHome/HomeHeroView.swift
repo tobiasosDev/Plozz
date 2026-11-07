@@ -916,6 +916,16 @@ struct HomeHeroView: View {
         .prefersDefaultFocus(true, in: focusScope)
         .navigationEntryFocus(.content)
         .id(Self.actionRowFocusID)
+        // Up opens the playing trailer full screen with the Pinned Sidebar; other
+        // layouts keep their native Up navigation. The UIKit pills still own
+        // Select and Left/Right; this only observes the move.
+        .trailerFullScreenOnMove(
+            controller: trailerController, itemID: item.id, role: .home,
+            title: item.title,
+            navigationStyle: navigationStyle,
+            enabled: isFrontmost && !pausedForRows && showsTrailer,
+            onMove: noteInteraction
+        )
         .preloadDetailBackdropOnFocus(for: current, isFocused: heroFocused && isFrontmost)
         .onChange(of: pausedForRows) { _, isReceded in
             if isReceded { pauseWhileReceded() } else { resumeFromRecede() }

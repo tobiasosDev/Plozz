@@ -6,7 +6,7 @@ final class TrailerFullscreenRemoteTests: XCTestCase {
         continueAfterFailure = false
         let app = launch(style: "--pinned-home", extraArguments: ["--hero-trailer-failure"])
         defer { app.terminate() }
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 30))
         let initialLabel = hero.label
         XCTAssertEqual(XCTWaiter.wait(for: [
@@ -32,7 +32,7 @@ final class TrailerFullscreenRemoteTests: XCTestCase {
         continueAfterFailure = false
         let app = launch(style: style)
         defer { app.terminate() }
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 30))
         if !hero.hasFocus { XCUIRemote.shared.press(style == "--top-bar-home" ? .down : .right) }
         wait { hero.hasFocus }
@@ -64,7 +64,7 @@ final class TrailerFullscreenRemoteTests: XCTestCase {
         continueAfterFailure = false
         let app = launch(style: "--top-bar-home")
         defer { app.terminate() }
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 30))
         if !hero.hasFocus { XCUIRemote.shared.press(.down) }
         wait { hero.hasFocus }
@@ -97,7 +97,7 @@ final class TrailerFullscreenRemoteTests: XCTestCase {
             ["--continue-watching-action-probe"] + (ambient ? [] : ["--ambient-trailers-off"])
         )
         defer { app.terminate() }
-        let hero = app.buttons["home-hero-action-row"]
+        let hero = app.homeHero
         XCTAssertTrue(hero.waitForExistence(timeout: 30))
         if !hero.hasFocus { XCUIRemote.shared.press(.down) }
         wait { hero.hasFocus }
