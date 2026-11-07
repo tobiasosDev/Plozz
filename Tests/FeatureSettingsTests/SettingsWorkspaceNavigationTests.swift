@@ -28,15 +28,26 @@ final class SettingsWorkspaceNavigationTests: XCTestCase {
         }
     }
 
-    func testAdvancedPlaybackKeepsExternalPlayerWithoutRetiredConversionControls() throws {
+    func testAdvancedPlaybackIncludesProfileScopedFELWithoutChangingExternalPlayerScope() throws {
         let suite = "AdvancedPlaybackSettingsTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
+        let playback = PlaybackSettingsModel(store: PlaybackSettingsStore(defaults: defaults, namespace: "guest"))
         let external = ExternalPlayerSettingsModel(defaults: defaults)
-        let rows = PlaybackAdvancedSettingsView.rows(model: external)
-        let expectedIDs = ["external-player"]
+        let rows = PlaybackAdvancedSettingsView.rows(playback: playback, model: external)
+        var expectedIDs = ["external-player", "dolby-vision-fel"]
+        #if os(tvOS)
+        if #available(tvOS 26.0, *) {
+            expectedIDs.append("spatial-audio-layout")
+        }
+        #endif
         XCTAssertEqual(rows.map(\.id), expectedIDs)
         XCTAssertEqual(rows.first?.presentation, .page)
+        XCTAssertNil(rows.first(where: { $0.id == "dolby-vision-fel" })?.childRows)
+        XCTAssertFalse(playback.settings.dolbyVisionFELEnabled)
+        playback.settings.dolbyVisionFELEnabled = true
+        XCTAssertTrue(PlaybackSettingsStore(defaults: defaults, namespace: "guest").load().dolbyVisionFELEnabled)
+        XCTAssertFalse(PlaybackSettingsStore(defaults: defaults).load().dolbyVisionFELEnabled)
         XCTAssertEqual(external.settings.player, .builtIn)
     }
 

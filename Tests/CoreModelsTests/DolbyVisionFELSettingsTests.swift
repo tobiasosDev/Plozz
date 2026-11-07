@@ -2,31 +2,24 @@ import XCTest
 @testable import CoreModels
 
 final class DolbyVisionFELSettingsTests: XCTestCase {
-    func testRetiredFELPreferenceIsIgnoredAndNotWrittenBack() throws {
+    func testDefaultAndOlderPayloadsKeepFELDisabled() throws {
+        XCTAssertFalse(PlaybackSettings.default.dolbyVisionFELEnabled)
         for payload in [
             #"{}"#,
-            #"{"dolbyVisionFELEnabled":true}"#,
-            #"{"dolbyVisionFELEnabled":false}"#,
             #"{"dolbyVisionFELEnabled":null}"#,
             #"{"dolbyVisionFELEnabled":"unknown"}"#
         ] {
             let settings = try JSONDecoder().decode(PlaybackSettings.self, from: Data(payload.utf8))
-            XCTAssertEqual(settings, .default)
-            let encoded = try XCTUnwrap(
-                JSONSerialization.jsonObject(with: JSONEncoder().encode(settings)) as? [String: Any]
-            )
-            XCTAssertNil(encoded["dolbyVisionFELEnabled"])
+            XCTAssertFalse(settings.dolbyVisionFELEnabled)
         }
     }
 
-    func testLegacyFELChoicesDoNotChangeOtherPlaybackPreferences() throws {
+    func testFELChoicesRoundTripWithoutChangingOtherAudioPreferences() throws {
         for enabled in [false, true] {
-            let settings = try JSONDecoder().decode(
-                PlaybackSettings.self, from: Data("""
-                {"dolbyVisionFELEnabled":\(enabled),"rememberAudioTrackPerSeries":false}
-                """.utf8)
+            let settings = PlaybackSettings(
+                audioLanguagePreference: .language("ja"),
+                dolbyVisionFELEnabled: enabled
             )
-            XCTAssertEqual(settings, PlaybackSettings(rememberAudioTrackPerSeries: false))
             XCTAssertEqual(
                 try JSONDecoder().decode(PlaybackSettings.self, from: JSONEncoder().encode(settings)),
                 settings
@@ -35,31 +28,28 @@ final class DolbyVisionFELSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyProfileTransferCannotRestoreFELAndPreservesOtherChoices() throws {
+    func testBindingRestoresAndTransfersOnlyTheSelectedProfilesChoice() throws {
         let suite = "DolbyVisionFELSettingsTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let primaryStore = PlaybackSettingsStore(defaults: defaults)
         let guestStore = PlaybackSettingsStore(defaults: defaults, namespace: "guest")
-        let guestKey = SettingsKey.scoped("com.plozz.playbackSettings", namespace: "guest")
-        defaults.set(Data("""
-        {"dolbyVisionFELEnabled":true,"rememberAudioTrackPerSeries":false}
-        """.utf8), forKey: guestKey)
         let guest = PlaybackSettingsModel(store: guestStore)
-        let expected = PlaybackSettings(rememberAudioTrackPerSeries: false)
-        XCTAssertEqual(PlaybackSettingsModel(store: primaryStore).settings, .default)
-        XCTAssertEqual(guest.settings, expected)
+        guest.settings.dolbyVisionFELEnabled = true
+
+        XCTAssertFalse(PlaybackSettingsModel(store: primaryStore).settings.dolbyVisionFELEnabled)
+        XCTAssertTrue(PlaybackSettingsModel(store: guestStore).settings.dolbyVisionFELEnabled)
+        XCTAssertTrue(guestStore.load().rememberAudioTrackPerSeries)
 
         let snapshot = ProfileSettingsTransfer.capture(namespace: "guest", defaults: defaults)
         ProfileSettingsTransfer.apply(snapshot, namespace: "restored", defaults: defaults)
-        let restoredStore = PlaybackSettingsStore(defaults: defaults, namespace: "restored")
-        XCTAssertEqual(restoredStore.load(), expected)
-        guest.settings.audioLanguagePreference = .language("ja")
-        XCTAssertEqual(guestStore.load().audioLanguagePreference, .language("ja"))
-        XCTAssertEqual(restoredStore.load(), expected)
-        let saved = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: XCTUnwrap(defaults.data(forKey: guestKey))) as? [String: Any]
+        XCTAssertTrue(
+            PlaybackSettingsStore(defaults: defaults, namespace: "restored").load().dolbyVisionFELEnabled
         )
-        XCTAssertNil(saved["dolbyVisionFELEnabled"])
+        guest.settings.dolbyVisionFELEnabled = false
+        XCTAssertFalse(guestStore.load().dolbyVisionFELEnabled)
+        XCTAssertTrue(
+            PlaybackSettingsStore(defaults: defaults, namespace: "restored").load().dolbyVisionFELEnabled
+        )
     }
 }

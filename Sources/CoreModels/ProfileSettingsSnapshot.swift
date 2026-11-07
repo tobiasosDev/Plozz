@@ -39,7 +39,7 @@ public enum ProfileSettingsTransfer {
     ///  - `com.plozz.deviceExternalPlayer` (shared by viewers on this device only)
     ///  - `com.plozz.deviceTopShelf` (shared Top Shelf preferences on this Apple TV only)
     ///  - `com.plozz.losslessSurround` (connected audio setup, shared by viewers on this device)
-    ///  - `com.plozz.spatialAudioLayout` (retired device-local rendering layout)
+    ///  - `com.plozz.spatialAudioLayout` (rendering layout for this device's audio setup)
     public static let transferableBaseKeys: [String] = [
         "com.plozz.appTheme",
         ThemeSettingsStore.gradientStorageKey,

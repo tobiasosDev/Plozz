@@ -130,8 +130,10 @@ available when you want them.
   other clients hand back to you, powered by
   [AetherEngine](https://github.com/superuser404notfound/AetherEngine).
   ([The full format list](https://github.com/superuser404notfound/AetherEngine/blob/main/docs/formats.md).)
-- **Surround audio** — ordinary multichannel playback and native spatial audio
-  from compatible streams and equipment. Height-channel conversion is not available.
+- **Spatial audio** — optional lossy conversion adds overhead sound from
+  supported tracks on tvOS 26 and compatible equipment. Other paths retain
+  compatible channel playback. Dolby Digital Plus streams keep their native
+  playback path.
   [Compatibility details](docs/playback-engines.md#spatial-audio).
 - **Change versions without leaving the player** — switch between files or
   editions on the active server on Apple TV, iPhone, and iPad. Keep your

@@ -200,8 +200,11 @@ final class SettingsSearchTests: XCTestCase {
                 XCTAssertFalse(entry.isAvailable(on: platform, osVersion: 27, isKids: true), entry.id)
             }
         }
-        for id in ["spatial-audio", "spatial-layout", "dolby-fel"] {
-            XCTAssertNil(SettingsSearchCatalog.entry(id: id))
+        for id in ["spatial-audio", "spatial-layout"] {
+            let entry = SettingsSearchCatalog.entry(id: id)
+            XCTAssertNotNil(entry)
+            XCTAssertFalse(entry?.isAvailable(on: .television, osVersion: 25) ?? true)
+            XCTAssertTrue(entry?.isAvailable(on: .television, osVersion: 26) ?? false)
         }
         XCTAssertTrue(SettingsSearchPage.accountLibraries.requiresParentalAuthorization)
         XCTAssertTrue(SettingsSearchPage.profileSettings.requiresParentalAuthorization)

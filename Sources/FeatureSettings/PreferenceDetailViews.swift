@@ -691,7 +691,7 @@ struct PlaybackDetailView: View {
 
     private var advancedRows: [SettingsSplitRow] {
         [.page(id: "playback-advanced", title: "Advanced") {
-            PlaybackAdvancedSettingsView.rows()
+            PlaybackAdvancedSettingsView.rows(playback: playback)
         }]
     }
 
@@ -878,6 +878,8 @@ struct PlaybackDetailView: View {
                 SettingsControlRows {
                     LosslessAudioControl()
                         .settingsSearchAnchor("lossless-audio")
+                    SpatialAudioControl(isOn: $playback.settings.trueHDAtmosEnabled)
+                        .settingsSearchAnchor("spatial-audio")
                     Toggle("Identify songs", isOn: $playback.settings.identifySongs)
                         .settingsSearchAnchor("identify-songs")
                     Text("Shows the song playing in a movie or show in the player’s Info, using Shazam. Needs an internet connection.")

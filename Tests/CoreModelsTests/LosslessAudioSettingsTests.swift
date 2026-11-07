@@ -6,9 +6,11 @@ final class LosslessAudioSettingsTests: XCTestCase {
         try withDefaults { defaults in
             for namespace: String? in [nil, "guest"] {
                 let profile = PlaybackSettingsStore(defaults: defaults, namespace: namespace)
-                profile.save(.default)
+                var settings = PlaybackSettings.default
+                settings.trueHDAtmosEnabled = false
+                profile.save(settings)
                 XCTAssertTrue(LosslessAudioSettingsStore(defaults: defaults).load())
-                XCTAssertEqual(profile.load(), .default)
+                XCTAssertFalse(profile.load().trueHDAtmosEnabled)
                 XCTAssertNil(defaults.object(forKey: LosslessAudioSettingsStore.storageKey))
             }
         }

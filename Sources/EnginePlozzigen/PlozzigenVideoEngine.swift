@@ -387,6 +387,7 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
     private let readAheadPreference: @MainActor () -> PlaybackReadAhead
     private let liveBufferPreference: @MainActor () -> LivePlaybackBuffer
     private let losslessAudioPreference: @MainActor () -> Bool
+    private let spatialAudioLayoutPreference: @MainActor () -> SpatialAudioLayout
     private var liveOutputPolicy = LiveChannelOutputPolicy()
     private var outputPolicyReload: Task<Void, Never>?
     private var outputLoadGeneration = UUID()
@@ -418,7 +419,8 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
         authenticatedHTTPResolver: (any AuthenticatedHTTPResourceResolving)? = nil,
         readAheadPreference: @escaping @MainActor () -> PlaybackReadAhead = { .default },
         liveBufferPreference: @escaping @MainActor () -> LivePlaybackBuffer = { .default },
-        losslessAudioPreference: @escaping @MainActor () -> Bool = { LosslessAudioSettingsStore().load() }
+        losslessAudioPreference: @escaping @MainActor () -> Bool = { LosslessAudioSettingsStore().load() },
+        spatialAudioLayoutPreference: @escaping @MainActor () -> SpatialAudioLayout = { SpatialAudioLayoutStore().load() }
     ) throws {
         self.engine = try AEEngine()
         // Plozz owns its audio session, and on an E-AC-3/Atmos bitstream-passthrough route the HDMI sink
@@ -431,6 +433,7 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
         self.readAheadPreference = readAheadPreference
         self.liveBufferPreference = liveBufferPreference
         self.losslessAudioPreference = losslessAudioPreference
+        self.spatialAudioLayoutPreference = spatialAudioLayoutPreference
         #if canImport(UIKit)
         let surface = AetherPlayerView()
         engine.bind(view: surface)
@@ -892,6 +895,9 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
         }
         let options = Self.onDemandLoadOptions(
             losslessAudioEnabled: losslessAudioPreference(),
+            trueHDAtmosEnabled: request.trueHDAtmosEnabled,
+            spatialAudioLayout: spatialAudioLayoutPreference(),
+            dolbyVisionFELEnabled: request.dolbyVisionFELEnabled,
             outputPolicy: outputPolicy,
             readAhead: isLocalFile || request.suppressOrdinaryWatchReporting
                 ? .default : readAheadPreference()
@@ -901,6 +907,9 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
 
     nonisolated static func onDemandLoadOptions(
         losslessAudioEnabled: Bool = LosslessAudioSettingsStore.defaultEnabled,
+        trueHDAtmosEnabled: Bool = PlaybackSettings.default.trueHDAtmosEnabled,
+        spatialAudioLayout: SpatialAudioLayout = .default,
+        dolbyVisionFELEnabled: Bool = PlaybackSettings.default.dolbyVisionFELEnabled,
         outputPolicy: LiveChannelOutputPolicy = .init(),
         readAhead: PlaybackReadAhead = .default
     ) -> LoadOptions {
@@ -909,12 +918,14 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
             audioBridgeMode: losslessAudioEnabled ? .lossless : .surroundCompat
         )
         options.objectAudioRendering = .off
-        // Profile 7 keeps Dolby Vision: MEL converts to 8.1 and FEL is reconstructed
-        // losslessly where the engine judges the source and device eligible, else it
-        // falls back to the 8.1 conversion. Shared, muted and display-suppressed
-        // players stay on the ordinary route.
-        options.preferDualLayerDolbyVision = outputPolicy.isAudible
-            && !outputPolicy.sharesAudioSession && !outputPolicy.suppressesDisplayMatching
+        // Profile 7 keeps Dolby Vision: MEL converts to 8.1, and with the profile's
+        // FEL preference on (the default) FEL is reconstructed losslessly where the
+        // engine judges the source and device eligible, else it falls back to the
+        // 8.1 conversion. Shared, muted and display-suppressed players stay on the
+        // ordinary route.
+        options.preferDualLayerDolbyVision = dolbyVisionFELEnabled
+            && outputPolicy.isAudible && !outputPolicy.sharesAudioSession
+            && !outputPolicy.suppressesDisplayMatching
         options.dolbyVisionHandling = .automatic
         // Aether uses approximately four-second segments and clamps the maximum
         // to 2,700, retaining its free-space budget and producer backpressure.
@@ -928,8 +939,26 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
         // Explicit durations may exceed the automatic 2 GiB cap. The engine still
         // clamps this request to its available-space limit and shared retention ledger.
         options.sessionCacheByteBudget = readAhead == .automatic ? nil : Int.max
+        #if os(tvOS) || os(iOS)
+        if #available(tvOS 26.0, iOS 26.0, *), trueHDAtmosEnabled,
+           outputPolicy.isAudible, !outputPolicy.sharesAudioSession {
+            // This is the rendering bed, not detected speakers. Aether chooses PCM
+            // or APAC for the route and retains its source/channel fallback.
+            options.objectAudioRendering = .render(spatialSpeakerLayout(spatialAudioLayout))
+        }
+        #endif
         applyLiveOutputPolicy(outputPolicy, to: &options)
         return options
+    }
+
+    nonisolated static func spatialSpeakerLayout(_ layout: SpatialAudioLayout) -> SpatialSpeakerLayout {
+        switch layout {
+        case .fiveOneTwo: .l512
+        case .fiveOneFour: .l514
+        case .sevenOneTwo: .l712
+        case .sevenOneFour: .l714
+        case .nineOneSix: .l916
+        }
     }
 
     func liveLoadOptions(

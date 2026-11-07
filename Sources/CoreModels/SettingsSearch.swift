@@ -432,6 +432,8 @@ public enum SettingsSearchCatalog {
               keywords: "sound surround compressed HDMI ARC receiver audio compatibility"),
         .init("identify-songs", page: .playback, title: "Identify songs",
               keywords: "shazam music song soundtrack what song is playing apple music"),
+        .init("spatial-audio", page: .playback, title: "Spatial audio",
+              keywords: "surround height overhead speakers immersive sound", minimumOSVersion: 26),
         .init("read-ahead", page: .playback, title: "Video buffer",
               keywords: "buffering streaming cache ahead slow network stuttering loading memory"),
         .init("live-buffer", page: .playback, title: "Live TV buffer",
