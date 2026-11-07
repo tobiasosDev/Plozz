@@ -1,5 +1,6 @@
 import CoreModels
 import Foundation
+import CoreNetworking
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -41,7 +42,9 @@ final class TransportSession: @unchecked Sendable {
     func data(
         for request: URLRequest,
         maxResponseBytes: Int,
-        followRedirects: Bool = true
+        followRedirects: Bool = true,
+        stream: TransportResponseStream? = nil,
+        validateResponse: (@Sendable (HTTPURLResponse) throws -> Void)? = nil
     ) async throws -> TransportDataResponse {
         let taskBox = URLSessionTaskBox()
         return try await withTaskCancellationHandler {
@@ -61,7 +64,10 @@ final class TransportSession: @unchecked Sendable {
                     return
                 }
                 let task = session.dataTask(with: request)
-                delegate.register(task: task, maxResponseBytes: maxResponseBytes, followRedirects: followRedirects) { [self] result in
+                delegate.register(
+                    task: task, maxResponseBytes: maxResponseBytes,
+                    followRedirects: followRedirects, stream: stream, validateResponse: validateResponse
+                ) { [self] result in
                     if case .success(let response) = result, response.response.statusCode == 429 {
                         recordCooldown(response.response)
                     }
@@ -72,6 +78,7 @@ final class TransportSession: @unchecked Sendable {
                 lifecycleLock.unlock()
             }
         } onCancel: {
+            stream?.cancel()
             taskBox.cancel()
         }
     }
@@ -302,7 +309,7 @@ public actor TransportSessionRegistry {
             origin: origin,
             isAnonymousMediaSession: isAnonymousMediaSession
         )
-        let urlSession = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        let urlSession = OfflineNetworkSession.make(configuration: configuration, delegate: delegate, delegateQueue: nil)
         return TransportSession(
             key: key,
             session: urlSession,

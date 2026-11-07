@@ -9,35 +9,95 @@ public struct HomeRowsSettingsView: View {
     public let accounts: [ResolvedAccount]
     public let visibility: HomeLibraryVisibilityModel
     public let spoilerSettings: SpoilerSettings
+    private let searchPage: SettingsSearchPage
     @Environment(HeroSettingsModel.self) private var hero
     @Environment(HeroBackgroundSettingsModel.self) private var heroBackground
     @Environment(CardStyleSettingsModel.self) private var cards
+    @Environment(SettingsSearchRequest.self) private var searchRequest: SettingsSearchRequest?
     @State private var inventory: HomeSectionCatalogModel
 
     public init(
         libraries: [AggregatedLibrary], accounts: [ResolvedAccount],
-        visibility: HomeLibraryVisibilityModel, spoilerSettings: SpoilerSettings = .default
+        visibility: HomeLibraryVisibilityModel, spoilerSettings: SpoilerSettings = .default,
+        searchPage: SettingsSearchPage = .home
     ) {
         self.init(
             libraries: libraries, accounts: accounts, visibility: visibility,
-            inventory: HomeSectionCatalogModel(), spoilerSettings: spoilerSettings
+            inventory: HomeSectionCatalogModel(), spoilerSettings: spoilerSettings, searchPage: searchPage
         )
     }
 
     init(
         libraries: [AggregatedLibrary], accounts: [ResolvedAccount],
         visibility: HomeLibraryVisibilityModel, inventory: HomeSectionCatalogModel,
-        spoilerSettings: SpoilerSettings = .default
+        spoilerSettings: SpoilerSettings = .default, searchPage: SettingsSearchPage = .home
     ) {
         self.libraries = libraries
         self.accounts = accounts
         self.visibility = visibility
         self.spoilerSettings = spoilerSettings
+        self.searchPage = searchPage
         _inventory = State(initialValue: inventory)
     }
 
     public var body: some View {
-        HomeEditorPage(title: Text("Customize Home"), showsHeader: true) {
+        switch searchPage {
+        case .home: menu
+        #if os(tvOS)
+        case .homeRowStyle:
+            if searchRequest?.targetID == "showcase-discovery-row", hero.settings.spotlightEnabled {
+                HomeHeroSettingsView(libraries: libraries, accounts: accounts, visibility: visibility)
+            } else {
+                HomeRowStyleSettingsView(libraries: libraries, accounts: accounts)
+            }
+        case .heroDiscovery where hero.settings.style == .followsFocus:
+            if hero.settings.showsDiscoverRow {
+                HeroSettingsScreen(page: .discovery, libraries: libraries, accounts: accounts)
+            } else {
+                HomeRowStyleSettingsView(libraries: libraries, accounts: accounts)
+            }
+        #endif
+        case .hero, .heroContent, .heroRatings, .heroTrailers, .heroDiscovery, .heroLibraries, .heroCollections:
+            HomeHeroSettingsView(
+                libraries: libraries, accounts: accounts, visibility: visibility, initialPage: heroPage
+            )
+        case .homeRows:
+            HomeSectionsSettingsView(
+                libraries: libraries, accounts: accounts, visibility: visibility,
+                inventory: inventory, spoilerSettings: spoilerSettings
+            )
+        case .homeFiltering:
+            HomeFilteringSettingsView(visibility: visibility)
+        case .homeLabels:
+            CardCaptionCustomizationView(cards: cards, scope: .home, visibility: visibility)
+        case .continueWatching:
+            if let choice = HomeRowChoice.shared.first(where: { $0.id == .global(.continueWatching) }) {
+                HomeSectionSettingsView(
+                    choice: choice, inventory: inventory, visibility: visibility,
+                    libraries: libraries, accounts: accounts, showsRemoveAction: false
+                )
+            } else {
+                ContentUnavailableView("Setting unavailable", systemImage: "magnifyingglass")
+            }
+        default:
+            ContentUnavailableView("Setting unavailable", systemImage: "magnifyingglass")
+        }
+    }
+
+    private var heroPage: HeroSettingsPage? {
+        switch searchPage {
+        case .heroContent: .titles
+        case .heroRatings: .ratings
+        case .heroTrailers: .trailers
+        case .heroDiscovery: .discovery
+        case .heroLibraries: .libraries
+        case .heroCollections: .collections
+        default: nil
+        }
+    }
+
+    private var menu: some View {
+        HomeEditorPage(title: Text("Home"), showsHeader: true) {
             HomeEditorLink {
                 HomeHeroSettingsView(libraries: libraries, accounts: accounts, visibility: visibility)
                     .environment(hero)
@@ -48,6 +108,23 @@ public struct HomeRowsSettingsView: View {
             .accessibilityLabel(heroTitle)
             .accessibilityValue(heroSummary ?? Text(verbatim: ""))
             .accessibilityIdentifier("home-section-hero")
+            .settingsSearchAnchor("home-hero")
+            #if os(tvOS)
+            HomeEditorLink {
+                HomeRowStyleSettingsView(libraries: libraries, accounts: accounts)
+                    .environment(hero)
+                    .environment(heroBackground)
+            } label: {
+                HomeEditorRowLabel(
+                    title: Text("Row style"),
+                    value: hero.settings.immersiveRows ? Text("Showcase") : Text("Classic")
+                )
+            }
+            .accessibilityLabel(Text("Row style"))
+            .accessibilityValue(hero.settings.immersiveRows ? Text("Showcase") : Text("Classic"))
+            .accessibilityIdentifier("home-row-style")
+            .settingsSearchAnchor("home-row-style")
+            #endif
             HomeEditorLink {
                 CardCaptionCustomizationView(cards: cards, scope: .home, visibility: visibility)
                     .environment(hero)
@@ -55,6 +132,7 @@ public struct HomeRowsSettingsView: View {
                 HomeEditorRowLabel(title: Text("Card labels"))
             }
             .accessibilityIdentifier("home-customize-labels")
+            .settingsSearchAnchor("home-labels")
             HomeEditorLink {
                 HomeSectionsSettingsView(
                     libraries: libraries, accounts: accounts, visibility: visibility,
@@ -67,24 +145,50 @@ public struct HomeRowsSettingsView: View {
                 HomeEditorRowLabel(title: Text("Rows"))
             }
             .accessibilityIdentifier("home-sections-settings")
+            .settingsSearchAnchor("home-rows")
+            HomeEditorLink {
+                HomeFilteringSettingsView(visibility: visibility)
+                    .environment(hero)
+            } label: {
+                HomeEditorRowLabel(title: Text("Filtering"))
+            }
+            .accessibilityIdentifier("home-filtering-settings")
+            .settingsSearchAnchor("home-filtering")
         }
     }
 
     private var heroTitle: Text {
-        #if os(tvOS)
-        Text("Layout")
-        #else
         Text("Hero")
-        #endif
     }
 
     private var heroSummary: Text? {
         #if os(tvOS)
-        if hero.settings.style == .followsFocus { return Text("Showcase") }
-        return hero.settings.isEnabled ? Text("Hero") : Text("Off")
+        return hero.settings.spotlightEnabled ? Text("On") : Text("Off")
         #else
         return hero.settings.isEnabled ? nil : Text("Off")
         #endif
+    }
+}
+
+struct HomeFilteringSettingsView: View {
+    let visibility: HomeLibraryVisibilityModel
+    @Environment(HeroSettingsModel.self) private var hero
+
+    var body: some View {
+        @Bindable var hero = hero
+        HomeEditorPage(title: Text("Filtering"), showsHeader: true) {
+            SettingsSectionGroup("Hide watched content") {
+                Toggle("Recently Added", isOn: Binding(
+                    get: { visibility.visibility.hideWatchedRecentlyAdded },
+                    set: { visibility.setHideWatchedRecentlyAdded($0) }
+                ))
+                .accessibilityIdentifier("home-hide-watched-recently-added")
+                .settingsSearchAnchor("home-hide-watched-recently-added")
+                Toggle("Hero & discovery", isOn: $hero.settings.hideWatched)
+                    .accessibilityIdentifier("hero-hide-watched")
+                    .settingsSearchAnchor("hero-hide-watched")
+            }
+        }
     }
 }
 
@@ -253,13 +357,13 @@ struct HomeSectionsSettingsView: View {
             #if os(tvOS)
             if hero.settings.style == .followsFocus {
                 HomeEditorLink {
-                    HomeHeroSettingsView(libraries: libraries, accounts: accounts, visibility: visibility)
+                    HomeRowStyleSettingsView(libraries: libraries, accounts: accounts)
                         .environment(hero)
                         .environment(heroBackground)
                 } label: {
                     HomeEditorRowLabel(
                         title: Text("Discovery"),
-                        subtitle: Text("Managed by Home layout.")
+                        subtitle: Text("Managed by Row style.")
                     )
                 }
                 .disabled(isReordering)
@@ -315,6 +419,7 @@ struct HomeSectionsSettingsView: View {
         }
         .disabled(isLifting || (!isReordering && currentCatalog.sections(in: visibility.visibility).enabled.isEmpty))
         .accessibilityIdentifier("home-section-reorder")
+        .settingsSearchAnchor("home-row-arrangement")
         #if os(tvOS)
         .plozzActionButton(role: .secondary)
         #endif

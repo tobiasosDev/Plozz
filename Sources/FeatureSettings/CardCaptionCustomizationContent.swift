@@ -15,14 +15,14 @@ enum CardCaptionSettingsPage: String, CaseIterable {
         case .playlists: "Playlists"
         case .search: "Search"
         case .watchlist: "Watchlist"
-        case .detail: "Detail Page"
+        case .detail: "Movie & show details"
         case .people: "People"
         }
     }
 
     var controls: [CardCaptionView] {
         switch self {
-        case .home: [.home, .continueWatching]
+        case .home: [.home, .continueWatching, .homeLibraries]
         case .recommended: [.recommended, .continueWatching]
         case .browse: [.browse]
         case .collections: [.collections]
@@ -36,17 +36,17 @@ enum CardCaptionSettingsPage: String, CaseIterable {
 
     var firstControl: CardCaptionView { controls[0] }
 
-    var hasOverrides: Bool { controls.contains(.continueWatching) }
+    var hasOverrides: Bool { controls.contains(where: \.isRowOverride) }
 
     func controlTitle(for view: CardCaptionView) -> LocalizedStringResource {
-        if self == .detail || view == .continueWatching { return view.cardLabelTitle }
+        if self == .detail || view.isRowOverride { return view.cardLabelTitle }
         return hasOverrides ? "Default" : "Card labels"
     }
 
     var sharedRowNote: LocalizedStringResource? {
         switch self {
-        case .home: "Shared with Recommended."
-        case .recommended: "Shared with Home."
+        case .home: "Continue Watching is shared with Recommended."
+        case .recommended: "Continue Watching is shared with Home."
         default: nil
         }
     }
@@ -74,14 +74,16 @@ struct CardCaptionCustomizationContent: View {
 
     init(
         settings: Binding<CardCaptionSettings>, style: CardStyle = .borderless,
-        scope: CardCaptionSettingsScope = .all, visibility: HomeLibraryVisibilityModel? = nil
+        scope: CardCaptionSettingsScope = .all, visibility: HomeLibraryVisibilityModel? = nil,
+        initialView: CardCaptionView? = nil
     ) {
         _settings = settings
         self.style = style
         self.scope = scope
         self.visibility = visibility
-        _selectedPage = State(initialValue: scope.pages[0])
-        _previewView = State(initialValue: scope.pages[0].firstControl)
+        let page = initialView.flatMap { view in scope.pages.first { $0.controls.contains(view) } } ?? scope.pages[0]
+        _selectedPage = State(initialValue: page)
+        _previewView = State(initialValue: initialView.flatMap { page.controls.contains($0) ? $0 : nil } ?? page.firstControl)
     }
 
     private var views: [CardCaptionView] { selectedPage.controls }
@@ -103,7 +105,8 @@ struct CardCaptionCustomizationContent: View {
                     illustration: .pageCaptions(preview(editing: view), style: style)
                 )
             },
-            pinsFocusedHelp: scope != .home
+            pinsFocusedHelp: false,
+            inlineHelpAfterSection: scope.pages.count > 1 ? 1 : 0
         ) {
             if scope.pages.count > 1 {
                 Section {
@@ -118,12 +121,13 @@ struct CardCaptionCustomizationContent: View {
                     .modifier(ViewCustomizationRowFocus(id: "card-label-page"))
                 }
             }
-            labelSections
+            defaultSection
+            overrideSection
         }
         #else
         ViewCustomizationList(title: title, initialRowID: "") {
             if scope.pages.count > 1 {
-                Section {
+                SettingsSectionGroup {
                     ViewCustomizationMenu(
                         id: "card-label-page", title: "Page",
                         value: selectedPage.title, selection: $selectedPage
@@ -134,23 +138,30 @@ struct CardCaptionCustomizationContent: View {
                     }
                 }
             }
-            labelSections
-            Section {
+            defaultSection
+            SettingsSectionGroup {
                 CardLabelScopePreview(preview: preview(editing: previewView), style: style)
             }
+            overrideSection
         }
         .onChange(of: selectedPage) { _, page in previewView = page.firstControl }
         #endif
     }
 
     @ViewBuilder
-    private var labelSections: some View {
+    private var defaultSection: some View {
+        let defaultViews = views.filter { !$0.isRowOverride }
+        let controls = ForEach(defaultViews, id: \.self) { view in
+            labelControl(view)
+        }
+        #if os(tvOS)
         Section {
-            ForEach(views.filter { $0 != .continueWatching }, id: \.self) { view in
-                labelControl(view)
-            }
+            controls
+        }
+        #else
+        SettingsSectionGroup {
+            controls
         } footer: {
-            #if !os(tvOS)
             VStack(alignment: .leading, spacing: 4) {
                 if selectedPage != .detail && !selectedPage.hasOverrides {
                     Text(selectedPage.firstControl.cardLabelDetail)
@@ -160,18 +171,37 @@ struct CardCaptionCustomizationContent: View {
                         .accessibilityIdentifier("card-label-mixed-help")
                 }
             }
-            #endif
         }
+        .settingsSearchGroup(defaultViews.map { "card-label-view-\($0.rawValue)" })
+        #endif
+    }
+
+    @ViewBuilder
+    private var overrideSection: some View {
         if selectedPage.hasOverrides {
-            Section {
-                labelControl(.continueWatching)
-            } header: {
-                Text("Overrides", comment: "Card label settings that override the selected page's Default choice.")
-            } footer: {
+            let overrideViews = views.filter(\.isRowOverride)
+            let controls = ForEach(overrideViews, id: \.self) { view in
+                labelControl(view)
+            }
+            let footer = Group {
                 if let note = selectedPage.sharedRowNote {
                     Text(note)
                 }
             }
+            #if os(tvOS)
+            Section {
+                controls
+            } header: {
+                Text("Overrides", comment: "Card label settings that override the selected page's Default choice.")
+            } footer: {
+                footer
+            }
+            #else
+            SettingsSectionGroup(
+                "Overrides", content: { controls }, footer: { footer }
+            )
+            .settingsSearchGroup(overrideViews.map { "card-label-view-\($0.rawValue)" })
+            #endif
         }
     }
 
@@ -224,6 +254,8 @@ extension CardCaptionView {
             "Changes labels below playlist covers in all libraries. Titles inside a playlist use Browse."
         case .continueWatching:
             "Use default follows each page. On or Off applies to both Home and Recommended."
+        case .homeLibraries:
+            "Changes labels below library cards on Home."
         case .search: "Changes labels below cards in search results."
         case .watchlist: "Changes labels below cards on the Watchlist page."
         case .episodes: "Changes episode labels in the episode browser and on detail pages."
@@ -245,7 +277,7 @@ extension CardCaptionSettings {
     }
 
     func cardLabelHelp(in view: CardCaptionView) -> LocalizedStringResource {
-        if view == .continueWatching {
+        if view.isRowOverride {
             return customization(in: view) == .automatic ? "Uses this page's default." : customizationDetail(in: view)
         }
         return cardLabelMixedExplanation(in: view) ?? view.cardLabelDetail
@@ -325,8 +357,9 @@ struct CardLabelScopePreview: View {
         isShowcase: Bool,
         seriesArtwork: Bool, layout: ContinueWatchingCardLayout
     ) -> Snapshot {
-        let rowViews = page == .home || page == .recommended
+        var rowViews: [CardCaptionView] = page == .home || page == .recommended
             ? [.continueWatching, page.firstControl] : page.controls
+        if page == .home { rowViews.append(.homeLibraries) }
         let rows = rowViews.map { rowView in
             Row(
                 view: rowView,
@@ -336,8 +369,8 @@ struct CardLabelScopePreview: View {
                     hasArtworkTitle: rowView == .continueWatching && seriesArtwork,
                     isContinueWatching: rowView == .continueWatching
                 ),
-                highlighted: rowView == view || (rowView == .continueWatching && view == page.firstControl
-                    && settings.override(for: .continueWatching) == .automatic)
+                highlighted: rowView == view || (rowView.isRowOverride && view == page.firstControl
+                    && settings.override(for: rowView) == .automatic)
             )
         }
         return Snapshot(page: page, rows: rows, layout: layout, seriesArtwork: seriesArtwork)
@@ -451,7 +484,7 @@ struct SettingsIllustrationCardGeometry {
         viewportWidth: CGFloat
     ) {
         let landscape = row.isContinueWatching ? preview.layout == .landscape
-            : row.view == .episodes || row.view == .extras
+            : row.view == .episodes || row.view == .extras || row.view == .homeLibraries
         let cardStyle: PosterCardView.Style = landscape ? .landscape : .poster
         var size = metrics.artworkSize(
             for: cardStyle, showsSeriesArtwork: row.isContinueWatching && preview.seriesArtwork,

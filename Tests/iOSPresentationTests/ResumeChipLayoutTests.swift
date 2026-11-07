@@ -12,6 +12,30 @@ final class ResumeChipLayoutTests: XCTestCase {
         case full, progressAndText, text, smallerText
     }
 
+    func testBriefPlaysRenderLikeUnstartedEpisodesWithoutChangingWatchedHistory() throws {
+        for watched in [false, true] {
+            let untouched = MediaItem(
+                id: "brief", title: "Episode", kind: .episode,
+                seasonNumber: 1, episodeNumber: 4, runtime: 3600, isPlayed: watched
+            )
+            let expected = try render(EpisodeWatchStatePill(item: untouched, showsBackground: false))
+            for position in [2.0, 59, 60] {
+                var item = untouched
+                item.resumePosition = position
+                item.playedPercentage = position / 3600
+                let actual = try render(EpisodeWatchStatePill(item: item, showsBackground: false))
+                if position < 60 || watched {
+                    try assertPixelsEqual(
+                        actual, expected, context: "Brief plays retain the idle or existing watched chip."
+                    )
+                } else {
+                    XCTAssertNotEqual(actual.pngData(), expected.pngData(), "Progress appears at the threshold.")
+                }
+                XCTAssertEqual(item.resumePosition, position)
+            }
+        }
+    }
+
     func testPortraitChipDropsDecorationsBeforeReducingText() throws {
         let metrics = PlozzMetrics.touch(density: .standard)
         let item = MediaItem(
@@ -124,6 +148,7 @@ final class ResumeChipLayoutTests: XCTestCase {
                 .frame(width: 120, height: 180)
             )
         }
+
         let capped = try image(reserved: 600)
         XCTAssertEqual(capped.size, CGSize(width: 120, height: 180))
         try assertPixelsEqual(capped, image(reserved: 54), context: "The bottom band is capped at 30%, never half.")
@@ -131,6 +156,30 @@ final class ResumeChipLayoutTests: XCTestCase {
         try assertPixelsEqual(
             image(reserved: 600, detailed: false), image(reserved: 0, detailed: false),
             context: "Progress only must not reserve a playback-text band."
+        )
+    }
+
+    func testHiddenCardProgressPreservesPlayGlyphAndRemainingTimeButNotPlayerBars() throws {
+        let item = MediaItem(id: "resume", title: "Movie", kind: .movie, runtime: 3600, resumePosition: 900)
+        let pill = EpisodeWatchStatePill(item: item, showsBackground: false)
+            .environment(\.plozzChromeIsFocused, true)
+        let actual = try render(pill.environment(\.plozzShowsProgressBars, false))
+        let remaining = try XCTUnwrap(item.resumeRemainingText)
+        let expected = try render(
+            HStack(spacing: 8) {
+                Image(systemName: "play.fill")
+                Text(verbatim: remaining)
+            }
+            .foregroundStyle(.white)
+            .lineLimit(1)
+        )
+        try assertPixelsEqual(actual, expected, context: "Only the bar should disappear from the resume chip.")
+        XCTAssertNotEqual(actual.pngData(), try render(pill.environment(\.plozzShowsProgressBars, true)).pngData())
+        let playerBar = ResumeProgressCapsule(progress: 0.25, onLight: false, width: 54, height: 5)
+        try assertPixelsEqual(
+            render(playerBar.environment(\.plozzShowsProgressBars, false)),
+            render(playerBar.environment(\.plozzShowsProgressBars, true)),
+            context: "The shared player/download bar primitive must not observe card visibility."
         )
     }
 

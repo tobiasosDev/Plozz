@@ -13,8 +13,8 @@ import Foundation
 ///
 /// Per the "build for flexibility" mandate, layout is DATA: an explicit order plus
 /// a hidden set, persisted per profile, resolved against the live library list via
-/// the shared ``OrderedVisibilityList`` so a newly discovered library appears
-/// (enabled, at the end) instead of silently vanishing.
+/// the shared ``OrderedVisibilityList``. Newly discovered keys are appended;
+/// each shell supplies their default visibility without persisting that default.
 public struct NavigationLibraryLayout: Codable, Equatable, Sendable {
     /// Reserved keys for first-class destinations. Keeping these in the existing
     /// order/hidden payload preserves the on-disk format and profile scoping.
@@ -23,6 +23,7 @@ public struct NavigationLibraryLayout: Codable, Equatable, Sendable {
     public static let watchlistKey = "plozz.navigation.watchlist"
     /// Personal film suggestions ("Tonight").
     public static let tonightKey = "plozz.navigation.tonight"
+    public static let discoverKey = "plozz.navigation.discover"
     public static let liveTVKey = "plozz.navigation.liveTV"
     public static let musicKey = "plozz.navigation.music"
     public static let downloadsKey = "plozz.navigation.downloads"
@@ -232,6 +233,7 @@ public struct NavigationLibraryLayout: Codable, Equatable, Sendable {
             searchKey,
             watchlistKey,
             tonightKey,
+            discoverKey,
             musicKey,
             downloadsKey,
             settingsKey,

@@ -79,6 +79,35 @@ public actor DownloadedMediaRegistry {
         Array(state.records.values)
     }
 
+    public func enrichSnapshot(
+        identityKey: String, expectedCreatedAt: Date, snapshot: PinnedMediaSnapshot
+    ) throws {
+        guard var record = state.records[identityKey], record.createdAt == expectedCreatedAt else { return }
+        var snapshot = snapshot
+        snapshot.artworkFileName = record.snapshot.artworkFileName
+        snapshot.resumePosition = record.snapshot.resumePosition ?? snapshot.resumePosition
+        snapshot.isPlayed = record.snapshot.isPlayed ?? snapshot.isPlayed
+        record.snapshot = snapshot
+        try persist(record)
+    }
+
+    public func updatePlayback(
+        accountID: String, itemID: String, resumePosition: TimeInterval?,
+        played: Bool?, clearResume: Bool, sourceUserID: String? = nil
+    ) throws {
+        for var record in state.records.values
+        where record.snapshot.sourceAccountID == accountID && record.snapshot.sourceItemID == itemID {
+            if let sourceUserID, record.snapshot.sourceUserID != sourceUserID { continue }
+            if let played { record.snapshot.isPlayed = played }
+            if clearResume {
+                record.snapshot.resumePosition = 0
+            } else if let resumePosition, resumePosition.isFinite {
+                record.snapshot.resumePosition = max(0, resumePosition)
+            }
+            try persist(record)
+        }
+    }
+
     public func record(forKey identityKey: String) -> DownloadedMediaRecord? {
         state.records[identityKey]
     }
@@ -92,6 +121,11 @@ public actor DownloadedMediaRegistry {
     /// A `nil` `versionID` means "the caller has no particular version in mind",
     /// which falls back to the any-version lookup.
     public func record(for item: MediaItem, versionID: String?) -> DownloadedMediaRecord? {
+        if item.kind == .episode, item.explicitSourceSelection {
+            return DownloadMediaIdentity.selectedRecord(
+                for: item.selectingVersion(versionID), in: Array(state.records.values)
+            )
+        }
         guard let versionID, !versionID.isEmpty else { return record(for: item) }
         for identity in MediaItemIdentity.identities(for: item) {
             if let record = state.records[
@@ -153,7 +187,8 @@ public actor DownloadedMediaRegistry {
             }
             return source.hasPrefix(DownloadMediaIdentity.accountSourcePrefix)
         }
-        return sourceScopedMatches.count == 1 ? sourceScopedMatches[0] : nil
+        guard expectedAccountSource != nil || sourceScopedMatches.count == 1 else { return nil }
+        return sourceScopedMatches.sorted { $0.identityKey < $1.identityKey }.first
     }
 
     /// All matching copies in this profile, with the requested version first.

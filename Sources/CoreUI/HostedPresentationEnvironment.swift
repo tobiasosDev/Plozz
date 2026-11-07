@@ -20,6 +20,7 @@ public extension EnvironmentValues {
         plozzCardStyle = source.plozzCardStyle
         plozzCardFocusStyle = source.plozzCardFocusStyle
         copyCardCaptionPresentation(from: source)
+        plozzContinueWatchingPresentation = source.plozzContinueWatchingPresentation
         plozzContinueWatchingPlaybackDetails = source.plozzContinueWatchingPlaybackDetails
         plozzArtworkSettings = source.plozzArtworkSettings
         plozzArtworkProviders = source.plozzArtworkProviders
@@ -27,6 +28,7 @@ public extension EnvironmentValues {
         plozzWatchStatusIndicator = source.plozzWatchStatusIndicator
         plozzWatchIndicatorColor = source.plozzWatchIndicatorColor
         plozzShowsUnwatchedEpisodeCount = source.plozzShowsUnwatchedEpisodeCount
+        plozzShowsProgressBars = source.plozzShowsProgressBars
         plozzEpisodeCountBadgeStyle = source.plozzEpisodeCountBadgeStyle
         plozzSeerConnected = source.plozzSeerConnected
         plozzReduceTransparency = source.plozzReduceTransparency

@@ -1,11 +1,32 @@
 @testable import AetherEngine
 import CoreModels
 import FeaturePlayback
+import UIKit
 import XCTest
 @testable import EnginePlozzigen
 
 @MainActor
 final class SpatialAudioLayoutPreferenceTests: XCTestCase {
+    /// The app's engine traits apply where the generated project builds the
+    /// engine (the app and its hosted tests). A package logic run builds the
+    /// engine without them and has no application scene.
+    private var runsInsideTheApp: Bool { !UIApplication.shared.connectedScenes.isEmpty }
+
+    func testEveryOptionalEngineComponentIsBuiltIntoTheApp() throws {
+        try XCTSkipUnless(runsInsideTheApp, "Engine traits are verified in the hosted run")
+        for component in AetherEngine.OptionalComponent.allCases {
+            XCTAssertTrue(component.isBuiltIn, "\(component.traitName) must not silently become a no-op")
+        }
+    }
+
+    func testDolbyVisionStillsFollowTheReshapingComponent() {
+        XCTAssertEqual(
+            FrameDecodeContext.yieldsStill(dolbyVisionNoBaseLayer: true),
+            AetherEngine.OptionalComponent.dolbyVisionStillReshaping.isBuiltIn
+        )
+        XCTAssertTrue(FrameDecodeContext.yieldsStill(dolbyVisionNoBaseLayer: false))
+    }
+
     func testEveryLayoutMapsToItsEngineBedAndDTSXCapability() {
         XCTAssertEqual(SpatialAudioLayout.allCases.count, SpatialSpeakerLayout.allCases.count)
         for layout in SpatialAudioLayout.allCases {
@@ -17,6 +38,7 @@ final class SpatialAudioLayoutPreferenceTests: XCTestCase {
             XCTAssertEqual(rendering.bedFormat(routeFormat: .apac), .apac)
         }
         XCTAssertEqual(SpatialBedFormat.forRoute(portTypes: ["HDMIOutput"]), .lpcm)
+        XCTAssertEqual(SpatialBedFormat.forRoute(portTypes: ["BluetoothA2DPOutput"]), .lpcm)
         XCTAssertEqual(SpatialBedFormat.forRoute(portTypes: ["HDMIOutput", "AirPlay"]), .apac)
     }
 
@@ -71,6 +93,20 @@ final class SpatialAudioLayoutPreferenceTests: XCTestCase {
         }
     }
 
+    func testDefaultSpatialRenderingAlsoAppliesToFELButNeverToLiveStreams() {
+        for fel in [false, true] {
+            let options = PlozzigenVideoEngine.onDemandLoadOptions(dolbyVisionFELEnabled: fel)
+            assertRendering(options, layout: .default)
+            XCTAssertEqual(options.preferDualLayerDolbyVision, fel)
+        }
+        for suffix in ["ts", "m3u8"] {
+            let options = PlozzigenVideoEngine.liveLoadOptions(
+                httpHeaders: [:], url: URL(string: "https://example.invalid/live.\(suffix)")
+            )
+            XCTAssertEqual(options.objectAudioRendering, .off)
+        }
+    }
+
     func testActualRenderedPipelineLabelsAreRecognized() {
         for layout in SpatialAudioLayout.allCases {
             let bed = PlozzigenVideoEngine.spatialSpeakerLayout(layout)
@@ -94,8 +130,8 @@ final class SpatialAudioLayoutPreferenceTests: XCTestCase {
         _ options: LoadOptions, layout: SpatialAudioLayout,
         file: StaticString = #filePath, line: UInt = #line
     ) {
-        #if os(tvOS)
-        if #available(tvOS 26.0, *) {
+        #if os(tvOS) || os(iOS)
+        if #available(tvOS 26.0, iOS 26.0, *) {
             XCTAssertEqual(options.objectAudioRendering,
                            .render(PlozzigenVideoEngine.spatialSpeakerLayout(layout)), file: file, line: line)
             return

@@ -11,6 +11,159 @@ import XCTest
 
 @MainActor
 final class SettingsDetailNavigationHostedTests: XCTestCase {
+    func testFullScreenResultDismissalPreservesQueryAndReturnSource() async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !UIApplication.shared.connectedScenes.contains(where: { $0.activationState == .foregroundActive }),
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        for reducedMotion in [false, true] {
+            let navigation = SettingsNavigationModel()
+            navigation.beginSearch()
+            navigation.searchQuery = "au"
+            let window = UIWindow(windowScene: scene)
+            let host = UIHostingController(rootView:
+                SettingsWorkspace(navigation: navigation) {
+                    Button("Search") {}
+                } detail: { _ in
+                    Button("Result") {}
+                }
+                .environment(\.plozzNavigationStyle, .sidebar)
+                .environment(\._accessibilityReduceMotion, reducedMotion)
+            )
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            defer {
+                host.dismiss(animated: false)
+                window.isHidden = true
+                window.rootViewController = nil
+                previous?.makeKeyAndVisible()
+            }
+            for _ in 0..<2 {
+                let source = UUID()
+                navigation.pages.push(.searchResult("autoplay-next-episode"), sourceID: source)
+                let presented = ContinuousClock.now + .seconds(5)
+                while (host.presentedViewController == nil
+                    || host.presentedViewController?.isBeingPresented == true
+                    || navigation.pages.isTransitioning), ContinuousClock.now < presented {
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                XCTAssertNotNil(host.presentedViewController)
+                XCTAssertFalse(navigation.pages.isTransitioning)
+                navigation.enteringDetail = false
+                navigation.focusInDetail = true
+                let categoryRequest = navigation.sidebarFocusRequest
+                navigation.pages.pop()
+                let dismissed = ContinuousClock.now + .seconds(5)
+                while (host.presentedViewController != nil || navigation.pages.isTransitioning),
+                      ContinuousClock.now < dismissed {
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                XCTAssertNil(host.presentedViewController)
+                XCTAssertEqual(navigation.pages.returnSourceID, source)
+                XCTAssertGreaterThan(navigation.pages.returnGeneration, 0)
+                XCTAssertEqual(navigation.sidebarFocusRequest, categoryRequest)
+                XCTAssertTrue(navigation.isSearching)
+                XCTAssertEqual(navigation.searchQuery, "au")
+            }
+        }
+    }
+
+    func testTopBarSettingsSlidesWithoutChangingScrollGeometry() async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !UIApplication.shared.connectedScenes.contains(where: { $0.activationState == .foregroundActive }),
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        for reducedMotion in [false, true] {
+            for rootOffset: CGFloat in [0, 600] {
+                let window = UIWindow(windowScene: scene)
+                let navigation = SettingsNavigationModel()
+                let probes = PageMotionProbes()
+                let chrome = NavigationChromeModel()
+                window.rootViewController = UIHostingController(rootView:
+                    SettingsTopBarMotionFixture(navigation: navigation, probes: probes, chrome: chrome)
+                        .environment(\._accessibilityReduceMotion, reducedMotion)
+                )
+                window.makeKeyAndVisible()
+                defer {
+                    window.isHidden = true
+                    window.rootViewController = nil
+                    previous?.makeKeyAndVisible()
+                }
+                try await Task.sleep(for: .milliseconds(250))
+                func scrollView(_ id: String) throws -> UIScrollView {
+                    var view = probes.views["\(id)-content"]
+                    while let current = view {
+                        if let scroll = current as? UIScrollView { return scroll }
+                        view = current.superview
+                    }
+                    return try XCTUnwrap(nil as UIScrollView?, "Missing native scroll view for \(id)")
+                }
+                let rootScroll = try scrollView("root")
+                rootScroll.setContentOffset(CGPoint(x: 0, y: rootOffset), animated: false)
+                try await Task.sleep(for: .milliseconds(100))
+                let rootFrame = try XCTUnwrap(probes.frame("root", in: window))
+                let rootPosition = rootScroll.contentOffset
+                XCTAssertEqual(rootPosition.y, rootOffset, accuracy: 1)
+                XCTAssertEqual(navigation.pages.animationsEnabled, !reducedMotion && !UIAccessibility.isReduceMotionEnabled)
+
+                func assertStableScrollDuringSlide(current: String, returning: Bool = false) async throws {
+                    var movingFrames = 0
+                    for _ in 0..<15 {
+                        try await Task.sleep(for: .milliseconds(40))
+                        let root = try XCTUnwrap(probes.frame("root", in: window))
+                        XCTAssertEqual(root.minY, rootFrame.minY, accuracy: 0.5)
+                        XCTAssertEqual(root.height, rootFrame.height, accuracy: 0.5)
+                        XCTAssertEqual(rootScroll.contentOffset.y, rootPosition.y, accuracy: 0.5)
+                        let visible = try XCTUnwrap(probes.frame(current, in: window))
+                        let travel = abs(visible.midX - rootFrame.midX)
+                        let opacity = try XCTUnwrap(probes.opacity(current))
+                        if travel > 0.5, travel < SettingsPageMotion.travelDistance - 0.5,
+                           opacity > 0.01, opacity < 0.99 {
+                            movingFrames += 1
+                        }
+                        XCTAssertLessThanOrEqual(travel, SettingsPageMotion.travelDistance + 0.5)
+                    }
+                    XCTAssertEqual(try XCTUnwrap(probes.frame(current, in: window)).midX, rootFrame.midX, accuracy: 0.5)
+                    XCTAssertEqual(try XCTUnwrap(probes.opacity(current)), 1, accuracy: 0.01)
+                    XCTAssertEqual(chrome.isChromeHidden, !returning)
+                    if navigation.pages.animationsEnabled {
+                        XCTAssertGreaterThan(movingFrames, 2, "The page must slide and fade, not appear instantly.")
+                    } else {
+                        XCTAssertEqual(movingFrames, 0)
+                    }
+                }
+
+                navigation.enterDetail()
+                try await assertStableScrollDuringSlide(current: "detail")
+                let detailScroll = try scrollView("detail")
+                detailScroll.setContentOffset(CGPoint(x: 0, y: 280), animated: false)
+                try await Task.sleep(for: .milliseconds(100))
+                let detailPosition = detailScroll.contentOffset
+                XCTAssertEqual(detailPosition.y, 280, accuracy: 1)
+                navigation.pages.push(.artwork)
+                try await assertStableScrollDuringSlide(current: "nested")
+                navigation.pages.pop()
+                try await assertStableScrollDuringSlide(current: "detail")
+                XCTAssertTrue(try scrollView("detail") === detailScroll)
+                XCTAssertEqual(detailScroll.contentOffset.y, detailPosition.y, accuracy: 0.5)
+                navigation.pages.pop()
+                try await assertStableScrollDuringSlide(current: "root", returning: true)
+                XCTAssertTrue(try scrollView("root") === rootScroll)
+                XCTAssertEqual(probes.creations["root"], 1)
+                XCTAssertEqual(probes.creations["detail"], 1)
+                XCTAssertEqual(navigation.pages.returnGeneration, 2)
+            }
+        }
+    }
+
     func testDiscoveredLibrariesRenderAsEnabledNavigationRowsInEveryTVStyle() async throws {
         let suite = "NavigationLibraryEditorHosted.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -785,6 +938,37 @@ private final class PageMotionProbes {
             layer = current.superlayer
         }
         return opacity
+    }
+}
+
+private struct SettingsTopBarMotionFixture: View {
+    let navigation: SettingsNavigationModel
+    let probes: PageMotionProbes
+    let chrome: NavigationChromeModel
+
+    var body: some View {
+        TopBarNavigation(
+            destinations: [.home, .settings], selection: .constant(.settings),
+            preventsAccidentalExit: false,
+            content: { _, _ in
+                AnyView(SettingsWorkspace(navigation: navigation) {
+                    page("root").scrollsTopNavigation()
+                } detail: { route in
+                    page(route == .playback ? "detail" : "nested")
+                })
+            },
+            label: { AnyView(Text($0.storageValue)) },
+            chrome: chrome
+        )
+        .environment(\.plozzNavigationStyle, .tabBar)
+        .disabled(true)
+    }
+
+    private func page(_ id: String) -> some View {
+        ScrollView {
+            PageMotionProbe(id: "\(id)-content", probes: probes).frame(height: 2400)
+        }
+        .background { PageMotionProbe(id: id, probes: probes) }
     }
 }
 

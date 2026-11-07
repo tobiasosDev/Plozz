@@ -62,6 +62,98 @@ Binary Images:
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_card_lifecycle_soak_requires_an_explicit_isolated_run(self):
+        name = "cards-lifecycle-soak"
+        self.assertEqual(performance.select(None, [name]), [name])
+        for suite in ("ui", "all"):
+            self.assertNotIn(name, performance.select(suite, None))
+        with self.assertRaises(performance.Failure):
+            performance.select(None, [name, "cards-lifecycle"])
+        self.assertEqual(performance.SCENARIOS[name]["counters"], ["cycles", "survivingHosts"])
+
+    def test_mobile_home_lifecycle_is_platform_scoped_and_checks_release(self):
+        name = "mobile-home-lifecycle"
+        self.assertEqual(performance.select(None, [name], "iOS"), [name])
+        with self.assertRaises(performance.Failure):
+            performance.select(None, [name], "tvOS")
+        self.assertEqual(performance.SCENARIOS[name]["counters"], ["replacements", "survivingModels"])
+        self.assertEqual(performance.SCENARIOS[name]["test"],
+                         "HomeModelLifetimeTests/testPerformanceRetiredHomeModels")
+
+    def test_process_memory_snapshots_are_optional_but_validated_when_present(self):
+        value = report()
+        spec = performance.SCENARIOS["sync-unchanged"]
+        performance.validate_report(value, spec)
+        value["samples"][0]["memory"] = dict.fromkeys(performance.MEMORY_METRICS, 100)
+        performance.validate_report(value, spec)
+        for bad in (None, {}, {"residentBytes": 100}):
+            invalid = copy.deepcopy(value)
+            invalid["samples"][0]["memory"] = bad
+            with self.assertRaises(performance.Failure):
+                performance.validate_report(invalid, spec)
+        for bad in (-1, True, float("nan"), 1.5):
+            invalid = copy.deepcopy(value)
+            invalid["samples"][0]["memory"]["physicalFootprintBytes"] = bad
+            with self.assertRaises(performance.Failure):
+                performance.validate_report(invalid, spec)
+
+    def test_song_attribution_and_lifecycle_select_real_hosted_tests(self):
+        for state, method in (
+            ("disabled", "Disabled"), ("tap-only", "TapOnly"), ("tap-paced", "TapPaced"),
+            ("enabled", "Enabled"), ("lifecycle", "Lifecycle"),
+        ):
+            name = f"song-recognition-{state}"
+            self.assertEqual(performance.select(None, [name]), [name])
+            scenario = performance.SCENARIOS[name]
+            self.assertEqual(scenario["test"],
+                             f"SongRecognitionPerformanceTests/testPerformanceRecognition{method}")
+            self.assertTrue({
+                "audioFrames", "confirmedSongs", "maxSourceGapMilliseconds",
+                "maxFeedLeadMilliseconds", "liveSessions", "hasDropTelemetry",
+                "droppedFrames", "displayCallbacks", "maxDisplayGapMilliseconds",
+            }.issubset(scenario["counters"]))
+
+    def test_song_soaks_require_separate_process_runs_and_explicit_selection(self):
+        names = [f"song-recognition-soak-{state}" for state in ("disabled", "tap-only", "enabled")]
+        for name in names:
+            self.assertEqual(performance.select(None, [name]), [name])
+            self.assertNotIn(name, performance.select("all", None))
+            self.assertNotIn(name, performance.select("ui", None))
+            with self.assertRaises(performance.Failure):
+                performance.select(None, [name, "song-recognition-disabled"])
+        with self.assertRaises(performance.Failure):
+            performance.select(None, names)
+
+    def test_song_card_controls_select_complete_player_tests(self):
+        for state in ("hidden", "visible"):
+            name = f"song-card-{state}"
+            self.assertEqual(performance.select(None, [name]), [name])
+            self.assertEqual(
+                performance.SCENARIOS[name]["test"],
+                f"PlayerSongLayoutPreviewTests/testPerformanceSongCard{state.title()}",
+            )
+            self.assertEqual(
+                performance.SCENARIOS[name]["counters"],
+                ["playbackMilliseconds", "acceptedReports", "songVisible"],
+            )
+
+    def test_live_home_is_never_selected_by_a_suite(self):
+        self.assertEqual(performance.select(None, ["home-jellyfin-live"]), ["home-jellyfin-live"])
+        for suite in ("core", "network", "all"):
+            self.assertNotIn("home-jellyfin-live", performance.select(suite, None))
+
+    def test_live_home_broker_is_loopback_only(self):
+        for address in ("https://example.test/config", "http://user:secret@127.0.0.1:1234/",
+                        "http://127.0.0.1/config", "http://127.0.0.1:1234/?token=secret"):
+            with patch.dict(performance.os.environ, {"PLOZZ_JELLYFIN_HOME_BROKER": address}):
+                with self.assertRaises(performance.Failure):
+                    performance.package_scheme(["FeatureHomeCoreTests"])
+        with patch.dict(performance.os.environ, {"PLOZZ_JELLYFIN_HOME_BROKER": "http://127.0.0.1:1234/probe"}):
+            tree = performance.package_scheme(["FeatureHomeCoreTests"])
+            values = {row.get("key"): row.get("value")
+                      for row in tree.getroot().findall("TestAction/EnvironmentVariables/EnvironmentVariable")}
+            self.assertEqual(values["PLOZZ_JELLYFIN_HOME_BROKER"], "http://127.0.0.1:1234/probe")
+
     def test_stack_sample_separates_main_and_background_and_excludes_footer(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sample.txt"
@@ -91,10 +183,18 @@ class EvidenceTests(unittest.TestCase):
                 with self.assertRaises(performance.Failure):
                     performance.stack_sample_summary(path, 42)
 
+    def test_guide_batches_report_cold_and_warm_cost_without_dropping_work(self):
+        self.assertEqual(performance.select(None, ["guide-large-batches"]), ["guide-large-batches"])
+        self.assertEqual(set(performance.SCENARIOS["guide-large-batches"]["counters"]), {
+            "guideBytes", "httpRequests", "downloadedBytes", "parseInvocations", "retainedRows",
+            "requestedChannels", "coldBatchNanoseconds", "warmBatchNanoseconds", "indexedChannels",
+        })
+
     def test_selection_is_explicit_and_narrow_by_default(self):
         self.assertEqual(set(performance.select(None, None)), {
             "sync-unchanged", "library-unchanged", "catalog-import", "watchlist-artwork-rehydration",
             "live-tv-schedule-capture", "live-tv-schedule-sync", "poster-preview-admission",
+            "seek-generated-80ms", "seek-generated-180ms",
         })
         self.assertEqual(performance.select(None, ["guide-large-batches"]), ["guide-large-batches"])
         self.assertEqual(performance.select(None, ["poster-preview-admission"]),
@@ -109,6 +209,18 @@ class EvidenceTests(unittest.TestCase):
                              (None, ["sync-unchanged", "sync-unchanged"])]:
             with self.assertRaises(performance.Failure):
                 performance.select(suite, names)
+
+    def test_active_picture_comparisons_cover_both_platforms_without_entering_default_suite(self):
+        names = [f"active-picture-{players}-{state}"
+                 for players in (1, 4) for state in ("enabled", "disabled")]
+        self.assertFalse(set(names) & set(performance.select(None, None)))
+        for platform in ("tvOS", "iOS"):
+            self.assertEqual(performance.select(None, names, platform), sorted(names))
+        for name in names:
+            spec = performance.SCENARIOS[name]
+            self.assertEqual(spec["counters"], ["players", "samples", "windowMilliseconds"])
+            source = (performance.ROOT / spec["file"]).read_text()
+            self.assertIn("func " + spec["test"].split("/")[-1] + "(", source)
 
     def test_measurement_contract_rejects_missing_nonfinite_and_duplicate_samples(self):
         original = report()
@@ -151,6 +263,49 @@ class EvidenceTests(unittest.TestCase):
         ]:
             with self.subTest(change=change), self.assertRaises(performance.Failure):
                 performance.verify_summary(dict(summary(), **change), 1)
+
+    def test_mobile_loading_scroll_requires_complete_layout_work(self):
+        name = "mobile-home-loading-scroll"
+        self.assertEqual(performance.select(None, [name], "iOS"), [name])
+        with self.assertRaisesRegex(performance.Failure, "not supported on tvOS"):
+            performance.select(None, [name], "tvOS")
+        spec = performance.SCENARIOS[name]
+        sample = report(name=name)
+        performance.validate_report(sample, spec)
+        for counter in spec["counters"]:
+            incomplete = copy.deepcopy(sample)
+            del incomplete["samples"][0]["counters"][counter]
+            with self.assertRaises(performance.Failure):
+                performance.validate_report(incomplete, spec)
+
+    def test_controls_reveal_scenarios_require_tv_and_complete_responsiveness_counters(self):
+        for name in ("player-controls-reveal", "player-controls-reveal-contended"):
+            self.assertEqual(performance.select(None, [name], "tvOS"), [name])
+            with self.assertRaisesRegex(performance.Failure, "not supported on iOS"):
+                performance.select(None, [name], "iOS")
+            sample = report(name=name)
+            performance.validate_report(sample, performance.SCENARIOS[name])
+            for counter in ("preferenceReads", "mainThreadReads", "maxMainActorGapMicroseconds"):
+                incomplete = copy.deepcopy(sample)
+                del incomplete["samples"][0]["counters"][counter]
+                with self.assertRaises(performance.Failure):
+                    performance.validate_report(incomplete, performance.SCENARIOS[name])
+
+    def test_controls_clock_scenarios_require_tv_and_complete_work_counters(self):
+        for name in ("player-card-first-visits", "player-continue-watching-controls", "player-continue-watching-disabled",
+                     "player-controls-cold-reveal", "player-controls-first-card",
+                     "player-controls-hidden-clock", "player-controls-hidden-static",
+                     "player-controls-visible-clock"):
+            self.assertEqual(performance.select(None, [name], "tvOS"), [name])
+            with self.assertRaisesRegex(performance.Failure, "not supported on iOS"):
+                performance.select(None, [name], "iOS")
+            sample = report(name=name)
+            performance.validate_report(sample, performance.SCENARIOS[name])
+            for counter in performance.SCENARIOS[name]["counters"]:
+                incomplete = copy.deepcopy(sample)
+                del incomplete["samples"][0]["counters"][counter]
+                with self.assertRaises(performance.Failure):
+                    performance.validate_report(incomplete, performance.SCENARIOS[name])
 
     def test_attachment_reader_checks_expected_set_and_paths(self):
         with tempfile.TemporaryDirectory() as path:
@@ -261,7 +416,7 @@ class RunnerFailureTests(unittest.TestCase):
             self.assertEqual(json.loads((lane.output / "result.json").read_text())["status"], "failed")
 
     def test_profile_lifecycle_preserves_evidence_and_never_drives_without_recorder(self):
-        for failure in (None, "horizontal-navigation", "detail-return", "missing-journal", "build", "identity", "readiness", "test", "early-exit",
+        for failure in (None, "jellyfin-home", "live-missing-artwork", "live-no-decoded-artwork", "live-no-focus", "live-provider-failure", "horizontal-navigation", "detail-return", "missing-journal", "build", "identity", "readiness", "test", "early-exit",
                         "finalize", "summary", "process", "sample"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -277,6 +432,7 @@ class RunnerFailureTests(unittest.TestCase):
                 args = argparse.Namespace(platform="tvOS", sim_id="owned", timeout=120, names=[],
                                           operation="profile", template="Process Sample",
                                           workload="detail-return" if failure in ("detail-return", "missing-journal")
+                                          else "jellyfin-home" if failure == "jellyfin-home" or str(failure).startswith("live-")
                                           else "horizontal-navigation" if failure == "horizontal-navigation"
                                           else "home-navigation")
                 if failure == "detail-return":
@@ -284,6 +440,18 @@ class RunnerFailureTests(unittest.TestCase):
                     journal.parent.mkdir(parents=True)
                     journal.write_text("fixture focus journal\n")
                 lane = performance.Lane(root, args, ())
+                if args.workload == "jellyfin-home":
+                    lane.env["PLOZZ_JELLYFIN_HOME_BROKER"] = "http://127.0.0.1:1234/probe"
+                    metrics = root / "data/Library/Caches/live-home-ui.json"
+                    metrics.parent.mkdir(parents=True)
+                    metrics.write_text(json.dumps({
+                        "firstDataMicroseconds": 1, "items": 76, "navigationCallbacks": 100,
+                        "decodedServerArtwork": 0 if failure == "live-no-decoded-artwork" else 10,
+                        "navigationFocusChanges": 0 if failure == "live-no-focus" else 36,
+                        "mountedArtworkImages": 0 if failure == "live-missing-artwork" else 13,
+                        "discoveryFailures": 1 if failure == "live-provider-failure" else 0,
+                        "layoutFailures": 0, "rowFailures": 0,
+                    }))
                 labels = []
                 class Recorder:
                     returncode = None
@@ -310,7 +478,9 @@ class RunnerFailureTests(unittest.TestCase):
                     if label == "navigation-test":
                         self.assertIsNone(recorder.returncode)
                         expected = (
-                            "LargeNativeNavigationRemoteTests/testProfileRapidHorizontalNavigation"
+                            "LiveJellyfinHomeRemoteTests/testProfileRealHome"
+                            if args.workload == "jellyfin-home"
+                            else "LargeNativeNavigationRemoteTests/testProfileRapidHorizontalNavigation"
                             if args.workload == "horizontal-navigation"
                             else "DetailReturnFocusRemoteTests/testProfilePopulatedShowcaseDetailReturns"
                             if args.workload == "detail-return"
@@ -330,14 +500,18 @@ class RunnerFailureTests(unittest.TestCase):
                 with patch.object(lane, "command", side_effect=command), \
                         patch.object(performance.subprocess, "Popen", side_effect=spawn), \
                         patch.object(performance, "stop_owned") as stop:
-                    if failure and failure not in ("detail-return", "horizontal-navigation"):
+                    if failure and failure not in ("detail-return", "horizontal-navigation", "jellyfin-home"):
                         with self.assertRaises(performance.Failure):
                             lane.profile_navigation([])
                     else:
                         result = lane.profile_navigation([])
                         self.assertEqual(result["pid"], 42)
                         self.assertTrue(result["stacks"]["mainThreadFrames"])
-                        if args.workload == "horizontal-navigation":
+                        if args.workload == "jellyfin-home":
+                            self.assertEqual(result["arguments"], ["--live-jellyfin-home"])
+                            self.assertEqual(result["liveMetrics"]["items"], 76)
+                            self.assertEqual(lane.env["SIMCTL_CHILD_PLOZZ_LIVE_HOME_RUN_ID"], lane.output.name)
+                        elif args.workload == "horizontal-navigation":
                             self.assertIn("--large-native-navigation-fixture", result["arguments"])
                             self.assertIn("--real-library-pages", result["arguments"])
                         else:

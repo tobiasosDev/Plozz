@@ -163,15 +163,21 @@ struct DetailHeroView: View, Equatable {
     /// When provided, a "… left" remaining-time line is shown inside the Play
     /// button, after the progress bar.
     var playRemainingText: String? = nil
-    /// The episode the Play button will play, as `S{n}, E{m}` — appended to the plain
-    /// label ("Play S21, E8") and prefixed to the resume trailing ("S5, E12 • 43m").
+    /// The episode the Play button will play, as `S{n} E{m}` — appended to the plain
+    /// label ("Play S21 E8") and prefixed to the resume trailing ("S5 E12 • 43m").
     /// For a series hero this is the next-up/resume episode's S/E, not the series.
     var playSeasonEpisodeText: String? = nil
     /// When provided, a secondary "Trailer" button is shown next to Play.
     var onPlayTrailer: (() -> Void)? = nil
     var trailerItem: MediaItem? = nil
+    @State private var trailerFullscreenButtonRequest = 0
+    @State private var trailerReturnFocus: HeroRowAction?
     private var trailerButtonLabel: some View {
-        TrailerActionButtonLabel(trailer: trailerItem)
+        TrailerActionButtonLabel(trailer:
+            heroTrailerController.isPlaying && heroTrailerController.isReady
+                && heroTrailerController.isClaimed(by: .detail, itemID: backdrop.id)
+                ? nil : trailerItem
+        )
             .frame(width: heroIconSize, height: heroIconSize)
     }
     /// The selectable versions for this title. When more than one exists and
@@ -905,7 +911,8 @@ struct DetailHeroView: View, Equatable {
                     // stops at the text column instead of flexing past it — see
                     // ``heroLogoBox``.
                     maxWidth: heroLogoBox.width,
-                    maxHeight: heroLogoBox.height
+                    maxHeight: heroLogoBox.height,
+                    presentationPolicy: .whenResolved
                 ) {
                     titleText(hideText: hideText)
                 }
@@ -1014,8 +1021,8 @@ struct DetailHeroView: View, Equatable {
                         // Discovery keeps library-only actions suppressed but a
                         // trailer remains useful whether or not Seerr is installed.
                         if showsRequestPill { requestPill() }
-                        if let onPlayTrailer {
-                            Button(action: onPlayTrailer) {
+                        if onPlayTrailer != nil {
+                            Button { trailerFullscreenButtonRequest &+= 1 } label: {
                                 trailerButtonLabel
                             }
                             .modifier(HeroActionButtonStyle(prominent: !showsRequestPill, circular: true))
@@ -1043,8 +1050,8 @@ struct DetailHeroView: View, Equatable {
                     if let heroWatchedAction {
                         watchedButton(action: heroWatchedAction)
                     }
-                    if let onPlayTrailer {
-                        Button(action: onPlayTrailer) {
+                    if onPlayTrailer != nil {
+                        Button { trailerFullscreenButtonRequest &+= 1 } label: {
                             trailerButtonLabel
                         }
                         .modifier(HeroActionButtonStyle(prominent: false, circular: true))
@@ -1081,6 +1088,23 @@ struct DetailHeroView: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .focusScope(heroActionsScope)
                 .focusSection()
+                .trailerFullScreenOnMove(
+                    controller: heroTrailerController, itemID: backdrop.id, role: .detail,
+                    title: item.title,
+                    enabled: isVisible && allowsDeferredActivation
+                        && heroBackground.settings.detailTrailerEnabled,
+                    buttonRequest: trailerFullscreenButtonRequest,
+                    onUnavailable: { onPlayTrailer?() },
+                    onPresent: { trailerReturnFocus = heroActionRowFocus ?? .play }
+                )
+                .onChange(of: heroTrailerController.isFullScreen) { _, fullScreen in
+                    guard !fullScreen, let returnFocus = trailerReturnFocus else { return }
+                    trailerReturnFocus = nil
+                    guard isVisible && allowsDeferredActivation else { return }
+                    heroActionRowFocus = returnFocus
+                    playButtonHasFocus = returnFocus == .play
+                    playButtonFocus?.wrappedValue = returnFocus == .play
+                }
                 // Keep the whole action row pinned to the hero top: this row is
                 // bottom-anchored in a hero that is full-screen-height for a
                 // childless movie, so when focus lands on any button tvOS
@@ -1215,6 +1239,16 @@ struct DetailHeroView: View, Equatable {
         }
         // Artwork (including an inherited trailer) is visible immediately. Only
         // the foreground fades, keeping its focus targets and geometry stable.
+        .overlay(alignment: .top) {
+            TrailerPlaybackCue(isEligible:
+                isVisible && heroBackground.settings.detailTrailerEnabled
+                    && heroTrailerController.isPlaying
+                    && heroTrailerController.isClaimed(by: .detail, itemID: backdrop.id)
+                    && (heroActionRowFocus != nil || playButtonHasFocus || playButtonFocus?.wrappedValue == true)
+                    && seriesRecedeModel?.isReceded != true
+            )
+            .padding(.top, 40)
+        }
         .onAppear {
             isVisible = true
             guard !heroVisible else { return }
@@ -1414,7 +1448,7 @@ struct DetailHeroView: View, Equatable {
             scrimTone: scrimTone,
             recedeModel: seriesRecedeModel,
             trailerController: heroTrailerController,
-            showsTrailer: heroBackground.settings.detailMode == .trailer
+            showsTrailer: heroBackground.settings.detailTrailerEnabled
                 && heroTrailerController.isShowing((backdropItem ?? item).id)
                 && heroTrailerController.isPlaying
         )
@@ -1474,7 +1508,10 @@ struct DetailHeroView: View, Equatable {
                         onLight: playButtonHasFocus || colorScheme == .light,
                         isPlaceholder: action == nil,
                         isLoading: pendingPrimaryAction?.kind == .play,
-                        separatesEpisodeText: (actionItem ?? item).startsWatching
+                        separatesEpisodeText: (actionItem ?? item).startsWatching,
+                        systemImage: (versions.first(where: { $0.id == selectedVersionID })
+                            ?? (versions.allSatisfy(\.isExternalSource) ? versions.first : nil))?.isExternalSource == true
+                            ? "arrow.up.forward.app" : "play.fill"
                     )
                 }
             }
@@ -1619,7 +1656,7 @@ struct DetailHeroView: View, Equatable {
         }
     }
 
-    /// The live resume trailing text — `S{n}, E{m} • {remaining}` (or just the
+    /// The live resume trailing text — `S{n} E{m} • {remaining}` (or just the
     /// remaining time for a movie) — when the item has a real partial position
     /// (0 < progress < 1), else `nil`. Used to reserve the Play button's width.
     private var resumeText: String? {

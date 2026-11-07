@@ -4,6 +4,8 @@ Use this for the agent-driven optimization loop without installing on an Apple
 TV, iPhone, or iPad. It complements [physical profiling](performance-debugging.md),
 not a replacement for device-specific evidence. No cloud account, real media
 server, credential, or external model service is required.
+The separately authorized `home-jellyfin-live` investigation below is the
+exception; no suite, including `all`, selects it automatically.
 
 ## Agent entry point
 
@@ -16,6 +18,10 @@ python3 tools/performance.py list
 Use a simulator you own. Select an explicit platform and UUID; an iPad is an
 `iOS` simulator. The runner verifies platform, runtime build, and device type
 before booting, never selects a different simulator or discovers physical devices.
+The runner inherits `DEVELOPER_DIR`. If the selected toolchain cannot launch
+hosted tests, select a compatible installed Xcode for the lane rather than
+changing the global selection or resetting shared developer services. Keep the
+same toolchain for both sides of a comparison.
 
 ```sh
 export GIT_CONFIG_PARAMETERS="'safe.bareRepository=all'"
@@ -51,7 +57,382 @@ both copies and fails. A simulator booted by this invocation is shut down in
 The default whole-run limit is 2,400 seconds (`--timeout`, bounded to 60–7,200).
 Cancellation/timeout stops only the owned process group and preserves evidence.
 
+### Authorized real Jellyfin Home measurement
+
+Select `--scenario home-jellyfin-live` only with permission to query a dedicated
+non-admin internal account. Set `PLOZZ_JELLYFIN_HOME_BROKER` to a short-lived
+`http://127.0.0.1:<port>/<unguessable-path>` endpoint owned by the test lane.
+The trusted broker verifies that account's identity and non-admin policy,
+authenticates using credentials read into memory, and returns JSON fields
+`baseURL`, `serverID`, `userID`, `username`, `deviceID`, and `token`.
+Never put credentials in the URL, arguments, scheme, repository, or reports.
+Stop the broker and log out its owned server session in `finally`.
+
+The test uses the production layout preparation and Home aggregator with real
+Jellyfin transport. Each sample starts fresh provider/layout state, concurrently
+discovers navigation libraries, loads Home, then refreshes Home with the same
+provider. It reports requests, duplicates, decoded response bytes, and time to
+first nonempty content row and all requested data. It does not render Home,
+download artwork, time login, restart the server, or measure scroll smoothness.
+“Cold” means fresh client state, not cold server caches. Only numerical summaries
+are attached; authenticated payloads and media identities stay in memory.
+
+Use the same server, viewer, dataset, runtime, toolchain, and workload for both
+sides. Server/network variability can outweigh small latency changes; request
+counts and deterministic concurrency regressions are separate evidence. A stock
+Jellyfin result does not reproduce an API-compatible bridge or a remote VPS.
+
+For actual tvOS Home rendering and native remote navigation, use the same
+authorized broker with `profile --workload jellyfin-home --platform tvOS
+--sim-id <owned UUID>`. The fixture waits for the profiler and UI driver before
+starting Home; login is setup, not part of the load timing. It mounts production
+`HomeView`, its normal progressive load, and real server artwork, with concurrent
+navigation-library discovery. External metadata, trailers, and discovery are
+disabled. It does not mount the complete account/profile/sidebar app shell.
+
+The driver verifies a focusable hero, finds a real horizontally navigable row,
+performs three bounded native navigation cycles, and returns to the hero.
+Saved numeric counters include metadata requests,
+row/item counts, mounted artwork, first-data/all-data timing, and display-link
+callback gaps during loading and navigation. Data timing is not first-pixel timing;
+callback gaps are simulator display-link delivery intervals, not proof of
+main-thread stalls, presented FPS, or physical-device hitch counts.
+Metadata request counts exclude artwork downloads.
+Artwork bytes use the normal bounded cache; compare repeated, warmed-byte-cache
+runs and retain the recorded starting disk-cache size rather than purging caches.
+Raw traces and XCTest evidence can contain private media: keep them local and
+publish only sanitized aggregates.
+
 ## Baseline → attribution → candidate → regression
+
+### Song recognition
+
+`song-recognition-disabled`, `song-recognition-tap-only`, and
+`song-recognition-enabled` play the same
+35-second synthetic 1080p30 H.264/AAC file through the production Plozzigen
+adapter on either platform. The disabled case installs no tap; tap-only drains
+the production tap without matching; enabled uses the production controller,
+source-clock pacer, presentation expiry, and ShazamKit streaming matcher against
+a real local custom catalog. Catalog preparation is identical for all cases.
+Playback reaches eight seconds before sampling. Each three-second
+window must advance playback by at least 2.3 seconds; enabled windows must consume
+more than 120,000 fresh audio frames, with no source gap above 250 ms and no
+feed lead above 51 ms (the production tolerance is 50 ms). Tap-only has the same
+continuity requirement but is deliberately unpaced. Enabled recognition must
+pass production's two-sighting confirmation before source time 20 seconds,
+not merely produce a raw match. There is one discarded warmup and five retained
+windows; steady cases must keep exactly one tap installation, or zero when off.
+`song-recognition-tap-paced` drains through the production source-clock pacer
+without ShazamKit matching, with the same frame, continuity and lead requirements
+as enabled recognition. Prefer this over eager tap-only for matched-timing CPU
+attribution: eager draining consumes decoded-ahead audio, especially after seeks.
+
+`song-recognition-lifecycle` uses one discarded and five retained 25-second
+cycles. Each seeks to the start, plays for 12 seconds, pauses for one second,
+then resumes with a fresh recognizer for 12 seconds. It requires fresh confirmed
+reports every cycle, more than 600,000 audio frames and 22 seconds of video
+progress, no feed work during pause, and zero weakly tracked `SHSession`
+instances after each stop. The roughly 150-second exercise includes decoder
+lead after each tap installation; it is not a full-movie soak or an allocation
+trace. `confirmedSongs` counts accepted/renewed reports, not distinct titles.
+
+All cases record display-link callback count/gaps and engine drop telemetry.
+`hasDropTelemetry` distinguishes an unavailable counter from a measured zero.
+Display-link delivery is not presented video FPS; these cases mount video,
+not the complete player controls or song artwork.
+
+```sh
+python3 tools/performance.py run --platform iOS --sim-id "$PLOZZ_IOS_SIM_ID" \
+  --scenario song-recognition-disabled song-recognition-tap-only \
+             song-recognition-enabled song-recognition-lifecycle
+```
+
+The fixture uses the existing `glow-hd.mp4` video without re-encoding. Its
+original synthetic audio is generated and muxed as follows:
+
+```sh
+ffmpeg -f lavfi \
+  -i 'aevalsrc=0.15*sin(2*PI*(170*t+7*t*t))+0.12*sin(2*PI*(430*t+19*t*t))+0.10*sin(2*PI*(910*t+31*t*t)):s=48000:d=35' \
+  -c:a aac -b:a 192k song-performance.m4a
+ffmpeg -i glow-hd.mp4 -i song-performance.m4a \
+  -map 0:v:0 -map 1:a:0 -c copy -shortest song-performance.mkv
+```
+
+An initial, weaker on/off experiment before/after removing the unbounded forwarding
+queue and hardening recognition lifetime produced these app-process CPU medians
+(milliseconds per three-second window):
+
+| Simulator | Baseline off | Baseline on | Candidate off | Candidate on |
+| --- | ---: | ---: | ---: | ---: |
+| iPad Pro 13-inch M5, iOS 26.2 | 500 | 549 | 450 | 540 |
+| Apple TV 4K third generation, tvOS 26.2 | 585 | 585 | 491 | 525 |
+
+Candidate enabled median absolute deviations were 39 ms on iPad and 33 ms on TV.
+Both cases continued advancing by about three seconds per window; enabled
+windows processed 143,360–147,456 fresh frames and produced one to three matches.
+The lower disabled medians also show substantial between-run variability:
+these observations do **not** establish a CPU speedup or zero overhead.
+Candidate resident snapshots were 562/631 MiB off/on on iPad and 365/362 MiB
+on TV. Framework caching, allocation history and case order prevent treating
+these snapshots as isolated feature memory costs or a leak verdict.
+
+The performance test and media hashes were unchanged. The generic comparison
+command refused these runs because its fixture fingerprint also includes
+changed correctness/UI tests; no automated budget pass is claimed or guard
+bypassed. Raw evidence remains in local performance runs
+`4ba21f5cc10c4379ac03955c6a92300c` / `ffc796ba9202472f98832beda3da1a86`
+(iPad baseline/candidate) and
+`0ab247f7360343d9b7d624143e7f6389` / `b15df76bd03b4999a498aa339a08c406`
+(TV baseline/candidate).
+
+The subsequent three-way attribution baseline, before source pacing, measured
+off/tap-only/full CPU medians of 564/560/592 ms on iPad and 548/549/597 ms on TV.
+After timing and expiry changes, the stricter workload above produced:
+
+| Simulator | Off CPU / MAD | Tap-only CPU / MAD | Full CPU / MAD |
+| --- | ---: | ---: | ---: |
+| iPad Pro 13-inch M5, iOS 26.2 | 479 / 74 | 584 / 8 | 428 / 109 |
+| Apple TV 4K third generation, tvOS 26.2 | 540 / 11 | 624 / 50 | 552 / 61 |
+
+Values are milliseconds per three-second window; MAD is median absolute
+deviation. Full recognition being cheaper than tap-only in this sample is a
+warning about order/history and variability, not evidence that matching saves
+CPU. Warmup, pacing, lifecycle coverage and instrumentation changed between
+these experiments, so they are not a controlled speedup comparison. They do
+not identify a converter/dispatch bottleneck or justify speculative resampling,
+batching or duty cycling.
+
+Both platforms processed 143,360–144,384 frames per full-recognition window,
+reported a maximum feed lead of 49 ms and no source gaps, and confirmed the
+synthetic cue. Steady full-recognition display callbacks had maximum gaps of
+17 ms on iPad and 18 ms on TV. Engine drop telemetry was available and reported
+zero drops in all retained cases. Lifecycle windows advanced video by
+23.33–23.49 seconds and consumed 914,432–929,792 frames, with zero paused feed
+and zero live tracked sessions after each stop. Maximum lifecycle callback
+gaps reached 64 ms on iPad and 49 ms on TV; these must not be described as
+perfect frame pacing.
+
+Resident memory still rose across the five retained lifecycle samples:
+591–623 MiB on iPad and 508–534 MiB on TV. Released `SHSession` wrappers do not
+prove that framework caches, engine allocations or service-process resources
+are bounded. The short run does not establish a leak or a leak-free plateau,
+and cross-case resident deltas are not isolated feature allocations.
+Retained three-way baselines are
+`0f0c0f15e6c7456bb3043cb9e30c0427` (iPad) and
+`c846d4c56c9f47799caaef139c32c46a` (TV); current four-case evidence is
+`d62c3086d2c44e859dd0a36b32a515e6` (iPad) and
+`0e5e6103950d48ecb9ef00dfcb56d746` (TV).
+Older counter schemas are incompatible with the current report validator;
+historical numbers above come from their original retained samples, not a
+forced comparison pass.
+
+CPU totals cover the app process, not separate Shazam service processes.
+These recognition runs exercise software video decoding and actual local fingerprint
+matching, not hardware decoding, the native cached-segment audio reader,
+Apple's network music catalog, real-song accuracy, device energy/thermals,
+full-movie memory growth or presented-frame pacing. Separately, lifecycle
+tests cover tap removal during pause, errors and cancellation, bounded retries,
+discontinuities, pause-aware expiry without matcher output, source-clock pacing,
+and rejection of superseded-session results. Native player
+screenshots use seeded metadata and are not recognition-performance evidence.
+
+#### Isolated ten-minute controls and complete-player cost
+
+The explicit-only `song-recognition-soak-disabled`, `-soak-tap-only` and
+`-soak-enabled` cases each require a separate runner invocation and fresh test
+host. They are excluded from suite selection. Each measurement window contains
+four 25-second lifecycle cycles; one warmup plus five retained windows exercise
+24 seek/pause/resume cycles over roughly ten minutes. Cancellation waits for both
+workers and weakly tracked sessions before checking paused work, including the
+tap-only worker that has no `SHSession`. After the playback scope ends, the
+`plozz-song-memory-<mode>.json` attachment records RSS immediately and 30 seconds
+later, plus weak engine/session counts and active workers.
+
+```sh
+for state in disabled tap-only enabled; do
+  python3 tools/performance.py run --platform iOS --sim-id "$PLOZZ_IOS_SIM_ID" \
+    --scenario "song-recognition-soak-$state" || break
+done
+```
+
+Six isolated controls on the same iPad/TV simulators passed. Values below are
+MiB of resident memory, not physical footprint or isolated feature allocations.
+The retained range shows first-to-last samples, not a min/max range.
+
+| Simulator | Mode | Retained RSS, first to last | RSS 30 s after teardown | Local run |
+| --- | --- | ---: | ---: | --- |
+| TV | Off | 476.6 to 493.6 | 463.4 | `9a5e2e4ee83248a0b837b5ff56362b31` |
+| TV | Tap-only | 449.8 to 475.2 | 444.9 | `c0b80fc939f6431c901fada6a3df5da3` |
+| TV | Full | 475.4 to 517.6 | 484.1 | `a038012d5e3f439d85551fc761778597` |
+| iPad | Off | 650.9 to 681.7 | 645.5 | `f89023aaf961483588fb6a751c22a869` |
+| iPad | Tap-only | 642.8 to 666.3 | 630.0 | `9a95f1ef1a2344d4b8efd44a89378948` |
+| iPad | Full | 677.9 to 718.9 | 682.5 | `bfec37e7e0614eb780b68a5f43a4335b` |
+
+All six ended with zero tracked engines, sessions and workers. Growth also
+exists with recognition disabled; its cause is not established by RSS.
+Slowing growth and released wrappers do not prove a plateau or exclude retained
+framework/native allocations. These repeated lifecycle controls are not
+uninterrupted movie playback.
+
+`song-card-hidden` and `song-card-visible` mount the complete production controls
+over advancing native video with Info open and the song slot available.
+Recognition is disabled; each three-second window submits 12 repeated seeded
+reports. Visible artwork must decode from the local fixture server and pass a
+pixel check before timing. These measure settled presentation, not cold artwork
+loading or fingerprint matching. CPU median/MAD was 519/8 ms hidden versus
+493/8 ms visible on TV (`e09d33e9c5e243d8bd0d72d3d0af247d`) and 449/48 versus
+464/59 ms on iPad (`fa8455aedba64ee487e3b2d1385f069f`). Neither establishes a
+steady-state card penalty or a speedup.
+
+The later uninstrumented iPad off/paced-tap/full run
+`95506d6a7b274035a651d9b3c180feba` measured 623/33, 740/66 and 727/16 ms
+CPU median/MAD per three-second window. This supports retaining pacing as the
+control, not claiming matching is free or cheaper than draining.
+
+A bounded TV Time Profiler capture of run `fbb4be3a0a2f443594094cfcf59e344b`
+exported 26,301 running samples from `time-profile`. The raw `time-sample`
+table additionally contains 19 blocked stackshot rows; those are not CPU work.
+Leaf binaries were dominated by video decoding. Within the approximately
+26.65-second full-recognition test interval, 6,763 ms of sampled CPU included
+3,589 ms with `AetherLibavcodec` leaves, 111 ms in stacks containing
+`matchStreamingBuffer`, 73 ms containing `AudioTapPCMConverter.convert`,
+and 5 ms containing `SongAudioPacer`. These inclusive sampled stack weights
+are not exclusive timers or a complete recognition-cost account; async work,
+framework symbols and external services limit attribution. They do not identify
+a recognition bottleneck warranting batching, resampling or weaker matching.
+Do not compare profiler-instrumented timing against uninstrumented budgets.
+
+The trace retained a warning about one table without a known input source;
+the running CPU table and relevant symbols were available. Correlate phase
+boundaries with timestamped host logs: this Xcode export's test-detail
+`startTime` corresponded to completion, not the observed start. The capture
+only partially covered the first card case. Trace and parsed attribution are
+retained locally under `.build/song-layout-preview/cpu-attribution-2/`.
+
+The native cached-segment audio-tap path remains unmeasured: the simulator
+reported VideoToolbox rejecting the fixture and selected software decoding.
+Direct native video in the card workload does not exercise that separate tap.
+No unsupported route was forced and no physical-device result is claimed.
+
+#### Following resident growth outside recognition
+
+The soak attachment now includes `memorySnapshots` before playback, after
+warmup, after each measurement window, immediately after teardown and 30 seconds
+later. Direct `TASK_VM_INFO` readings separate resident size, physical footprint,
+internal/external memory, compressed memory and reusable pages.
+`malloc_zone_statistics` additionally reports allocation bytes, reserved capacity
+and block totals. These are process-wide diagnostics, not per-feature accounting.
+The engine's existing `rssMB` log is **resident size**, not physical footprint.
+
+Recognition-disabled controls on both platforms showed the distinction:
+
+| Simulator | RSS | Physical footprint | Reusable pages | Allocator-reported live bytes |
+| --- | ---: | ---: | ---: | ---: |
+| TV | 408 to 463 | 177 to 151 | 47 to 127 | 278 to 279 |
+| iPad | 530 to 548 | 301 to 295 | 95 to 120 | 154 to 154 |
+
+Values are MiB, first to last retained measurement. RSS rose while footprint and
+reported live bytes did not grow with it. Compression and reusable pages changed
+substantially; RSS alone would incorrectly suggest equivalent growth in memory
+charged to the process. After teardown, reported live bytes fell to 14.8 MiB
+on TV and 23.4 MiB on iPad, with zero weakly tracked engines/sessions/workers.
+
+Only after those measurements and the 30-second wait, the isolated soak invokes
+`malloc_zone_pressure_relief(nil, 0)` once and records `afterHeapPressureRelief`.
+This is a test-only attribution experiment, **not production cleanup or a proposed
+leak fix**. Footprint changed from 79.6 to 36.0 MiB on TV and 213.8 to 172.7 MiB
+on iPad while reported live allocation bytes stayed unchanged and reusable pages
+increased. Resident size barely changed. This identifies reclaimable allocator
+pages as a substantial part of the retained memory, rather than retained playback
+objects. The API's returned byte count is preserved separately; it is not the
+observed footprint delta.
+
+Retained controls: `be70a32815974b118cb7787c984ea0be` (TV) and
+`b6cf1759b8d34a8b9629d8c12b93523f` (iPad). An earlier TV run without reclamation,
+`5846a0df272b49c9b2df45f08081ba4c`, also showed roughly flat reported live bytes
+through playback and a sharp drop after stop. Temporary verbose zone dumps were
+removed after attribution. Their block counts/layout readings were internally
+inconsistent on these simulator runtimes, including unsigned underflow after
+reclamation; neither aggregate block totals nor those dumps establish an object
+leak. External `vmmap`/`heap` failed to read DYLD information, and an Allocations
+recording failed to finalize; no allocation-stack or retaining-owner claim is
+based on those failed captures.
+
+The complete-player hidden/visible cases also weakly track `PlayerViewModel` and
+`NativeVideoEngine`, then require both to release within five seconds after the
+player scope and window are torn down. Both sequential cases passed on both
+platforms. This covers actual controls/artwork and native-player ownership in
+addition to the isolated engine workload; it is not a full-app navigation,
+account/provider-cache or background-sync leak audit. No production memory
+change was justified by these controls, and small residual allocations,
+uninterrupted movies and physical-device behavior remain separate questions.
+
+#### Broader simulator memory audit
+
+`cards-lifecycle-soak` runs 180 mount/unmount cycles of the production media-row
+fixture in a fresh test process: 30 discarded warmup cycles, then five windows
+of 30 cycles. Every hosting controller and backing view must release. It is
+explicit-only and cannot share a run with another scenario. The shorter
+`cards-lifecycle` still runs 18 cycles.
+
+`mobile-home-lifecycle` performs 120 profile switches through the mobile app
+model and production tab-shell Home factory, including 20 warmup switches.
+Every outgoing Home, settings, and download model must release within five
+seconds. Each window awaits tracker scoping and allows one second for queued
+work. The accounts are empty fixtures: this is profile-model retirement, not
+populated Home/detail navigation or a live-provider workload.
+
+The memory audit uses direct process snapshots alongside weak lifetimes, not
+RSS alone. First-to-last retained windows, in MiB:
+
+| Workload | Physical footprint | Reported live malloc bytes |
+| --- | ---: | ---: |
+| TV, 180 row-host cycles | 93.6 to 102.1 | 32.0 to 24.7 |
+| iPhone, 180 row-host cycles | 213.4 to 214.7 | 19.0 to 19.4 |
+| iPhone, 120 profile switches | 180.3 to 181.5 | 60.4 to 57.4 |
+| iPhone, local preference batches | 223.2 to 223.2 | 48.3 to 49.3 |
+| TV, unchanged 10,000-record ledger | 19.5 to 19.5 | 6.36 to 6.38 |
+
+No tracked navigation/profile owners survived. Row-host footprint approached
+a plateau: the final 30 cycles added about 0.03 MiB on TV and 0.05 MiB on phone.
+The tightly packed local-sync workload's reported live bytes fell to 47.9 MiB
+after a one-second run-loop drain, below its first retained sample. Its 144
+batches applied 288 preferences without account invalidations, index resets,
+or download-model replacements. These are bounded observations, not proof that
+all framework caches or every allocation are leak-free.
+
+Retained runs: `3440bb2924254b9bb0610ecc254bcc3a` (TV row soak),
+`ff69767cb22c46b6a2c850675cac4f89` (phone row soak),
+`b6f7c89f97e94aacb76acf46a8c06729` (profile ownership),
+`8d52b70621224b04a9d7878ba93c7ce4` (local sync/drain), and
+`b09efce6f91c4a7aade9e0964bf14767` (unchanged ledger).
+
+Focused cache/lifetime regressions also exercise:
+
+- 512 positive/negative metadata results across provider/credential namespaces,
+  enforcing a shared 64-entry test budget and clearing all credential entries;
+- 64 Plex-used playlist snapshots and 32 Jellyfin collection snapshots, checking
+  their eight-/four-key retention boundaries and reloading the evicted neighbor;
+- 64 distinct small decoded images, with no remaining flights/waiters and weak
+  release of the cache and all images, plus existing cancellation/deadline cases;
+- sync-status error debouncing and 128 cancellations without retaining its owner.
+
+The initial five-module run passed those cases, but was not wholly green:
+4,900 passed, ten opt-in cases skipped, and an unmodified
+`MetadataTextScalingTests` font-metric assertion reported 13.5 instead of 14.
+Final cache-boundary verification passed CoreModels (3,064, five opt-in skips)
+and ProviderJellyfin (484, three opt-in skips) separately. A multi-bundle Xcode
+package-graph assertion produced an incomplete result; it is not passing
+evidence. The iPad host-launch attempt also stalled in CoreSimulator before
+tests began and was cancelled; the completed mobile measurements are iPhone
+simulator results.
+
+No production memory-management change or forced reclamation was justified.
+Cache entry limits do not bound the bytes in very large library snapshots, and
+NSCache's configured decoded-image cost limit is not a measured hard ceiling.
+Live CloudKit delivery/cancellation, large real libraries, full detail-page
+navigation, long sessions, and physical-device memory pressure remain outside
+this audit.
 
 `skeletons-idle` observes 24 production `SkeletonCardView` placeholders over
 2.3-second idle windows on either platform. It verifies all placeholders mounted
@@ -77,6 +458,23 @@ from a fixed 5 ms Plex metadata delay, checks that every selection reaches the
 PIN gate, and verifies tokens remain denied. It measures activation work, not
 rendered frame pacing or physical-device network latency.
 
+`mobile-profile-picker-entrance` mounts the production sixteen-profile touch
+picker in an iPad-sized window. It verifies the heading appears before avatars,
+a visible stagger, and substantially settled avatars within 1.5 seconds (450 ms
+for the heading, then one second for the cascade, after the starting frame). CPU measurements include
+hosting, native presentation, rendered captures, and heading recognition.
+This is repeated fresh-view presentation, not a cold process launch, connected
+startup workload, GPU measurement, or physical-device frame-pacing verdict.
+
+`mobile-home-loading-scroll` replaces eight production skeleton rails with
+20-item media rails while UIKit animates the production Home vertical scroll
+view. It requires all rows to finish, the final scroll destination to be reached,
+and no page-height change. It uses synthetic items without remote artwork:
+this is loading-layout and app-process CPU evidence, not provider/network,
+image-decoding, full Home startup, or presented-frame/FPS evidence.
+`HomeLoadingLayoutTests` separately checks empty-row removal, insertion, content
+insets, library/featured placeholders, and existing heading geometry.
+
 `mobile-home-rail-prefetch` updates the real mobile Continue Watching rail 24
 times with the same 180 metadata-rich episodes across twelve synthetic account
 identities. Artwork is preloaded into the test cache and online providers are
@@ -94,6 +492,30 @@ surface and advancing playback; it isolates preview overhead, not HD decoding.
 case must complete new samples, capped at five per window; the disabled case
 must have no sampling task. These report app-process CPU and resident memory,
 not GPU/render-server cost or physical-device energy and frame pacing.
+
+The `active-picture-1-enabled`, `active-picture-1-disabled`,
+`active-picture-4-enabled`, and `active-picture-4-disabled` scenarios use the same
+1080p30 `glow-hd.mp4`, stream-copied to finite loopback HLS, with one or four
+visible Aether-backed native players. HLS exercises AVPlayer even on simulators
+that correctly reject hardware H.264 and route ordinary files to software.
+Players pause during setup and start together from zero. Each window
+requires advancing playback; enabled windows require new presentation-timestamp
+samples at no more than 2 Hz per player, and disabling must detach native output
+taps. The four-player case checks aggregate admission stays at or below four.
+These are app-process CPU/resident-memory comparisons, not GPU, physical-device
+energy, HDR, or four simultaneous 4K decoder benchmarks.
+The `active-picture-hls` fixtures are generated with FFmpeg `-c copy -f hls
+-hls_time 2 -hls_list_size 0 -hls_playlist_type vod -hls_segment_type fmp4` from
+`active-picture.mp4` and `glow-hd.mp4`; no video is re-encoded. Native SDR output
+materialization is included in the comparison, not bounded by the CPU sampler's
+2 Hz limit. Independent subtitle outputs are preserved when the video tap stops.
+Native analysis requests 320x180 output while retaining the original display
+canvas separately. This reduces the requested analysis surface, not necessarily
+AVFoundation's internal decode/render allocations. In an isolated tvOS simulator
+four-player pair, enabled analysis added approximately 16 MiB resident memory;
+CPU medians were 935 versus 952 ms per 2.3-second window, within the measured
+dispersion. These are one controlled SDR comparison, not a hardware or HDR
+performance guarantee.
 
 The glow fixtures in `Tests/SubtitlePresentationSupport/Fixtures` are synthetic:
 `live-continuity-dim.mp4` is the first 30 seconds of `live-continuity.mp4`,
@@ -163,6 +585,45 @@ informational: allocator caches and framework lifetime make them unsuitable
 for a blanket byte threshold. Lifecycle scenarios additionally assert weak
 references actually release.
 
+`player-card-first-visits` prioritizes the first Info, Chapters and Cast opening
+in a fresh production-controls hierarchy for every sample, including the
+discarded warmup. It uses twenty local chapters and cast members, with no artwork
+URLs, network requests or video decoding. It checks actual native tab focus,
+rejects intermediate wrong-tab focus, and requires focusable content inside the
+card. The separate hosted
+`testProductionCardContentAndNativeEntryOnFirstVisits` checks rendered text and
+native entry into each card with both normal and reduced glass; an empty or
+obscured card must not count as a faster presentation.
+
+Each first opening records its largest 2 ms main-actor heartbeat gap. Chapters
+and Cast additionally record the synchronous native focus-update duration; that
+is not input-to-presented-frame latency. CPU covers the full hierarchy setup,
+first openings and teardown; fixed settling intervals dominate wall time.
+Framework, shader and process caches remain warm between samples, so this is a
+first visit per playback hierarchy, not repeated cold app launches or proof of
+second-generation Apple TV performance. Prefer this workload over repeated tab
+round trips when assessing first-use responsiveness.
+
+`player-continue-watching-controls` mounts fresh production controls with a
+cached, metadata-rich 180-item Home snapshot spanning twelve synthetic account
+identities. It reveals transport controls and makes four native focus visits
+(Continue Watching, Chapters, Continue Watching, Info), requiring populated,
+focusable card content and stable native focus. `player-continue-watching-disabled`
+uses the same snapshot with the preference disabled and visits Chapters and Info.
+Compare their transport-reveal counters, not total CPU as though they performed
+the same number of tab visits.
+
+Controls-frame readiness is polled every 20 ms; this is not input-to-presented-frame
+latency. A 2 ms main-actor heartbeat records the largest reveal/navigation gap.
+The report also counts Home snapshot reads, provider child requests, native
+focus-update duration, process CPU and resident memory. There is no video decoder,
+real server, remote artwork or full Home aggregation in this workload. One discarded
+warmup precedes five measured fresh hierarchies. Framework caches stay warm.
+The separate `testContinueWatchingPendingArtworkDoesNotBlockNativeNavigation`
+uses actual artwork requests to an owned loopback server delayed for ten seconds,
+verifying that no artwork starts just to reveal transport and that native tab
+navigation completes while the images remain pending.
+
 `native-poster-indicators` exercises the actual native-poster coordinator's
 foreground path: 72 completed overlays across 24 posters, three visible episode
 badges, and changing playback progress. Each sample uses cold geometry. The
@@ -186,6 +647,44 @@ queue of 1,448 previews; counters distinguish 70,584 candidate visits from actua
 URL comparisons. This isolates synchronous admission/URL work, without network
 requests, image decoding, UI layout, or a claim about the duration of a reported
 device hang.
+
+`player-controls-cold-reveal` creates a fresh production TV controls hierarchy
+for every sample, requests its first reveal without a settling delay, and
+completes three show/hide cycles. It includes local synopsis metadata and track
+options but no artwork requests or video decoding. First/last main-actor heartbeat
+gaps distinguish initial layout work from settled repeats; they are not rendered
+frame timings. The process and framework caches are warm after the discarded
+warmup, so this is cold view construction, not cold app launch.
+`player-controls-first-card` adds the first Info-card opening and verifies its
+visible bounds and focus readiness. Compare both when deferring optional content:
+less transport-entry work can increase first-card initialization cost without
+reducing total CPU. Hosted lifecycle, OCR, focus and fade tests separately
+protect the fixed card stage, first content, retained state and native materials.
+
+`player-controls-hidden-clock` advances the mounted TV transport's playback and
+buffered positions 32 times at the production 250 ms cadence after hiding it.
+`player-controls-hidden-static` observes the same settled hierarchy without
+clock mutations; `player-controls-visible-clock` repeats the advancing workload
+with controls visible. Each eight-second sample verifies the completed updates
+and timeline collision-region visibility. These isolate clock-driven UI work
+without video decoding, network traffic, or thumbnail extraction. They measure
+app-process CPU, not second-generation Apple TV GPU cost or rendered frame pacing.
+
+`player-controls-reveal` mounts the production TV transport with sixteen audio
+tracks and thirty-two subtitle tracks, then shows and hides it four times per
+sample. `player-controls-reveal-contended` repeats the same interaction with a
+controlled 180 ms synchronous preference read through the real system-audio
+backend's reader seam. Both require four completed reads and visible timeline
+geometry on every reveal. They report main-thread read counts and the largest
+2 ms main-actor heartbeat gap separately from app CPU.
+
+These isolate the controls' preference synchronization, not remux decoding,
+network throughput, GPU presentation or second-generation Apple TV performance.
+The separate `PlayerControlsRevealRenderingHostedTests` retains hidden,
+intermediate and fully visible screenshots while a preference read is still
+blocked, so removing the fade cannot count as the fix. Run the existing native
+audio-menu and controls-rendering regressions alongside it to preserve focus,
+confirmed settings, hidden/background polling and both glass/fallback materials.
 
 ## Native Home navigation attribution
 
@@ -301,7 +800,12 @@ five times, then changes the inputs; full encoding count must fall without
 suppressing that final change. Neither scenario measures CloudKit delivery.
 `guide-large-batches` downloads a generated 23.8 MB, 48,000-programme XMLTV file
 for two 2,000-channel batches. Request/byte reductions must preserve all 32,000
-requested rows; parse count is separate. It uses loopback, not a real provider.
+requested rows; parse count is separate. It now includes encrypted indexing of
+all 6,000 candidate channels, with separate cold-first-batch and warm-second-batch
+timings. Generation identity verifies one completed import across both queries.
+The older fixture parsed twice without persistence; comparing total time includes
+the new full-catalog write cost, not just a warm-cache speedup. It uses loopback,
+not a real provider, and does not measure rendered scrolling or physical devices.
 
 `collection-discovery` runs the production Jellyfin collection provider over
 356 native collections, with 5-ms synthetic request latency. The fixture retains
@@ -461,6 +965,17 @@ Runs live in ignored `.build/performance/runs/<id>/`. `result.json` contains:
 - each scenario's **one discarded warmup and five measured samples**, wall/CPU
   milliseconds, process resident bytes/delta, and actual workload counters.
 
+New samples also include a `memory` dictionary with physical footprint,
+resident/internal/external/compressed/reusable bytes, and reported malloc
+in-use/reserved bytes and block counts. Capture happens after the timed window;
+these process-wide diagnostics are not additional comparison-budget metrics.
+Older reports without the dictionary remain readable; a present dictionary
+must be complete and contain non-negative integers. Block totals are not live
+object counts. Selected lifecycle/sync cases also retain
+`plozz-memory-after-one-second-*.json` attachments after an untimed run-loop
+drain while the fixture remains owned; that is not full-app teardown or forced
+heap reclamation.
+
 Raw command logs, build/test `.xcresult` bundles, summaries, generated schemes
 and exported JSON attachments remain beside the result. A clean driver exit,
 exact expected test count, zero skips/failures, and complete unique finite
@@ -488,6 +1003,25 @@ presented-frame hitches or memory-pressure limits. Do not describe a sleeping
 idle window's wall time as work; its comparison gates CPU only.
 
 ## Adding a scenario
+
+`seek-generated-80ms` and `seek-generated-180ms` exercise the production scrub
+coordinator at all eight remote scan speeds in both directions. Each sample
+delivers 384 inputs at 33-ms intervals through a paced synthetic extractor and
+requires every final target to arrive. Motion-frame, starvation, cancellation,
+concurrency, blank-publication, publication-gap and settle-latency counters
+distinguish a responsive preview from one that only appears after input stops.
+The synthetic delay is controlled fixture latency, not a decoder benchmark;
+these scenarios do not establish Plex-network or physical-device performance.
+Both require zero starved stages, zero motion cancellations, one in-flight
+extraction, no blank publications, and publication/settle gaps below 500 ms.
+This budget allows two 180-ms extractions plus scheduling overhead; the
+two-second thumbnail grid limits visible frame changes at the slowest speed.
+
+`seek-plex-bif` uses a real loopback HTTP server with 100-ms response latency
+and a 3,601-frame, 320-pixel BIF fixture. Cold and warm passes cover both
+directions at every speed, verify the final JPEG's pixel identity, require
+frames during every moving stage, and permit only one index download.
+This is controlled HTTP/JPEG coverage, not the reporter's Plex server.
 
 Reuse existing production fixtures and helpers first. Add an opt-in XCTest
 method that calls `PerformanceProbe.requireEnabled()` **before setup**, then

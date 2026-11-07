@@ -9,7 +9,9 @@ public struct ArtworkPlacement: RawRepresentable, Codable, Hashable, Sendable {
     }
 
     public static let homeHero = Self(rawValue: "homeHero")
+    public static let squareHero = Self(rawValue: "squareHero")
     public static let detailBackdrop = Self(rawValue: "detailBackdrop")
+    public static let landscapeCard = Self(rawValue: "landscapeCard")
     public static let poster = Self(rawValue: "poster")
     public static let seriesPoster = Self(rawValue: "seriesPoster")
     public static let logo = Self(rawValue: "logo")

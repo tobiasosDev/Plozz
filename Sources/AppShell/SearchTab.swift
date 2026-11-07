@@ -2,6 +2,7 @@
 import SwiftUI
 import AppRuntime
 import CoreModels
+import CoreNetworking
 import CoreUI
 import FeatureHome
 import FeatureMusic
@@ -24,10 +25,15 @@ import LastFmService
 /// across every active account; results route to their owning provider.
 struct SearchTab: View {
     @State private var trailerOpening = YouTubeTrailerOpening()
+    @Environment(HeroBackgroundSettingsModel.self) private var heroBackground
+    @State private var externalOpening = ExternalMediaOpening()
+    @Environment(ProfilesModel.self) private var profilesModel: ProfilesModel?
     /// The rail's chrome model, present only under ``NavigationStyle/rail``. This
     /// stack reports its depth so the rail steps aside on a detail page.
     @Environment(NavigationChromeModel.self) private var navigationChrome: NavigationChromeModel?
+    @Environment(\.detailPlaybackPreparationAllowed) private var playbackPreparationAllowed
     let accounts: [ResolvedAccount]
+    var isProfileAuthorized: @MainActor () -> Bool = { false }
     /// Detail-snapshot cache scoped to the active content identity, threaded from
     /// `MainTabView` so revisit paints never cross a profile/account/credential.
     let detailSnapshotCache: DetailSnapshotCache
@@ -158,6 +164,8 @@ struct SearchTab: View {
             )
             .modifier(NavigationRailSearchRootInset())
             .youTubeTrailerOpeningFailures(trailerOpening)
+            .externalMediaOpeningFailures(externalOpening)
+            .onChange(of: accounts.map(\.account.id)) { _, _ in externalOpening.cancel() }
             .navigationDestination(for: MediaItem.self) { item in
                 let provider = try? resolveProvider(item.sourceAccountID, in: accounts)
                 if let provider, let route = CollectionBrowseRoute(
@@ -353,6 +361,7 @@ struct SearchTab: View {
             // Inside the stack, after the destinations — see HomeTab. Outside it,
             // pushed pages never see the router.
             .mediaItemNavigator { navigateToItem($0) }
+            .environment(\.detailPlaybackPreparationAllowed, playbackPreparationAllowed && isActiveTab)
         }
         .cinematicDetailNavigation(path: $path)
         // See HomeTab: reports detail-page depth so the custom rail steps aside.
@@ -392,6 +401,7 @@ struct SearchTab: View {
             ratingsProvider: ratingsProvider,
             detailMetadataResolver: { await DetailMetadataResolver.household.resolve($0) },
             onlineTrailerResolver: { await DetailMetadataResolver.household.trailers(for: $0) },
+            trailerSettings: heroBackground,
             discoveryStatusRefresh: { await seer.requestAvailability(for: $0) },
             loadSeasonEpisodeRoster: { await seer.seasonEpisodeRoster(for: $0, seasonNumber: $1) },
             makeRelatedTitlesLoader: {
@@ -424,18 +434,35 @@ struct SearchTab: View {
         }
     }
 
-    /// In-progress items prompt "Resume vs Start Over"; fully-unwatched items
-    /// play immediately from the start.
+    /// In-progress items resume directly unless the profile asks for a choice.
     private func requestPlay(_ item: MediaItem) {
+        guard !item.isTrailer || heroBackground.settings.trailerSources.allows(item) else {
+            PlozzLog.app.info("Trailer action suppressed by profile settings")
+            return
+        }
         if item.isYouTubeTrailer {
             Task { await trailerOpening.open(item) }
             return
         }
         let target = bestSourcePlayItem(item, accounts: accounts, identitySources: identitySources)
-        if let resume = target.resumePosition, resume > 1 {
+        if target.opensExternalSource {
+            do {
+                let provider = try resolveProvider(target.sourceAccountID, in: accounts)
+                let profileID = profilesModel?.activeProfileID
+                Task {
+                    await externalOpening.open(target, provider: provider) {
+                        profilesModel?.activeProfileID == profileID && isProfileAuthorized()
+                    }
+                }
+            } catch {
+                externalOpening.failed = true
+            }
+            return
+        }
+        if playbackSettings.shouldAskBeforeResuming(at: target.resumePosition) {
             resumePrompt = target
         } else {
-            playRequest = PlayRequest(item: target, startPosition: 0)
+            playRequest = PlayRequest(item: target, startPosition: target.resumePosition ?? 0)
         }
     }
 }

@@ -448,7 +448,9 @@ struct NavigationRailView: View {
         case .watchlist:
             item(.watchlist, symbol: "bookmark.fill", label: Text(Self.watchlistTitle))
         case .tonight:
-            item(.tonight, symbol: "sparkles", label: Text(Self.tonightTitle))
+            item(.tonight, symbol: "moon.stars", label: Text(Self.tonightTitle))
+        case .discover:
+            item(.discover, symbol: "sparkles", label: Text("Discover"))
         case .liveTV:
             item(
                 .liveTV, symbol: "antenna.radiowaves.left.and.right",

@@ -128,7 +128,9 @@ public final class NativeVideoEngine: VideoEngine {
     @ObservationIgnored private var formatInspectTask: Task<Void, Never>?
     @ObservationIgnored private var chapterMetadataTask: Task<Void, Never>?
     private var convertedVideoFormat: NativePlaybackFailure.VideoFormat?
-    @ObservationIgnored private var audioSessionConfigured = false
+    @ObservationIgnored private let activePictureAnalyzer: (any NativeVideoActivePictureAnalyzing)?
+    @ObservationIgnored private var activePictureGeneration: UInt64 = 0
+    @ObservationIgnored private var activePictureSeeks = 0
     /// Retains the resource-loader delegate that serves injected subtitle
     /// playlists; `AVAssetResourceLoader` holds it only weakly.
     @ObservationIgnored private var subtitleLoader: SubtitleInjectingResourceLoader?
@@ -166,12 +168,14 @@ public final class NativeVideoEngine: VideoEngine {
         style: SubtitleStyle = .default,
         authenticatedHTTPResolver: (any AuthenticatedHTTPResourceResolving)? = nil,
         streamingPlaylistClient: (any HTTPClient)? = nil,
-        startsMuted: Bool = false
+        startsMuted: Bool = false,
+        activePictureAnalyzer: (any NativeVideoActivePictureAnalyzing)? = nil
     ) {
         self.style = style
         self.authenticatedHTTPResolver = authenticatedHTTPResolver
         self.streamingPlaylistClient = streamingPlaylistClient
         self.startsMuted = startsMuted
+        self.activePictureAnalyzer = activePictureAnalyzer
         PlaybackInstrumentation.increment(.nativeEngine)
     }
 
@@ -232,7 +236,7 @@ public final class NativeVideoEngine: VideoEngine {
         }
         #endif
         status = .loading
-        configureAudioSession()
+        loadFailure = nil
         // Tear down any previous player (e.g. a failed direct-play attempt being
         // retried under a transcode) without reporting a stop.
         teardownPlayer()
@@ -241,6 +245,20 @@ public final class NativeVideoEngine: VideoEngine {
         #endif
 
         self.request = request
+        do {
+            try await configureAudioSession()
+        } catch {
+            guard generation == loadGeneration, !Task.isCancelled else { return }
+            loadFailure = NativePlaybackFailure.audioSessionFailure(error)
+            HandoffDiagnostics.emit("native AUDIO_SESSION_FAILED code=\(loadFailure?.diagnosticCode ?? "unreported")")
+            status = .failed(.invalidResponse)
+            onFailure?(.invalidResponse)
+            return
+        }
+        guard generation == loadGeneration, !Task.isCancelled else { return }
+        #if !os(macOS)
+        observeAudioRouteChanges(AVAudioSession.sharedInstance())
+        #endif
         let streamURL: URL?
         if case .some(.authenticatedHTTP(let locator)) = request.playbackSource {
             do {
@@ -749,6 +767,33 @@ public final class NativeVideoEngine: VideoEngine {
     /// of pretending — the menu hides those rows for this engine.
     public var capabilities: PlayerEngineCapabilities { [.playbackSpeed, .videoZoom] }
 
+    public var supportsActivePictureAnalysis: Bool { activePictureAnalyzer != nil }
+
+    public func sampleActivePicture() async -> VideoActivePictureState {
+        guard let activePictureAnalyzer else { return .unsupported }
+        #if os(iOS)
+        guard !pictureInPictureActive else {
+            stopActivePictureAnalysis()
+            return .unavailable
+        }
+        #endif
+        guard activePictureSeeks == 0, let player, hasPresentedVideoFrame else { return .unavailable }
+        let generation = activePictureGeneration
+        let result = await activePictureAnalyzer.sample(
+            player: player, generation: generation,
+            dynamicRange: streamingOutputDynamicRange ?? SourceDynamicRange.providerHint(from: request?.sourceMetadata)
+        )
+        guard generation == activePictureGeneration, self.player === player, !Task.isCancelled else {
+            return .unavailable
+        }
+        return result
+    }
+
+    public func stopActivePictureAnalysis() {
+        activePictureGeneration &+= 1
+        activePictureAnalyzer?.stop()
+    }
+
     /// Last requested speed, so a subsequent play() doesn't snap back to 1.0
     /// (AVPlayer resets rate to 1.0 on pause and on some item transitions).
     @ObservationIgnored private var currentPlaybackRate: Double = 1.0
@@ -773,7 +818,6 @@ public final class NativeVideoEngine: VideoEngine {
         }
         routeChangeObserver = nil
         #endif
-        audioSessionConfigured = false
         teardownPlayer()
         #if os(tvOS)
         clearDisplayCriteria()
@@ -792,21 +836,15 @@ public final class NativeVideoEngine: VideoEngine {
 
     // MARK: - Audio session
 
-    /// Best-effort: configure the shared audio session for video playback so
-    /// multichannel/Atmos passthrough and spatialization route correctly. Never
-    /// blocks or fails playback — any error is swallowed.
-    private func configureAudioSession() {
+    private func configureAudioSession() async throws {
         #if !os(macOS)
-        guard !audioSessionConfigured else { return }
-        audioSessionConfigured = true
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.playback, mode: .moviePlayback)
+        try await Task.detached {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .moviePlayback, options: [])
+            try session.setSupportsMultichannelContent(true)
             try session.setActive(true)
-        } catch {
-            PlozzLog.playback.debug("Audio session configuration failed (non-fatal)")
-        }
-        observeAudioRouteChanges(session)
+        }.value
+        try Task.checkCancellation()
         #endif
     }
 
@@ -864,7 +902,9 @@ public final class NativeVideoEngine: VideoEngine {
         return request.isManifestStream ? .nativeHLS : .nativeFile
     }
 
+    @ObservationIgnored private var loadFailure: StreamingPlaybackFailure?
     public var streamingFailure: StreamingPlaybackFailure? {
+        if let loadFailure { return loadFailure }
         guard let item = player?.currentItem else { return nil }
         let lastError = item.errorLog()?.events.last
         guard item.error != nil || lastError != nil else { return nil }
@@ -920,7 +960,10 @@ public final class NativeVideoEngine: VideoEngine {
                             guard let track, let description = try await track.load(.formatDescriptions).first else { return nil }
                             return NativePlaybackFailure.VideoFormat(description)
                         },
-                        isCurrent: { [weak self] in self?.loadGeneration == generation }
+                        isCurrent: { [weak self] in
+                            self?.loadGeneration == generation && item.status != .failed
+                        },
+                        isReady: { item.status == .readyToPlay }
                     )
                     guard let format else { return }
                     guard let self, !Task.isCancelled, generation == self.loadGeneration else { return }
@@ -1097,6 +1140,8 @@ public final class NativeVideoEngine: VideoEngine {
     /// Release media resources even when presentation or diagnostics still retain
     /// the outgoing player. Dropping our reference alone does not stop its item.
     private func teardownPlayer() {
+        stopActivePictureAnalysis()
+        activePictureSeeks = 0
         chapterMetadataTask?.cancel()
         chapterMetadataTask = nil
         chapters = []
@@ -1156,6 +1201,8 @@ public final class NativeVideoEngine: VideoEngine {
         player: AVPlayer, item: AVPlayerItem, to seconds: TimeInterval, kind: VideoSeekKind,
         completion: @escaping @Sendable (Bool) -> Void
     ) {
+        stopActivePictureAnalysis()
+        activePictureSeeks += 1
         let target = seekTarget(seconds, item: item)
         let time = CMTime(seconds: target, preferredTimescale: 600)
         let toleranceSeconds: TimeInterval = kind == .fast ? 5 : 1
@@ -1164,8 +1211,11 @@ public final class NativeVideoEngine: VideoEngine {
         HandoffDiagnostics.emit(
             "native RESUME_SEEK_BEGIN generation=\(loadGeneration) target=\(String(format: "%.2f", target)) status=\(item.status.rawValue)"
         )
-        player.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak player] finished in
+        player.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self, weak player] finished in
             Task { @MainActor in
+                if let self, let player, self.loadGeneration == generation, self.player === player {
+                    self.activePictureSeeks -= 1
+                }
                 let position = player?.currentTime().seconds ?? .nan
                 let landed = NativeStartupResume.didLand(
                     finished: finished, position: position,
@@ -1207,6 +1257,12 @@ public final class NativeVideoEngine: VideoEngine {
     }
 
     private func seek(player: AVPlayer, to seconds: TimeInterval, kind: VideoSeekKind) async {
+        stopActivePictureAnalysis()
+        activePictureSeeks += 1
+        let generation = loadGeneration
+        defer {
+            if loadGeneration == generation, self.player === player { activePictureSeeks -= 1 }
+        }
         let target = seekTarget(seconds, item: player.currentItem)
         let time = CMTime(seconds: target, preferredTimescale: 600)
         // `.fast` widens the tolerance so AVPlayer can snap to the nearest
@@ -1294,11 +1350,12 @@ public final class NativeVideoEngine: VideoEngine {
             if let track { option = await Self.legibleOption(for: track, in: group) }
             else { option = nil }
             guard !Task.isCancelled, self.player?.currentItem === item else { return }
-            if let option, self.nativeSubtitleOutput?.isSelecting(option) == true,
-               item.currentMediaSelection.selectedMediaOption(in: group) == option {
+            guard let reading = await NativeMediaSelectionReader.shared.read(item: item, group: group),
+                  !Task.isCancelled, self.player?.currentItem === item else { return }
+            let current = reading.option
+            if let option, self.nativeSubtitleOutput?.isSelecting(option) == true, current == option {
                 return
             }
-            let current = item.currentMediaSelection.selectedMediaOption(in: group)
             if current?.mediaSubTypes.contains(NSNumber(value: kCMSubtitleFormatType_3GText)) == true {
                 // An active tx3g decoder can keep a removed output on tvOS 27.
                 // HLS switches must stay direct: an intermediate Off can lose paused cues.
@@ -1469,6 +1526,7 @@ extension NativeVideoEngine: PictureInPicturePresentingEngine {
     }
 
     public func setPictureInPictureActive(_ active: Bool) {
+        if active { stopActivePictureAnalysis() }
         pictureInPictureActive = active
         updateBackgroundPlaybackPolicy()
     }

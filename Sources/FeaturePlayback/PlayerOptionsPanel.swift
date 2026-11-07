@@ -171,7 +171,7 @@ struct PlayerOptionsPanel: View {
             subtitleScreen, model: model, offersDualSubtitles: offersDualSubtitles
         )
         switch panel {
-        case .info, .cast, .chapters, .episodes, .playlist:
+        case .info, .cast, .chapters, .episodes, .playlist, .continueWatching:
             // The tab, not the card: the row above the card behaves like a
             // segmented control, so opening lands there and a further Down press
             // steps into the card's actions.
@@ -191,7 +191,7 @@ struct PlayerOptionsPanel: View {
                 // its right.
                 return .row(0)
             case .style:
-                return model.secondarySubtitleImagePrimaryFormat == nil ? .row(0) : .subBack
+                return .row(0)
             case .styleFont:
                 let style = SystemCaptionStyle.shared.resolved(model.subtitleStyle)
                 return .row(style.systemFont == nil && style.fontDescriptor == nil
@@ -479,7 +479,7 @@ struct PlayerOptionsPanel: View {
             )
         case .sync: SyncPaneView(model: model, actions: actions, focus: $focus)
         // Card tabs render in the bottom card, never in the floating menu.
-        case .info, .cast, .chapters, .episodes, .playlist: EmptyView()
+        case .info, .cast, .chapters, .episodes, .playlist, .continueWatching: EmptyView()
         }
     }
 
@@ -1002,7 +1002,7 @@ struct PlayerOptionsPanel: View {
             return model.engineCapabilities.contains(.videoZoom) ? PlaybackOptionsPane.zoomSlot : PlaybackOptionsPane.speedSlot
         case .sync:
             return 0
-        case .info, .cast, .chapters, .episodes, .playlist:
+        case .info, .cast, .chapters, .episodes, .playlist, .continueWatching:
             return 0
         }
     }

@@ -76,6 +76,7 @@ final class NavigationDestinationLayoutTests: XCTestCase {
         var expected = [
             NavigationLibraryLayout.homeKey,
             NavigationLibraryLayout.tonightKey,
+            NavigationLibraryLayout.discoverKey,
             NavigationLibraryLayout.watchlistKey,
         ]
         expected.append(NavigationLibraryLayout.liveTVKey)

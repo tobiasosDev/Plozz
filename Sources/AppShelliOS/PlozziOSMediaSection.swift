@@ -8,6 +8,15 @@ enum PlozziOSMediaRailLayout {
     static let headingSpacing: CGFloat = 12
     static let visibleSpacing: CGFloat = 12
     static let shadowClearance: CGFloat = 10
+    static let desktopBrowseThreshold = 10
+
+    static func sectionGap(metrics: PlozzMetrics) -> CGFloat {
+        metrics.usesDesktopSizing ? metrics.rowSpacing : sectionSpacing
+    }
+
+    static func visibleGap(metrics: PlozzMetrics) -> CGFloat {
+        metrics.usesDesktopSizing ? metrics.cardSpacing : visibleSpacing
+    }
 
     static func artworkAlignedInset(_ pageInset: CGFloat, metrics: PlozzMetrics, cardStyle: CardStyle) -> CGFloat {
         pageInset - (cardStyle == .framed ? metrics.cardInset : metrics.borderlessCardSideMargin)
@@ -16,9 +25,10 @@ enum PlozziOSMediaRailLayout {
     /// Exclude the card's invisible side margins from the visible artwork gap.
     static func stackSpacing(
         metrics: PlozzMetrics, cardStyle: CardStyle,
-        visibleSpacing: CGFloat = PlozziOSMediaRailLayout.visibleSpacing
+        visibleSpacing: CGFloat? = nil
     ) -> CGFloat {
-        switch cardStyle {
+        let visibleSpacing = visibleSpacing ?? visibleGap(metrics: metrics)
+        return switch cardStyle {
         case .framed:
             visibleSpacing
         case .borderless:
@@ -30,28 +40,35 @@ enum PlozziOSMediaRailLayout {
 struct PlozziOSMediaSection<Content: View>: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.plozzMetrics) private var metrics
     let title: Text
     var horizontalInset: CGFloat?
     var artworkInset: CGFloat = 0
     var onSeeAll: (() -> Void)? = nil
+    var onBrowse: (() -> Void)? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: PlozziOSMediaRailLayout.headingSpacing) {
             HStack {
-                title
+                Group {
+                    if let onBrowse { BrowseRowHeading(title: title, action: onBrowse) }
+                    else { title }
+                }
                     .font(.title3.weight(.semibold))
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
-                if let onSeeAll {
+                if onBrowse == nil, let onSeeAll {
                     Spacer()
                     Button("See all", action: onSeeAll)
                         .font(.subheadline)
                 }
             }
-                .padding(.horizontal, horizontalInset ?? PlozziOSPageLayout.horizontalInset(for: sizeClass))
+                .padding(.horizontal, horizontalInset ?? PlozziOSPageLayout.horizontalInset(
+                    for: sizeClass, usesDesktopSizing: metrics.usesDesktopSizing
+                ))
             content
                 .padding(.vertical, -artworkInset)
         }

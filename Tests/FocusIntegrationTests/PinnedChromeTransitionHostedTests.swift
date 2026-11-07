@@ -420,6 +420,9 @@ final class PinnedChromeTransitionHostedTests: XCTestCase {
                 $0.convert($0.bounds, to: fixture.window).midY
                     < $1.convert($1.bounds, to: fixture.window).midY
             })
+            try await waitUntil {
+                NavigationRowFocusRequester.target(for: settingsRow, in: fixture.window) != nil
+            }
             let settingsTarget = try XCTUnwrap(
                 NavigationRowFocusRequester.target(for: settingsRow, in: fixture.window)
             )

@@ -33,7 +33,7 @@ struct DownloadsInteractionFixture: View {
                 disabledOrder: MetadataSourceAttribution.all.map(\.id)
             )
         }
-        let records = (1...12).map { index in
+        var records = (1...12).map { index in
             DownloadedMediaRecord(
                 identity: .external(source: "plozz-account:fixture", value: "episode-\(index)"),
                 sourceKind: .managedHTTP, status: index == 1 ? .downloading : .completed,
@@ -48,6 +48,20 @@ struct DownloadsInteractionFixture: View {
                     seasonNumber: 2, episodeNumber: index
                 )
             )
+        }
+        if ProcessInfo.processInfo.arguments.contains("--download-movie") {
+            records = [
+                DownloadedMediaRecord(
+                    identity: .external(source: "plozz-account:fixture", value: "movie"),
+                    sourceKind: .managedHTTP, status: .completed,
+                    localFileName: "movie.mkv", bytesDownloaded: 100_000_000,
+                    totalBytes: 100_000_000,
+                    snapshot: .init(
+                        title: "Downloaded Movie", kind: .movie,
+                        sourceAccountID: "fixture", sourceItemID: "movie"
+                    )
+                )
+            ]
         }
         let registry = DownloadedMediaRegistry(store: InMemoryDownloadedMediaStore(.init(
             records: Dictionary(uniqueKeysWithValues: records.map { ($0.identityKey, $0) })

@@ -3,6 +3,59 @@ import XCTest
 
 @MainActor
 final class SubtitleStylePreferencesTests: XCTestCase {
+    func testControlAvoidanceDefaultsOnAndPersistsIndependentProfileAndLiveChoices() throws {
+        XCTAssertTrue(try JSONDecoder().decode(SubtitleStyle.self, from: Data("{}".utf8)).avoidsPlayerControls)
+        XCTAssertTrue(SubtitleStyle.default.avoidsPlayerControls)
+        XCTAssertTrue(SubtitleStyle.profileDefault.avoidsPlayerControls)
+        for enabled in [false, true] {
+            var style = SubtitleStyle.default
+            style.avoidsPlayerControls = enabled
+            XCTAssertEqual(try JSONDecoder().decode(SubtitleStyle.self, from: JSONEncoder().encode(style)), style)
+        }
+        let name = "SubtitleControlAvoidance.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = SubtitleStyleStore(defaults: defaults, namespace: "viewer")
+        let model = SubtitleStyleModel(store: store)
+        model.style.avoidsPlayerControls = false
+        XCTAssertFalse(model.resolvedLiveTVStyle.avoidsPlayerControls, "Live TV inherits the profile until customized.")
+        model.usesSeparateLiveTVStyle = true
+        model.resolvedLiveTVStyle.avoidsPlayerControls = true
+        let reloaded = SubtitleStyleModel(store: store)
+        XCTAssertFalse(reloaded.style.avoidsPlayerControls)
+        XCTAssertTrue(reloaded.resolvedLiveTVStyle.avoidsPlayerControls)
+        XCTAssertTrue(SubtitleStyleStore(defaults: defaults).load().base.avoidsPlayerControls)
+        XCTAssertTrue(SubtitleStyleStore(defaults: defaults, namespace: "other").load().base.avoidsPlayerControls)
+    }
+
+    func testPositionLabelsDescribeTheBottomReferenceWithoutChangingStoredValues() {
+        let expected: [(SubtitleStyle.PositionReference, String, String)] = [
+            (.screen, "screen", "Bottom of screen"),
+            (.picture, "picture", "Bottom of video")
+        ]
+        XCTAssertEqual(SubtitleStyle.PositionReference.allCases, expected.map { $0.0 })
+        for (reference, storedValue, title) in expected {
+            var label = reference.displayName
+            label.locale = Locale(identifier: "en")
+            XCTAssertEqual(String(localized: label), title)
+            XCTAssertEqual(reference.rawValue, storedValue)
+        }
+        XCTAssertEqual(SubtitleStyle.default.positionReference, .screen)
+        XCTAssertEqual(SubtitleStyle.profileDefault.positionReference, .screen)
+    }
+
+    func testPictureReferenceDecodesLegacyUnknownAndRoundTrips() throws {
+        XCTAssertEqual(try JSONDecoder().decode(SubtitleStyle.self, from: Data("{}".utf8)).positionReference, .screen)
+        XCTAssertEqual(try JSONDecoder().decode(SubtitleStyle.self, from: Data("{\"positionReference\":\"future\"}".utf8)).positionReference, .screen)
+        for reference in SubtitleStyle.PositionReference.allCases {
+            var style = SubtitleStyle.default
+            style.positionReference = reference
+            style.verticalPosition = 0.73
+            style.verticalAnchor = .top
+            style.horizontalOffset = -0.12
+            XCTAssertEqual(try JSONDecoder().decode(SubtitleStyle.self, from: JSONEncoder().encode(style)), style)
+        }
+    }
     func testSystemStyleChoiceAndCustomStyleTransferOnlyToTheSameProfile() throws {
         let sourceName = "SubtitleProfileSource.\(UUID().uuidString)"
         let targetName = "SubtitleProfileTarget.\(UUID().uuidString)"
@@ -26,11 +79,15 @@ final class SubtitleStylePreferencesTests: XCTestCase {
         for followsSystem in [false, true] {
             model.style.followsSystemStyle = followsSystem
             model.style.fontScale = 1.25
+            model.style.positionReference = .picture
+            model.style.avoidsPlayerControls = !followsSystem
             let settings = ProfileSettingsTransfer.capture(namespace: "profile-a", defaults: source)
             ProfileSettingsTransfer.apply(settings, namespace: "profile-a", defaults: target)
             let received = SubtitleStyleStore(defaults: target, namespace: "profile-a").load()
             XCTAssertEqual(received.base.followsSystemStyle, followsSystem)
             XCTAssertEqual(received.base.fontScale, 1.25)
+            XCTAssertEqual(received.base.positionReference, .picture)
+            XCTAssertEqual(received.base.avoidsPlayerControls, !followsSystem)
             XCTAssertEqual(sourceOther.load(), other)
             XCTAssertEqual(targetOther.load(), other)
             XCTAssertEqual(SubtitleStyleStore(defaults: source).load(), defaultBefore)
@@ -103,6 +160,8 @@ final class SubtitleStylePreferencesTests: XCTestCase {
             let store = SubtitleStyleStore(defaults: defaults, namespace: namespace)
             XCTAssertTrue(store.load().base.followsSystemStyle)
             XCTAssertTrue(store.load().resolvedLiveTV.followsSystemStyle)
+            XCTAssertEqual(store.load().base.positionReference, .screen)
+            XCTAssertEqual(store.load().resolvedLiveTV.positionReference, .screen)
             XCTAssertNil(store.load().liveTV)
         }
         for json in ["{}", #"{"base":{}}"#, #"{"base":{"fontScale":0.37},"liveTV":{"fontScale":1.17}}"#] {

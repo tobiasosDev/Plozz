@@ -39,6 +39,9 @@ public protocol MediaProvider: Sendable {
     /// Recently added items across the user's libraries.
     func latest(limit: Int) async throws -> [MediaItem]
 
+    /// Continues the exact Home feed in provider order, not an unrestricted library.
+    func homeRowPage(_ feed: HomeRowFeed, startIndex: Int, limit: Int) async throws -> HomeRowPage
+
     /// "Continue Watching" restricted to the given libraries, used by the Home
     /// aggregator to honour the user's per-library Home-visibility *at fetch
     /// time* — and, crucially, to stamp each returned item's `libraryID` so
@@ -59,6 +62,10 @@ public protocol MediaProvider: Sendable {
     /// ``continueWatching(limit:inLibraries:)`` for the scoping/tagging contract.
     func latest(limit: Int, inLibraries libraryIDs: [String]?) async throws -> [MediaItem]
 
+    /// Completes local container watch state for a bounded Recently Added batch.
+    /// Server providers already include their authoritative user state in feeds.
+    func recentlyAddedWatchState(_ items: [MediaItem]) async throws -> [MediaItem]
+
     /// Full presentation metadata without probe-capable playback preparation.
     func item(id: String) async throws -> MediaItem
 
@@ -67,6 +74,9 @@ public protocol MediaProvider: Sendable {
     /// Unlike browsing detail, unresolved source discovery must throw rather than
     /// return a placeholder that could bypass the version picker.
     func playbackItem(id: String) async throws -> MediaItem
+
+    /// Resolve a user-imported external title without opening a playback engine.
+    func externalMediaLink(for itemID: String, mediaSourceID: String?) async throws -> ExternalMediaLink
 
     /// Trailers / preview clips for an item (movie or series).
     ///
@@ -187,6 +197,10 @@ public protocol MediaProvider: Sendable {
         sections: [ServerHomeSection], limit: Int, excludingLibraryIDs: Set<String>
     ) async -> [String: Result<[MediaItem], AppError>]
 
+    func serverHomeContent(
+        sections: [ServerHomeSection], limit: Int, excludingLibraryIDs: Set<String>
+    ) async -> [String: Result<ServerHomeRowContent, AppError>]
+
     // MARK: Search
 
     /// Search the user's libraries for items matching a free-text query.
@@ -232,6 +246,13 @@ public protocol MediaProvider: Sendable {
     /// default that ignores the id, so this is fully additive — existing
     /// conformers and test doubles need no changes.
     func playbackInfo(for itemID: String, mediaSourceID: String?, forceTranscode: Bool) async throws -> PlaybackRequest
+
+    /// Resolve only an already selected file for bounded detail preparation.
+    /// Never discovers versions, downloads sidecars or starts a playback session.
+    /// Unsupported providers return nil; ordinary Play still uses playbackInfo.
+    func playbackPreparationLocator(
+        for itemID: String, mediaSourceID: String
+    ) async throws -> NetworkFileLocator?
 
     /// Report progress so the server keeps resume points in sync.
     func reportPlayback(_ progress: PlaybackProgress, event: PlaybackEvent) async throws
@@ -479,6 +500,9 @@ public enum MediaProviderURLIdentity {
 // doubles) inherit safe no-ops, so adding the capability never forces every
 // conformer to implement it.
 public extension MediaProvider {
+    func externalMediaLink(for itemID: String, mediaSourceID: String?) async throws -> ExternalMediaLink {
+        throw AppError.unknown("This source does not support external title links.")
+    }
     var catalogIdentityRequiresEnrichment: Bool { false }
     var playbackInventoryRequiresEnrichment: Bool { false }
 
@@ -587,6 +611,13 @@ public extension MediaProvider {
         return results
     }
 
+    func serverHomeContent(
+        sections: [ServerHomeSection], limit: Int, excludingLibraryIDs: Set<String>
+    ) async -> [String: Result<ServerHomeRowContent, AppError>] {
+        await serverHomeItems(sections: sections, limit: limit, excludingLibraryIDs: excludingLibraryIDs)
+            .mapValues { $0.map { ServerHomeRowContent(items: $0) } }
+    }
+
     /// Default: cannot query by person, so a person page shows no library credits
     /// for this source rather than failing. Jellyfin/Emby (`PersonIds`), Plex
     /// (`actor`) and the share catalog (its persisted cast) override this.
@@ -659,6 +690,10 @@ public extension MediaProvider {
         try await latest(limit: limit)
     }
 
+    func recentlyAddedWatchState(_ items: [MediaItem]) async throws -> [MediaItem] {
+        items
+    }
+
     /// Default: no trailers. Providers that can surface them (Jellyfin local
     /// trailers, Plex extras) override this; test doubles and other conformers
     /// inherit the safe empty result, so adding the capability stays additive.
@@ -686,12 +721,21 @@ public extension MediaProvider {
         try await playbackInfo(for: itemID, forceTranscode: forceTranscode)
     }
 
+    func playbackPreparationLocator(
+        for itemID: String, mediaSourceID: String
+    ) async throws -> NetworkFileLocator? { nil }
+
     /// Default: classify locality from the session's persisted `baseURL` host.
     /// Correct for single-URL backends (Jellyfin, manually-entered hosts); Plex
     /// overrides this to classify the connection its resolver actually selected.
     var connectionLocality: SourceLocality {
         SourceLocalityClassifier.classify(url: session.server.baseURL)
     }
+}
+
+public enum LibraryCollectionPresentation: Equatable, Sendable {
+    case individualItems
+    case serverDefault
 }
 
 /// A request for one page of a container's children.
@@ -704,6 +748,7 @@ public struct PageRequest: Equatable, Sendable {
     /// session share one descriptor; changing it restarts paging from index 0.
     public var sort: SortDescriptor
     public var filters: LibraryFilters
+    public var collectionPresentation: LibraryCollectionPresentation
     /// How much per-item detail the caller reads.
     public var detail: Detail
 
@@ -719,17 +764,27 @@ public struct PageRequest: Equatable, Sendable {
         case taste
     }
 
+    public var allowsServerCollections: Bool {
+        collectionPresentation == .serverDefault && sort.field == .name && filters.isEmpty
+    }
+
+    public func usesServerCollections(for kind: MediaItemKind) -> Bool {
+        kind == .movie && allowsServerCollections
+    }
+
     public init(
         startIndex: Int = 0,
         limit: Int = PageRequest.defaultLimit,
         sort: SortDescriptor = .default,
         filters: LibraryFilters = .all,
+        collectionPresentation: LibraryCollectionPresentation = .individualItems,
         detail: Detail = .browse
     ) {
         self.startIndex = startIndex
         self.limit = limit
         self.sort = sort
         self.filters = filters
+        self.collectionPresentation = collectionPresentation
         self.detail = detail
     }
 
@@ -739,7 +794,10 @@ public struct PageRequest: Equatable, Sendable {
 
     /// The request for the page that follows this one, preserving the sort order.
     public func next() -> PageRequest {
-        PageRequest(startIndex: startIndex + limit, limit: limit, sort: sort, filters: filters, detail: detail)
+        PageRequest(
+            startIndex: startIndex + limit, limit: limit, sort: sort, filters: filters,
+            collectionPresentation: collectionPresentation, detail: detail
+        )
     }
 }
 

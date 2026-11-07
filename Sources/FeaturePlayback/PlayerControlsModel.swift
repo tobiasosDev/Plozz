@@ -327,6 +327,8 @@ public final class SkipGestureModel {
     public var hintForward: Bool = true
     /// True while the transient skip indicator is on screen.
     public var hintVisible: Bool = false
+    /// Signed remote scan level; zero means the preview is not advancing.
+    public var scanLevel: Int = 0
     /// Bumped on every skip so the indicator's pop-in transition replays even when
     /// it's already visible (rapid repeated skips).
     public var hintToken: Int = 0
@@ -565,6 +567,7 @@ public final class PlayerControlsModel {
     /// Whether the live playback-diagnostics overlay is shown. Toggleable from
     /// the in-player control bar; seeded from the caller's initial preference.
     public var diagnosticsEnabled: Bool = false
+    public let songRecognition = SongRecognitionModel()
 
     // MARK: Up Next (closing-credits next-episode card)
     /// The closing-credits next-episode card's own state. A facet for the stored

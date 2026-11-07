@@ -3,6 +3,60 @@ import XCTest
 
 final class NavigationStyleSettingsStoreTests: XCTestCase {
     @MainActor
+    func testShowingLiveTVOverridesAutomaticAndExplicitHidingWithoutChangingOtherLayout() {
+        let defaults = makeDefaults()
+        let store = NavigationLibraryLayoutStore(defaults: defaults, namespace: "viewer")
+        let original = NavigationLibraryLayout(
+            order: [NavigationLibraryLayout.searchKey, NavigationLibraryLayout.homeKey],
+            hiddenKeys: [NavigationLibraryLayout.liveTVKey, NavigationLibraryLayout.watchlistKey]
+        )
+        store.save(original)
+        let model = NavigationStyleSettingsModel(
+            store: NavigationStyleSettingsStore(defaults: defaults, namespace: "viewer"), layoutStore: store
+        )
+        model.automaticallyHiddenKeys = NavigationDestinationDefaults.iOSAutomaticallyHiddenKeys
+        XCTAssertFalse(model.showsLiveTV)
+
+        model.showsLiveTV = true
+
+        XCTAssertTrue(model.showsLiveTV)
+        XCTAssertTrue(store.load().shownKeys.contains(NavigationLibraryLayout.liveTVKey))
+        XCTAssertEqual(store.load().order, original.order)
+        XCTAssertEqual(store.load().hiddenKeys, [NavigationLibraryLayout.watchlistKey])
+        XCTAssertEqual(NavigationLibraryLayoutStore(defaults: defaults, namespace: "other").load(), .default)
+        model.showsLiveTV = false
+        XCTAssertFalse(model.showsLiveTV, "A later manual Hide must still be respected.")
+    }
+
+    @MainActor
+    func testLibraryOrderingHintsTrackProfileArrangementAndDiscoveryWithoutHidingCards() {
+        let defaults = makeDefaults()
+        let layoutStore = NavigationLibraryLayoutStore(defaults: defaults, namespace: "viewer")
+        let libraries = ["first", "second", "new"].map { id in
+            AggregatedLibrary(
+                accountID: "server", accountName: "Viewer", serverName: "Server",
+                providerKind: .jellyfin, library: MediaLibrary(id: id, title: id, kind: .movie)
+            )
+        }
+        layoutStore.save(.init(order: [libraries[1].key], hiddenKeys: [libraries[1].key]))
+        let model = NavigationStyleSettingsModel(
+            store: NavigationStyleSettingsStore(defaults: defaults, namespace: "viewer"),
+            layoutStore: layoutStore
+        )
+        model.updateContentLibraries(libraries, accountIDs: ["server"], unreachableAccountIDs: [])
+        XCTAssertEqual(model.libraryOrderingKeys, [libraries[1].key] + libraries.map(\.key))
+        model.resetLibraryLayout()
+        XCTAssertEqual(model.libraryOrderingKeys, libraries.map(\.key))
+        model.applyLibrarySections(
+            .init(enabled: [libraries[2].key, libraries[0].key], disabled: [libraries[1].key]),
+            available: libraries.map(\.key)
+        )
+        XCTAssertEqual(Array(model.libraryOrderingKeys.prefix(3)),
+                       [libraries[2].key, libraries[0].key, libraries[1].key])
+        XCTAssertTrue(NavigationLibraryLayoutStore(defaults: defaults, namespace: "other").load().order.isEmpty)
+    }
+
+    @MainActor
     func testHorizontalSettingsMoveHideResetAndProfileIsolation() throws {
         let defaults = makeDefaults()
         let layoutStore = NavigationLibraryLayoutStore(defaults: defaults, namespace: "viewer")
@@ -237,10 +291,10 @@ final class NavigationStyleSettingsStoreTests: XCTestCase {
             visible: Array(available.prefix(5))
         ).isEmpty)
         XCTAssertEqual(NavigationDestinationDefaults.iPhoneOverflowKeys(visible: available),
-                       Set(available.suffix(2)))
+                       Set(available.dropFirst(4)))
         let reordered = Array(available.reversed())
         XCTAssertEqual(NavigationDestinationDefaults.iPhoneOverflowKeys(visible: reordered),
-                       Set(reordered.suffix(2)))
+                       Set(reordered.dropFirst(4)))
     }
 
     func testMobileDefaultsNeverOverflowEvenWithWatchlistAndKeepTVSettingsVisible() {
@@ -251,11 +305,7 @@ final class NavigationStyleSettingsStoreTests: XCTestCase {
             let sections = NavigationLibraryLayout.default
                 .resolvingAutomaticVisibility(hidden: hidden)
                 .sections(available: available, requiredEnabled: [])
-            XCTAssertEqual(sections.enabled, available.filter {
-                $0 != NavigationLibraryLayout.settingsKey
-                    && (hasWatchlist || $0 != NavigationLibraryLayout.watchlistKey)
-            })
-            XCTAssertLessThanOrEqual(sections.enabled.count, 5)
+            XCTAssertEqual(sections.enabled, NavigationDestinationDefaults.iOSDefaultVisibleKeys)
             XCTAssertTrue(NavigationDestinationDefaults.iPhoneOverflowKeys(visible: sections.enabled).isEmpty)
         }
         XCTAssertTrue(NavigationLibraryLayout.default
@@ -280,14 +330,14 @@ final class NavigationStyleSettingsStoreTests: XCTestCase {
         XCTAssertTrue(layout.hiddenKeys.isEmpty)
         XCTAssertTrue(layout.shownKeys.isEmpty)
         primary.save(layout)
-        XCTAssertEqual(sections(primary.load()).disabled, [NavigationLibraryLayout.settingsKey])
+        XCTAssertEqual(Set(sections(primary.load()).disabled), automatic)
 
         layout.apply(.init(enabled: available, disabled: []), available: available,
                      requiredEnabled: [], automaticallyHiddenKeys: automatic)
         primary.save(layout)
         XCTAssertTrue(primary.load().shownKeys.contains(NavigationLibraryLayout.settingsKey))
         XCTAssertEqual(sections(primary.load()).enabled, available)
-        XCTAssertEqual(sections(child.load()).disabled, [NavigationLibraryLayout.settingsKey])
+        XCTAssertEqual(Set(sections(child.load()).disabled), automatic)
 
         layout.apply(.init(enabled: available.filter { $0 != NavigationLibraryLayout.settingsKey },
                            disabled: [NavigationLibraryLayout.settingsKey]),
@@ -295,7 +345,7 @@ final class NavigationStyleSettingsStoreTests: XCTestCase {
         primary.save(layout)
         XCTAssertTrue(primary.load().hiddenKeys.contains(NavigationLibraryLayout.settingsKey))
         primary.save(.default)
-        XCTAssertEqual(sections(primary.load()).disabled, [NavigationLibraryLayout.settingsKey])
+        XCTAssertEqual(Set(sections(primary.load()).disabled), automatic)
         XCTAssertTrue(primary.load().hiddenKeys.isEmpty)
 
         let legacy = try JSONDecoder().decode(NavigationLibraryLayout.self, from: JSONEncoder().encode([
@@ -349,7 +399,10 @@ final class NavigationStyleSettingsStoreTests: XCTestCase {
         XCTAssertFalse(model.showsWatchlist)
         XCTAssertFalse(model.showsMusic)
         model.resetLibraryLayout()
-        XCTAssertEqual(model.librarySections(available: available).enabled, available)
+        XCTAssertEqual(model.librarySections(available: available).enabled,
+                       available.filter { $0 != NavigationLibraryLayout.discoverKey })
+        XCTAssertEqual(model.librarySections(available: available).disabled,
+                       [NavigationLibraryLayout.discoverKey])
         XCTAssertTrue(model.showsWatchlist)
         XCTAssertTrue(model.showsMusic)
         XCTAssertEqual(NavigationLibraryLayoutStore(defaults: defaults).load(), .default)

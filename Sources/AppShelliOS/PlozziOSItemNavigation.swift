@@ -26,10 +26,16 @@ private struct PlozziOSPersonRoute: Identifiable, Hashable {
     var id: String { "\(person.id)#\(sourceAccountID ?? "")" }
 }
 
+struct PlozziOSArtworkItemRoute: Hashable {
+    let item: MediaItem
+    let source: MediaArtworkZoomSource
+}
+
 private struct PlozziOSItemNavigationModifier: ViewModifier {
     let appModel: PlozziOSAppModel
     var registersScreenshotRouting = false
     @State private var navigatedItem: MediaItem?
+    @State private var navigatedArtwork: PlozziOSArtworkItemRoute?
     @State private var navigatedPerson: PlozziOSPersonRoute?
     @State private var navigatedLibrary: PlozziOSLibraryRoute?
 
@@ -38,6 +44,10 @@ private struct PlozziOSItemNavigationModifier: ViewModifier {
             .navigationDestination(item: $navigatedItem) { item in
                 PlozziOSItemPage(appModel: appModel, item: item)
                     .modifier(ScreenshotArrivalBeacon(appModel: appModel, enabled: registersScreenshotRouting))
+            }
+            .navigationDestination(item: $navigatedArtwork) { route in
+                PlozziOSItemPage(appModel: appModel, item: route.item)
+                    .mediaArtworkZoomDestination(route.source)
             }
             .navigationDestination(item: $navigatedPerson) { route in
                 PlozziOSPersonPage(appModel: appModel, route: route)
@@ -56,6 +66,9 @@ private struct PlozziOSItemNavigationModifier: ViewModifier {
             // destination outside the environment, so navigation actions are
             // dropped from every menu on a pushed page.
             .mediaItemNavigator { navigatedItem = $0 }
+            .mediaItemArtworkNavigator { item, source in
+                navigatedArtwork = .init(item: item, source: source)
+            }
             // Account-less: for surfaces that have a person but no idea which
             // server listed them. Their credits come from the keyless ladder and
             // whatever the other servers can match by name.
@@ -71,6 +84,7 @@ private struct PlozziOSItemNavigationModifier: ViewModifier {
                 setLibrary: { navigatedLibrary = $0 },
                 reset: {
                     navigatedItem = nil
+                    navigatedArtwork = nil
                     navigatedPerson = nil
                     navigatedLibrary = nil
                 }
@@ -129,7 +143,7 @@ private struct ScreenshotRoutingRegistration: ViewModifier {
 }
 
 /// A title's detail page, resolved to the best server that holds it.
-private struct PlozziOSItemPage: View {
+struct PlozziOSItemPage: View {
     let appModel: PlozziOSAppModel
     let item: MediaItem
 
@@ -173,6 +187,7 @@ private struct PlozziOSPersonPage: View {
     let appModel: PlozziOSAppModel
     let route: PlozziOSPersonRoute
     @State private var navigatedItem: MediaItem?
+    @State private var navigatedArtwork: PlozziOSArtworkItemRoute?
 
     var body: some View {
         let person = route.person
@@ -204,11 +219,11 @@ private struct PlozziOSPersonPage: View {
                         .map(\.provider),
                     // Keyless, so it works for every user out of the box, and
                     // only reached when no server stored a biography.
-                    biographyProviders: [WikipediaPersonBiographyProvider()],
+                    biographyProviders: appModel.isOfflineMode ? [] : [WikipediaPersonBiographyProvider()],
                     // The same ladder the in-player Cast card uses — without
                     // it this page can only answer with what the viewer
                     // already owns, which is not what "known for" means.
-                    creditsProviders: PlayerCastCredits.providers,
+                    creditsProviders: appModel.isOfflineMode ? [] : PlayerCastCredits.providers,
                     artworkResolver: PlayerCastCredits.artworkResolver,
                     // So a credit the viewer owns isn't marked absent — see the
                     // tvOS person page and `PersonDetailViewModel`.
@@ -218,6 +233,11 @@ private struct PlozziOSPersonPage: View {
                 ),
             onSelectItem: { navigatedItem = $0 }
         )
+        .artworkNavigation { navigatedArtwork = .init(item: $0, source: $1) }
+        .navigationDestination(item: $navigatedArtwork) { route in
+            PlozziOSItemPage(appModel: appModel, item: route.item)
+                .mediaArtworkZoomDestination(route.source)
+        }
         .navigationDestination(item: $navigatedItem) { item in
             PlozziOSItemPage(appModel: appModel, item: item)
         }
