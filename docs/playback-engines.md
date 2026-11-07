@@ -29,7 +29,9 @@ requests no larger than 1 MiB. Range and representation checks are unchanged.
 Demand-only adaptive buffers are released before replacement.
 
 Adaptive readers also retain up to eight previously validated windows no larger
-than 64 KiB each (512 KiB total) for alternating disc-directory probes. Cache hits
+than 256 KiB each (2 MiB total) for alternating disc-directory probes. This also
+retains naturally grown 256 KiB metadata windows instead of rereading smaller
+regions within them; it does not fetch additional bytes. Cache hits
 refresh recency; misses evict the least recently used window when full. Large
 sequential windows are never added to that cache. It is local to the reader and
 its pinned source lease, starts empty in clones, and is released on close.
@@ -43,7 +45,7 @@ demuxer. The demand read adopts the pending window instead of requesting it
 again. Sparse probes and default-size transports do not speculate.
 
 The current and pending windows retain at most 64 MiB of logical payload per
-adaptive reader, plus the 512 KiB probe cache. This is not a process/peak-memory
+adaptive reader, plus up to 2 MiB of probe cache. This is not a process/peak-memory
 cap: clones, HTTP, decoder and HLS buffers have their own memory costs. Stopping
 consumption can leave up to one unused 32 MiB window; no further work is started
 until the consumer advances. Seeks within the current or pending window preserve
@@ -65,13 +67,191 @@ The full media-probe budget and default sealed HLS segment delivery remain
 unchanged; shortening analysis without track-completeness checks can lose sparse
 audio/subtitle tracks.
 
+Known ordinary network-file containers (MP4/MOV, Matroska/WebM, MPEG-TS and AVI)
+skip ISO/UDF signature reads through Aether's `discImageProbeEnabled` contract,
+including independent readers and detail probes. ISO and unknown containers
+retain disc recognition. This changes neither container/track analysis nor
+transport identity, range, redirect or credential validation.
+
+For known ordinary containers, a demand of at least 256 KiB within the final
+4 MiB coalesces the remaining tail, still capped by the transport's preferred
+request size. This avoids growing through several requests for a trailing MP4
+index. Up to eight 256 KiB probe windows retain the header across that seek,
+avoiding a second header download. Resuming at a cached ordinary-container
+window's end continues the existing fourfold read growth, rather than inserting
+another small request after the index seek. Random misses and independent readers
+still start small. This can fetch bytes earlier than needed, but retains the
+existing window limits and cancellation behavior. Small/disc probes keep their existing sizing policy.
+The tradeoff is up to 4 MiB fetched for a partially consumed tail and up to
+1.5 MiB more retained probe payload per reader than the original 64 KiB cache; cancellation,
+clone independence and validated complete-window delivery remain unchanged.
+
+WebDAV playback sources at least 256 KiB combine the mandatory range probe with
+the initial 256 KiB media window. The full prefix is validated and retained by
+the source lease, avoiding another header request; it adds at most 256 KiB per
+source and can fetch unnecessary bytes when opening elsewhere. Small files and
+GET-only identity discovery retain the two-byte probe. Accepted password
+challenges are reused only inside the exact ephemeral account/revision/origin/
+trust/role session; anonymous delivery remains separate. Origin revalidation,
+complete-response validation and server authentication refusals remain enforced.
+
+Detail-page WebDAV preparation retains one exact file, not a row, season or
+collection of versions. Its provider locator path omits playback sidecar
+discovery/materialization and watch-state work. It opens the ordinary
+representation-bound source without taking playback admission. MP4/MOV and
+Matroska/WebM retain up to 8 MiB from the beginning and 4 MiB from the end,
+without overlapping those windows. ISO and other formats retain up to 4 MiB
+from the beginning and do not blindly fetch a container tail.
+
+ISO and nonzero resume positions additionally use Aether's bounded
+`prepareSource` operation through a borrowed reader. It discovers disc extents
+and timestamp origins through the engine, seeks to the actual presentation
+position, and traverses two seconds of compressed video/audio coverage for
+ordinary containers or four seconds for a disc's native HLS startup segment.
+It neither creates a player nor decodes video. Packet-level coverage is not a
+decoded-frame, complete-track-inventory or cache-residency guarantee. The
+normal playback open remains authoritative; its stream analysis is unchanged.
+Preparation alone limits analysis to 2 MiB and two media seconds without opening
+decoders. Recognized discs with a declared title duration also warm the native
+duration-estimation reads through the disc adapter, within the same budgets;
+arbitrary container tails are not substituted for those reads.
+If a DVD seek exposes only a late keyframe, preparation may seek at most two
+seconds earlier once, reset its coverage evidence and retry the unchanged target
+window. Packet/input/time budgets remain cumulative; Blu-ray seeking is unchanged.
+Default audio selection during decoder-free preparation can differ from playback
+selection. Preparation does not change the user's audio preferences or promise
+coverage for the ultimately selected track.
+Closing the borrowed reader drains its work without consuming the single-use
+playback reservation.
+
+The source cache retains at most 64 ranges and 40 MiB of payload (64 MiB for
+ISO), including the opening and optional tail windows. Ordinary initial starts retain only their
+opening/tail bytes. This is in addition to
+the existing 256 KiB opening probe; these are source-level buffers, not decoder
+or process-memory limits. Full caches do not evict or grow; publication freezes
+the cache so subsequent playback reads cannot add to it. Native preparation
+allows at most 28 MiB of reader input (48 MiB for ISO), 4,096 packets, 4 MiB per packet and
+20 seconds (30 for ISO) inside the overall 30-second deadline. Reader input is not a
+wire-byte cap: validated read-ahead can fetch unused bytes, while repeated
+cached reads still count as input. Preparation read-ahead is capped at 4 MiB,
+including clones. Incomplete native coverage fails preparation rather than
+being labeled complete. No incomplete HTTP response becomes readable.
+
+During playback, prepared-source demand reads preserve positive short cache
+boundaries. They do not wait for an uncached remainder merely to fill a larger
+adaptive window before delivering already-validated bytes to the demuxer.
+HTTP(S) playback uses two independently validated response slots of at most
+8 MiB each, shared across the reader and its clones, plus at most 2 MiB of small
+probes. A complete response can be consumed while its successor is still loading;
+partial HTTP bodies are never exposed. Other transports retain the normal
+32 MiB steady-state read-ahead limit. Cancellation must drain a response before
+its slot can be reused. These bounds exclude the source's prepared cache and
+the engine's decoded-frame and packet buffers.
+The engine's software consumer also services parked video on a bounded 20 ms
+wait while its producer is blocked on source I/O. It does not lower the existing
+125 ms video lead or 250 ms clock scheduling requirements, enlarge buffers or
+treat a servicing deadline as end of stream.
+
+Play must still obtain its ordinary provider request and playback admission.
+Only an exact locator and current account/credential/trust/session match can
+consume the preparation, after fresh DAV identity and size validation. The
+delivery URL and conditional-read validator remain fixed; authorization or
+representation failures are not hidden by reopening or serving stale success.
+Unprepared and prepared startup are separate measurement populations. Preparation
+time, whether the reservation was actually consumed, renderer readiness and
+subsequent playback-clock advancement must be reported separately; a ready
+callback alone is not a displayed-frame measurement, and clock advancement is
+not proof that additional frames reached a physical display.
+The hosted live benchmark checks a full minute of advancing playback immediately
+after startup and again after seeking, so a quick first frame followed by a stall
+does not pass.
+Preparation does not guarantee a startup deadline: fresh provider metadata and
+DAV revalidation remain on the Play path, and continued playback still needs
+sufficient source throughput. Increasing preparation coverage cannot compensate
+for an unavailable server or an arbitrarily delayed range response.
+
+Share sidecar discovery lists the video's parent once and visits only advertised
+`Subs`/`Subtitles` folders, using their actual casing. An unlistable parent retains
+the legacy folder-name probes; ordinary optional-listing failures are logged,
+while cancellation stops discovery. Own-folder exact-stem matching, dedicated
+folder boundary matching and extras' exact-stem rule are unchanged.
+For WebDAV, the same fresh, request-local parent listing also supplies the playback locator
+when it contains exactly one matching physical path with a file size and strong
+ETag or modification time. Missing, incomplete or ambiguous entries retain the
+ordinary opening-stat fallback. This avoids a redundant metadata round trip,
+not the final source-open/prepared-claim revalidation. Listings are never reused
+across Play requests, and detail preparation still does no sidecar discovery.
+Other share transports retain opening-stat metadata; their directory-listing and
+file-stat representations need not carry the same precision or completeness.
+
+The opt-in hosted `testExplicitLocalISOPlaybackWithLatency` uses a synthetic ISO
+staged in the owned test host's caches directory, selected by
+`PLOZZ_WEBDAV_LOCAL_ISO_FIXTURE` (a filename only). The optional
+`PLOZZ_WEBDAV_LOCAL_START_POSITION` selects a nonnegative resume position.
+Its loopback-only server reads bounded chunks from the file rather than retaining
+the whole image. GET responses wait 250 ms before headers and 10 ms before each
+64 KiB body chunk (6.25 MiB/s nominal per connection, before scheduling overhead).
+The test requires the actual `localHLS` route and enough duration for both
+minute-long continuity windows; software fallback does not satisfy this workload.
+Request counts and sent body bytes expose extra I/O. This is a controlled
+per-connection delivery model, not shared-link bandwidth or physical-device proof.
+The companion `testExplicitLocalContainerPlaybackWithLatency` accepts an MP4 or
+MKV filename through `PLOZZ_WEBDAV_LOCAL_CONTAINER_FIXTURE`, under the same
+delivery schedule and continuity checks, without forcing a particular engine
+route. The reported route remains part of the evidence. I/O snapshots at Play,
+first render and teardown separate startup requests/bytes from later playback.
+`playToFirstRenderedFrameSeconds` includes provider work before engine load;
+`startupSeconds` additionally requires at least 0.5 seconds of clock advancement.
+Set `PLOZZ_WEBDAV_AGGREGATE_BANDWIDTH=1` for concurrent-read comparisons.
+One shared pacer then grants a body-chunk slot every 10 ms across all responses,
+instead of granting that rate to each connection. A slot carries at most 64 KiB;
+short metadata/final chunks conservatively consume a full slot. Header latency
+remains per response. Keep this mode identical for baseline and candidate:
+additional connections must not manufacture additional source bandwidth.
+
+For an early-Play scenario, set `PLOZZ_WEBDAV_DETAIL_PREPARATION=1` and
+`PLOZZ_WEBDAV_DETAIL_PLAY_DELAY_SECONDS` to `2` or `3`. The hosted benchmark
+uses the production detail coordinator, including its 750 ms dwell, and invokes
+the normal handoff without waiting for preparation to complete. Its timer starts
+at that Play action, including cancellation/drain and ordinary provider work.
+It reports readiness at Play and actual reservation consumption; an incomplete
+preparation cannot be relabeled as a prepared start. Set
+`PLOZZ_WEBDAV_REQUIRE_SUBTHREE_START=1` for an additional sub-three-second
+assertion, including when Play falls back to a cold open. Matched baseline
+comparisons need not enable that stretch target. This models the
+already-resolved detail's lifecycle, not full UI navigation, artwork loading or
+physical remote/touch input. Runs without the delay still wait for complete
+preparation and must not be used as evidence for this early-Play scenario.
+Both app shells retain a pending preparation ticket and request interruption of
+optional warming at Play, preserving complete validated ranges without waiting
+for the entire warmup. The hosted `PLOZZ_WEBDAV_EARLY_HANDOFF=1` mode exercises
+that path; omitting it retains the older completed-reservation comparison.
+Ticket registration is not readiness: the benchmark snapshots the
+warmup outcome before handoff and reports the sealed outcome and actual
+consumption after resolution. Interrupted warming must never be reported as
+complete native coverage.
+An explicit native preparation budget limit, end-of-source or unavailable seek
+discards and drains the reservation before ordinary playback opens afresh.
+Waiting for that reservation still reports incomplete preparation, never ready
+coverage or a consumed source. Transport timeouts and actual read, authorization,
+trust and representation failures remain failures; they are not hidden by this
+optional-preparation fallback.
+The range pipeline requires an
+HTTP(S) transport identifier from the resolved source's pinned session at reader
+creation, not a second account lookup. DEBUG benchmarks may set
+`PLOZZ_WEBDAV_RANGE_PIPELINE=0` to compare the old reader; Release builds always
+use the bounded pipeline for eligible sources. Compare this separately and together with early handoff,
+using the same aggregate bandwidth cap rather than per-connection throughput.
+
 Related upstream designs separate request sizing from buffered consumption:
 [FFmpeg HTTP](https://github.com/FFmpeg/FFmpeg/blob/b7e835e06913e4374a4567003fe8c75cebfffb98/libavformat/http.c)
 supports separate initial/steady request sizes and short-seek read-ahead;
 [VLC prefetch](https://github.com/videolan/vlc/blob/11bcb6f56d59b43cf589556f426c7a5cbd460fdd/modules/stream_filter/prefetch.c)
 uses a bounded producer/consumer buffer; and
 [mpv demux](https://github.com/mpv-player/mpv/blob/dde0671072723c311df874a32dc4e48b5197ca62/demux/demux.c)
-keeps bounded forward/backward packet caches. These are architectural references,
+keeps bounded forward/backward packet caches.
+[Kodi's HTTP reader](https://github.com/xbmc/xbmc/blob/af9ff93d022fedceaff6b5a256b3a8345f4263d5/xbmc/filesystem/CurlFile.cpp#L1482-L1508)
+retains old read state across seeks. These are architectural references,
 not measurements of those players on Plozz's test service or copied implementations.
 
 This does not add CSS/AACS decryption, disc menus, BD-J, multi-angle playback,
@@ -85,6 +265,9 @@ including forward/backward seeks. Its ordinary test serves an original ten-secon
 MPEG-2 test pattern in a DVD ISO over loopback WebDAV. The fixture contains no
 third-party media and was generated with the commands below. A separate MP4
 fixture exercises ordinary-container playback through the same path.
+Matroska and DVD fixtures also open fresh engines at a nonzero start position,
+checking that the first ready video position is near the requested resume point
+before measuring continued progress. These are resume loads, not post-load seeks.
 
 ```sh
 mkdir -p /tmp/plozz-disc-fixture/VIDEO_TS
@@ -94,15 +277,24 @@ hdiutil makehybrid -iso -udf -default-volume-name PLOZZ_DISC_FIXTURE \
   -o dvd-test-pattern.iso /tmp/plozz-disc-fixture
 ```
 
-The separate live test is opt-in: set the test process's
+The separate live test is opt-in: pass JSON in the test process's
+`PLOZZ_WEBDAV_PLAYBACK_JSON` environment variable, or set
 `PLOZZ_WEBDAV_PLAYBACK_INPUT` to a private JSON file (or `cache:<filename>` in
 the test host's cache directory) containing `baseURL`, `username`, `password`,
-`relativePath`, and one to three `seekPositions` in seconds. Use a credential-free
-HTTPS base URL, a decrypted ISO the tester is authorized to access, and a file
-owned by the tester with mode `0600`, outside Git. Remove staged simulator
+`relativePath`, and one to three `seekPositions` in seconds. Optional `startPosition`
+defaults to zero; supply a finite nonnegative position for a fresh-engine resume
+measurement. No server watch state is written. Use a credential-free
+HTTPS base URL and a media file or decrypted ISO the tester is authorized to
+access. For file input, use a tester-owned file with mode `0600`, outside Git.
+For environment input, load credentials only for `test-without-building`, not
+build commands that could dump their environment. Remove staged simulator
 credentials after the run. Missing configuration skips only that live test;
 it is not evidence of remote playback. Each load/seek has a 120-second deadline
-and frame/progress waits are bounded separately.
+and frame/progress waits are bounded separately. Preparation and engine-load
+timings are reported separately; the combined metric ends after rendered video
+has progressed beyond 0.5 seconds after the requested start position, not at the
+first decoder output. Resume coverage also requires the first ready video
+position to fall between one second before and five seconds after that position.
 After the final seek, the live test observes another 60 seconds and requires
 more than 58 seconds of playhead advancement. This is a bounded continued-playback
 check, not proof of complete-film playback or physical-device frame smoothness.
@@ -222,15 +414,34 @@ headers when updating the vendored sources, and update sources, public headers,
 binary checksums, and bundled notices together.
 
 Plozz pins the playback-corrected
-[AetherEngine fork](https://github.com/brandomoore/AetherEngine/tree/c1ce4cf48bad416e6be5230032a2b7f332e833d8)
-at commit `c1ce4cf48bad416e6be5230032a2b7f332e833d8`, integrating upstream
-**7.51.0** (`a877941bd3402d5f531edad0cbe4c9b33eefa856`).
-Playback diagnostics show `AetherEngine v7.51.0`, read from the linked engine
+[AetherEngine fork](https://github.com/brandomoore/AetherEngine/tree/8c7f919a4cff9f0d27d27f464657578ec08fc221)
+at commit `8c7f919a4cff9f0d27d27f464657578ec08fc221`, integrating upstream
+**7.53.1** (`0839aeee18dd0818c5c307a3c5ecba8ea3161b22`).
+Playback diagnostics show `AetherEngine v7.53.1`, read from the linked engine
 rather than a duplicated version constant. The exact fork commit remains in
 attributions because the upstream version does not identify Plozz's patches.
+Native audio readback and subtitle selection use bounded off-main media-selection
+reads, so an unresponsive media service does not block the UI actor. Plozz treats
+AVFoundation's media-services reset as one fresh same-engine recovery, not a
+codec failure, and retains numeric audio-session failure evidence.
 The 7.51.0 integration includes 7.50.0's 24-bit PCM spatial-bed output with
-route-selected APAC for AirPlay. FFmpegBuild 3.10.1, LibDovi 2.1.0 and
-LibTrueHD 3.1.0 remain unchanged in the resolved graph.
+route-selected APAC for AirPlay. The 7.53.1 update advances FFmpegBuild to
+3.11.1; LibDovi 2.1.0 and LibTrueHD 3.1.0 remain unchanged.
+It corrects the remote-HLS buffered frontier, uses measured producer throughput
+for short forward seeks, bounds bitmap subtitle retention after backward seeks,
+and supports HLS byte-range segments. The fork preserves AAC timing compensation,
+ASS duration handling, dynamic linkage and active-picture APIs, including seam
+invalidation in the upstream weak-session callback.
+It also retains bounded position-aware WebDAV preparation, video servicing
+during source reads, and active-picture cleanup compatible with older runtimes.
+Ready SDR guide/fullscreen transitions on tvOS use its in-place display-matching API,
+without reopening media or replacing the player item. Previews explicitly use
+host-owned fixed output; HDR pipeline changes retain the reload path. Late native
+HLS format callbacks honor the current policy, and an outgoing display owner
+cannot clear a newer engine's criteria.
+New audio shaping and low-resolution SDR upscaling remain disabled by default.
+The engine uses upstream's single privacy manifest, including local-media file
+timestamps; FFmpeg's applicable frameworks now carry their own manifests.
 The update retains overlapped VOD/HDR preparation and adds the upstream
 subtitle, HLG, chapter-timing, bounded-loading and cache fixes. Bitmap subtitle
 OCR is armed only for a native rendition used by PiP, AirPlay or an external
@@ -241,8 +452,8 @@ filling a large cushion.
 
 The 7.48.0 integration adds VP9 hardware decoding on supported devices, with a
 software fallback, and AV1 Dolby Vision Profile 10.1 metadata on the software
-presentation path. On tvOS 26+, software/FEL playback can use the existing spatial-audio
-preference instead of always falling back to a channel bed. TrueHD's optional
+presentation path. Upstream added optional spatial audio for software/FEL playback
+on tvOS and iOS/iPadOS 26+; Plozz no longer enables that path. TrueHD's optional
 renderer now decodes the object presentation with matrix interpolation through
 LibTrueHD 3.1.0. This is spatial conversion, not lossless bitstream passthrough.
 FFmpegBuild advances to 3.10.1, including its libzvbi update and AAC/ALAC
@@ -268,8 +479,8 @@ Plozz uses the new session-cache byte budget with its existing Video buffer
 presets and exposes a separate Live TV buffer, both defaulting to Automatic.
 See [buffering contracts](../Sources/FeaturePlayback/README.md#on-demand-read-ahead)
 for route limits, temporary storage, safe-edge semantics and startup tradeoffs.
-Upstream moved DTS:X height decoding to FFmpegBuild 3.9.0; Plozz enables its
-production optional conversion component with runtime eligibility gates.
+Upstream moved DTS:X height decoding to FFmpegBuild 3.9.0; Plozz no longer enables
+the optional conversion component.
 ASS/SSA packets with neither a decoded end nor a packet duration are now discarded
 instead of lingering for a fabricated five seconds. This also applies to sidecars;
 other subtitle codecs retain their established fallback. This upstream snapshot
@@ -294,14 +505,21 @@ Upstream 7.44.0 replaced LibDTSX with FFmpeg's patched `dca` decoder.
 `DTSX.framework` and the retired LibDTSX notices are no longer shipped;
 existing FFmpeg notices remain.
 
-Plozz enables `TrueHDObjectAudio`, `DTSXObjectAudio`, `DualLayerDolbyVision` and
-`DolbyVisionStillReshaping` on its Swift package dependency. Upstream removed the
-measurement-only `TrueHDReferenceRender` trait in 7.48.0. LibTrueHD is linked; ordinary FFmpeg
-audio decoding is unchanged. Both apps consume this same local package, so no
-generated-project trait patch is needed. Engine integration tests inspect the
-linked engine's `OptionalComponent.isBuiltIn` flags, not just its load options.
-Upstream's patent-licensing warning still applies; enabling a trait does not
-establish patent clearance.
+Plozz explicitly enables no optional engine traits. `DolbyVisionStillReshaping`,
+`DualLayerDolbyVision`, `TrueHDObjectAudio` and `DTSXObjectAudio` are disabled:
+their engine implementations are excluded, and LibTrueHD is not resolved or
+linked. The existing FFmpegBuild binary still contains its dormant DTS:X
+`x_heights` decoder option; Plozz does not enable it. This is not a stripped
+FFmpeg build. Ordinary FFmpeg audio decoding is unchanged. Both apps consume
+this same local package, so no generated-project trait patch is needed. Engine
+integration tests inspect the linked engine's `OptionalComponent.isBuiltIn`
+flags, not just its load options. Upstream's licensing notices remain applicable;
+this configuration does not establish patent clearance.
+
+Dolby Vision Profile 5 / AV1 Profile 10.0 sources no longer receive software-
+reshaped scrub or I-frame stills. Ordinary base-layer thumbnails remain available.
+Native Dolby Vision playback is unchanged; the pinned engine can retain a held
+picture through the system compositor instead of applying its own reshaping.
 
 The 7.23.0-to-7.34.1 range adds live-start/holdback and source-open recovery
 fixes, corrected software resume/seek timelines, transport-intent preservation
@@ -314,9 +532,8 @@ LibDTSX **1.0.1**. Upstream 7.36.0 added another object-audio rendering path, co
 spatial speaker positions and a tvOS spatial-output activator for receivers that need it.
 It also includes live-replay recovery, software-video recovery after a screen lock,
 and the intervening 7.35.x playback fixes; these are upstream changes, not new
-Plozz-specific implementations. The current pin uses FFmpegBuild **3.10.1**
-and LibDovi **2.1.x**, with LibTrueHD **3.1.0** enabled in Plozz and LibDTSX
-removed. It also includes
+Plozz-specific implementations. The current pin uses FFmpegBuild **3.11.1**
+and LibDovi **2.1.x**. LibTrueHD and LibDTSX are no longer linked in Plozz. It also includes
 single-connection spatial-audio probe safeguards and system-composited Dolby Vision
 held pictures. The fork retains the persistent HTTP body-reader isolation
 correction from its previous integration.
@@ -343,51 +560,28 @@ toggle's desired mode or the receiver's output.
 
 ### Spatial audio
 
-**Spatial audio defaults on for supported on-demand playback on tvOS 26+.**
-The profile-scoped `trueHDAtmosEnabled` key preserves existing Off choices and
-profile transfers; missing or malformed values use the central default. A build
-that previously omitted the preference cannot recover an Off value already
-discarded by an intervening settings save.
+**Height-channel conversion is disabled.** The adapter always requests
+`objectAudioRendering = .off`, and the engine's `TrueHDObjectAudio` and
+`DTSXObjectAudio` package traits are disabled. Neither saved profile preferences,
+profile transfers nor old device layout values can turn conversion back on.
+The former toggle and layout picker are removed on both platforms. Legacy
+`trueHDAtmosEnabled` JSON values are ignored and omitted when settings are saved.
 
-The adapter requests `objectAudioRendering = .render(layout)` only for an audible,
-non-shared on-demand session with the preference enabled. **Rendering layout** in
-Playback > Advanced defaults to **9.1.6** and offers 5.1.2, 5.1.4, 7.1.2, 7.1.4
-and 9.1.6. `SpatialAudioLayoutStore` is device-local, shared by profiles and excluded
-from profile transfer. Each new load reads it; changing the setting does not
-restart playback. The layout is an intermediate rendering bed, not detected
-speakers or proof of the receiver's capabilities.
+Ordinary channel presentation still follows Prefer lossless audio: FLAC by
+default, or the E-AC-3 compatibility bridge when off. Software playback uses
+channel PCM, including for E-AC-3/JOC sources; native E-AC-3/JOC stream-copy remains
+unaffected. Explicit track selections, language preferences, buffering and
+progressive segment delivery defaults are unchanged.
 
-The engine renders eligible 48 kHz TrueHD Atmos/DTS:X sources on native and
-software routes, retaining ordinary channel fallback. DTS:X separate heights
-require 7.1.4 or 9.1.6; smaller layouts keep normal DTS:X channel playback, not
-silence. Smaller beds can reduce intermediate PCM bandwidth and downstream
-remapping, but no layout is universally better for every output chain.
+Compatible native spatial audio remains system-owned. Plozz does not override
+the OS's Spatial Audio or head-tracking choices. Source format labels do not
+promise separate height-channel output. Diagnostic parsing retains recognized
+rendered-layout labels for historical/engine reports rather than inferring
+output from a preference.
 
-At load, Aether selects 24-bit PCM unless the active route includes AirPlay,
-which uses lossy APAC. PCM avoids an additional lossy encode of the rendered bed;
-it is not source-bit-identical object audio or original compressed-bitstream
-passthrough. Actual overhead output still requires compatible equipment.
-Diagnostics identify actual `PCM <layout>` pipelines as **Rendered to PCM** and
-APAC as **Lossy encoding**, never inferring either from the selected setting.
-
-The pinned production TrueHD implementation decodes the object presentation with
-matrix interpolation through LibTrueHD 3.1.0 and renders it into the requested
-speaker layout before PCM packing or APAC encoding. Upstream removed `BedSplitter` and the
-measurement-only reference-rendering trait in 7.48.0.
-This implementation description is not patent clearance: upstream explicitly
-leaves third-party patent licensing to integrators. Other apps enabling the
-feature does not establish licensing compliance or guarantee App Store approval.
-
-Off and unsupported paths retain the ordinary channel presentation selected by
-Lossless surround: FLAC by default, or the E-AC-3 compatibility bridge when off. Live streams,
-shared players, muted previews and iOS/iPadOS do not request conversion. On tvOS
-26+, eligible FEL/software audio can use the existing spatial-audio preference;
-unsupported or disabled paths retain channel PCM. Native E-AC-3/JOC stream-copy
-is unaffected. Explicit track selections and language preferences
-remain authoritative. Progressive segment delivery remains off.
-
-Both apps bundle the unmodified LibTrueHD MIT/Apache-2.0 license and NOTICE
-resources and identify the linked decoder in the in-app credits.
+LibTrueHD is no longer linked. Both apps retain its unmodified MIT/Apache-2.0
+license and NOTICE resources, and the credits identify it as a former dependency.
+Removing this component is not a general patent-clearance or store-approval claim.
 
 The retained 7.23.0 audio-output
 flush epoch prevents a buffer decoded before a software seek from entering
@@ -471,44 +665,35 @@ size probes. FFmpegBuild 3.4.x adds AV1 Dolby Vision sample-entry support.
 
 ## Dolby Vision FEL
 
-**Settings > Playback > Advanced > Dolby Vision FEL (experimental)** is on by
-default, saved per profile, and applied to new built-in on-demand playback
-sessions on tvOS and iOS/iPadOS. Profile 5, Profile 8 and Profile 7 MEL already
-reach the display without loss; this preference keeps Profile 7 FEL lossless too
-instead of discarding its residual. The choice is stored under
-`dolbyVisionLosslessFEL`; the earlier default-off `dolbyVisionFELEnabled` key is
-ignored, so existing and imported profiles start on until a user turns it off.
-Missing or malformed values use the default. Profile transfer carries the
-choice. The adapter passes it through `LoadOptions.preferDualLayerDolbyVision`;
-it does not enable FEL for live streams, shared players, muted previews or
-display-suppressed previews. External players own their own decoding preferences.
+**Experimental FEL reconstruction is unavailable.** Its Settings control and
+search result are removed on tvOS and iOS/iPadOS. The adapter explicitly sets
+`LoadOptions.preferDualLayerDolbyVision = false`, and the `DualLayerDolbyVision`
+package trait is disabled. Legacy `dolbyVisionFELEnabled` values are ignored when
+loading or transferring profile settings and omitted on the next save.
 
-The engine, not provider metadata, decides eligibility: seekable Profile 7 FEL,
-automatic Dolby Vision handling, hardware HEVC decode and the engine's real-time
-pixel budget. MEL, other profiles and unsupported sources retain their ordinary
-route. With FEL off, Profile 7 is converted to single-layer Profile 8.1 where the
-display accepts Dolby Vision, or the HDR10 base layer otherwise; the enhancement
-layer is discarded.
+Plozz selects `DolbyVisionHandling.profile7BaseLayer` for on-demand playback,
+previews and engine-demuxed live playback. Both Profile 7 MEL and FEL play their
+authored HDR10 base, without P7-to-8.1 RPU conversion or enhancement-layer
+reconstruction. The engine classifies its demuxed source, including verified
+record corrections, rather than trusting possibly missing or inaccurate provider
+metadata. Its native remux uses plain `hvc1`, strips the Dolby configuration
+record, omits Dolby supplemental codecs, and requests base-layer display criteria.
+Source diagnostics can still identify Profile 7; output must not claim converted
+Profile 8.1. RPU/EL NALs remain unconverted and are ignored by the base-layer decoder.
 
-FEL decodes both layers with VideoToolbox and reconstructs the picture with Metal.
-It adds GPU/memory work and uses the sample-buffer playback path, not AVPlayer.
-On tvOS 26+, the existing Spatial audio preference also applies to eligible FEL
-audio: E-AC-3/JOC can reach the audio renderer compressed, and supported TrueHD
-and DTS:X tracks use APAC spatial conversion. Other tracks and disabled spatial
-conversion retain channel PCM. Plozz does not request this conversion on iOS/iPadOS
-or older tvOS, so FEL still drops spatial information there, including for
-E-AC-3/JOC. The helper says **May impact performance.**, adding **Disables spatial
-audio.** only on those platforms. Non-FEL titles keep their ordinary audio paths.
-Upstream's software spatial-audio measurements cover macOS, not tvOS hardware;
-these routing capabilities do not establish receiver compatibility or verified
-overhead output on a particular Apple TV setup.
+This intentionally gives up Profile 7 dynamic metadata, including MEL, and FEL
+residual detail. Supported single-layer Dolby Vision profiles, ordinary audio
+paths, and native E-AC-3/JOC stream-copy remain unchanged. Software still-image
+reshaping remains disabled. Direct remote HLS handed to AVPlayer, server
+transcoding, and external players own their delivered format; this policy does not
+rewrite those streams or infer their format from original-file metadata.
 
-Upstream documents measured Dolby Vision metadata consumption on tvOS, but not
-on iOS/iPadOS. Enabling the option is not evidence that a particular file took
-the route or that a physical display applied its metadata. The engine logs
-`DV P7 dual-layer route: taken` or the reason it was not taken; actual picture
-and HDMI output require a suitable physical-device sample.
-See the pinned [FEL design and evidence](https://github.com/brandomoore/AetherEngine/blob/c1ce4cf48bad416e6be5230032a2b7f332e833d8/docs/dolby-vision-fel.md).
+Removing the optional reconstruction path does not establish licensing clearance
+for every remaining video or audio feature. Avoiding P7 conversion reduces custom
+processing; it does not remove all Dolby-related code from the distributed engine
+or establish patent permission. Open-source licensing and Apple API availability
+are not a substitute for reviewing the actual shipped implementation and applicable
+third-party rights.
 
 ## Remote AV1 Matroska startup
 
@@ -732,12 +917,12 @@ retention assertions; they do not establish physical-device frame pacing.
 
 | Feature | Plozzigen | Native |
 |---------|-----------|--------|
-| Dolby Vision | ✅ (Profile 5/8 and Profile 7 MEL; Profile 7 FEL dual-layer by default, see above) | ✅ (if server delivers DV) |
-| Directly compatible spatial audio | ✅ (E-AC-3 JOC on the native path; software/FEL also eligible with Spatial audio on, tvOS 26+) | ✅ (if stream has E-AC-3 JOC) |
+| Dolby Vision | ✅ (Profile 5/8; optional dual-layer path, see above) | ✅ (if server delivers DV) |
+| Directly compatible spatial audio | ✅ (E-AC-3 JOC on the native path; software playback uses channel PCM) | ✅ (if stream has E-AC-3 JOC) |
 | HDR10 / HLG | ✅ | ✅ |
 | Full-timeline seek | ✅ | ✅ (if not live transcode) |
 | PGS subtitles | ✅ (engine-owned subtitle paths) | ❌ (server burn-in needed) |
-| Spatial audio conversion with heights | ✅ (supported native and software/FEL tracks on tvOS 26+, lossy) | ❌ |
+| Spatial audio conversion with heights | ❌ (disabled; ordinary channel audio remains available) | ❌ |
 | DTS bitstream | ❌ (channel audio uses FLAC/E-AC-3 bridge) | ❌ |
 | TrueHD bitstream | ❌ (channel audio uses FLAC/E-AC-3 bridge) | ❌ |
 

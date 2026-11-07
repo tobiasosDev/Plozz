@@ -1,10 +1,177 @@
 # FeatureSettings
 
-Mobile customization lists apply the shared native switch style to both standard
-sections and grouped cards. Enabled switches keep the system green appearance
-instead of inheriting the page's monochrome navigation tint.
+Mobile customization choice groups use the same Settings cards and content
+insets, including contained groups such as Hero content sources. TV row sizing
+does not select a different mobile section style. Enabled switches keep the
+system green appearance instead of inheriting the page's monochrome navigation tint.
 
 The Settings screen and its detail pages. Profile-aware and integration-aware.
+
+Playback groups its five optional **Player tabs** in one shared control surface
+on TV and mobile. Labels match the player tabs, Info stays always available, and
+visibility preferences are independent of autoplay and Up Next behavior.
+
+Movie & show details → Trailers & music is the shared destination for trailer
+availability, independent Home autoplay and detail background playback. Home →
+Hero links to the same controls. Off suppresses trailer lookups, manual actions,
+and autoplay without erasing surface preferences or disabling theme music.
+Server only permits local/server trailers, excluding YouTube links even when
+supplied by a server or already cached. Server + YouTube preserves background
+preparation of manual links; YouTube never autoplays. Each surface retains its
+own mute default, and detail theme music retains its profile-scoped volume.
+
+On iPad, selecting a different sidebar category discards the previous category's
+entire pushed detail stack. The reset targets the native detail navigation
+controller, not the split view, preserving sidebar scroll position and search.
+Profile changes and parental relocking also invalidate the detail identity.
+Mobile disclosure and action rows share `settingsActionRow()` from CoreUI;
+composite controls retain separate minimum touch targets with
+`settingsControlTarget()`. Per-view customization menus respond across their
+whole title/value row, not only the value. Native toggles remain independent.
+
+## Settings search
+
+Settings search is local: queries are neither saved nor sent to a service or log.
+The shared `SettingsSearchCatalog` indexes profile and device preferences,
+including Home/Hero, artwork and labels, playback and subtitles, libraries,
+Live TV, downloads, profile appearance, sync, metadata, diagnostics and startup.
+Results use the current platform's destination and retain their query on Back.
+Protected destinations retain their normal profile/PIN checks; search never
+selects a server, library or user, enables a prerequisite, or submits an editor.
+Unavailable controls lead to their existing prerequisite or availability message.
+On mobile, custom quality keeps its normal modal editor: Cancel discards the draft, Apply
+updates only the selected network, and either action returns to the search.
+
+Matching prioritizes exact titles, then prefixes, related terms, and bounded
+spelling corrections. This is a curated synonym index, not a general-purpose
+language model. Do not promise arbitrary semantic understanding or add aliases
+for capabilities a control does not provide.
+
+The initial cross-player terminology comes from the
+[Infuse settings reference](https://support.firecore.com/hc/en-us/articles/360015608854-Settings-Overview)
+and Kodi's [video](https://kodi.wiki/view/Settings/Player/Videos) and
+[subtitle](https://kodi.wiki/view/Settings/Player/Subtitles) references:
+continuous playback, streaming cache, forward/backward skip, skip steps,
+background playback, landscape lock, gesture control, poster titles, external
+ratings, and subtitle position. These are discoverability terms, not claims of
+feature parity. In particular, audio passthrough is not an alias for lossless
+conversion; display refresh-rate matching is not an alias for transition fades;
+subtitle placement is distinct from audio/subtitle timing.
+
+iPhone on iOS 26 and later uses the system search toolbar item in the bottom
+bar; iPad keeps the native search field visible in the Settings sidebar without a
+redundant Settings heading. Detail pages retain their titles. Earlier iPhone
+systems use SwiftUI's native search placement. Mobile results use plain native List rows,
+with shared title/breadcrumb keylines and no additional result-container inset.
+On iPhone, returning from a result restores the query and keyboard. Dismissing
+the keyboard leaves the query visible and clearable; it does not end search.
+The compact Settings root places its large heading inside the scrolling content,
+below the toolbar. Scrolling past the heading shows the inline navigation title.
+TV has a native search field in its own card at the top of Settings. Selecting
+it opens remote text entry immediately, without pushing a search page. The
+settings cards fade into suggestions/results in the same scrolling column;
+Reduce Motion skips the fade. Dismissing the keyboard leaves search available,
+and Back from the results clears the query and restores the settings cards and
+search-field focus. Result destinations use the existing retained Settings page
+stack, preserving the query and selected result on return. Native sidebar
+full-screen dismissal retains the source row and restores its focus only after
+the cover finishes dismissing, rather than resetting focus to the search field. Profile or
+authorization changes clear search along with the page stack.
+TV result buttons use `SettingsFormButtonStyle` for the standard row height and
+content insets inside the focus highlight, with `SettingsIconLabelStyle` keeping
+titles aligned across different symbols. Result labels add no extra padding.
+`SettingsSearchLanding` and
+`settingsSearchAnchor` reveal the existing control without changing its value.
+On mobile, the brief landing highlight covers the complete padded row, not just
+its label or picker. Grouped rows own the highlight and their corner clipping;
+standalone native List/Form rows use the native row background. The searched
+row installs a stable, binding-driven background before reveal: native List can
+retain an initially absent background during navigation even when the row's
+highlight state changes. Non-target rows retain their native background. The highlight
+does not intercept touches or change the setting.
+The landing cue stays invisible for 0.35 seconds after reveal, then plays its
+full 3.9-second animation. It opens with a quick, soft brightness lift that blends
+into two broad neutral reflections over the first 1.8 seconds. Dark appearances
+use a stronger arrival, surface reflection and fine edge so the cue is visibly
+brighter even without HDR display headroom; light appearances retain their
+existing contrast. The brightness
+lift decays throughout their movement rather than ending as a separate flash. Each reflection
+drifts and changes strength independently, lighting the surface
+and fine portions of its edge rather than drawing a continuously illuminated rim.
+The light fields scale with the row, including wide tablet rows, and start at a
+varied phase on each landing; nothing picks new random values between frames.
+A shared envelope preserves the initial 2.1 seconds, then fades the entire cue out
+over 1.8 seconds with a smooth, flat-ended curve. The full lifetime, including
+the invisible pause, is 4.25 seconds. Its inset drawing stays within
+the row's corner shape, and its 30-fps timeline stops when the cue ends.
+Reduce Motion, reduced transparency/effects, and inactive scenes use a steady
+outline after the same delay instead; TV continues to use native focus without this mobile effect.
+On iOS/iPadOS 26 and later, animated dark-theme reflections use HDR emission at 2.25 times
+SDR white in linear light. The existing alpha field masks that emission without
+clipping it through the SDR Canvas. SwiftUI manages available display headroom
+and tone mapping; this does not change the screen-brightness setting or guarantee a measured
+125% display-output increase. Light themes, reduced effects and earlier OS versions
+retain their standard-range appearance.
+Grouped ownership is set before resolving SwiftUI subviews, so ScrollView rows
+do not also paint a smaller control highlight. Nested anchors preserve a child's
+active highlight, and nested row owners consume it without lighting up their parents.
+Native lazy List cells and sections register their contained targets with
+`settingsSearchGroup`; the selected control is then revealed within that container.
+Ungrouped native Form rows bootstrap directly through their target ID, so a
+subtitle control below the viewport can mount before its native reveal runs.
+TV search anchors belong to visible menu triggers, not their unopened options.
+Hero source groups register both their toggle and dependent targets, so offscreen
+Collections and other sources can be created before their landing cue starts.
+Every indexed entry needs an available route and a matching control anchor.
+On TV, Hero and Row style have separate search destinations. Showcase sizing
+and inline ratings open Row style; when Classic hides those controls, search
+focuses the Showcase choice without changing it. Hidden Hero controls similarly
+lead to its On preview. The standalone Discovery row leads to Hero Off when
+the featured Hero is active, then to the row's enable switch when necessary.
+Search labels distinguish localized app copy from verbatim provider names;
+indexing resolves resources for the current locale without translating brands.
+Disabled prerequisite controls can register dependent targets with `fallbackFor`;
+do not register the same target on a still-mounted disabled child.
+TV controls with their own focus binding pass `focusAction` to use that owner.
+Search waits for native layout before requesting focus, including native menus
+whose focusable view is not ready when the initial SwiftUI task begins.
+
+Run `tools/check-settings-search.sh` when changing Settings. Its SwiftSyntax
+inventory independently discovers controls in Settings/Preferences files and
+reachable components, including custom input call sites and nested menus.
+The checked-in `tools/settings-search-coverage.json` records individually reviewed
+navigation, credential, contextual-content and preview exclusions. Exclusions
+have exact control keys/counts; reusable renderer and presentation boundaries
+also retain their control structure. A new control, arbitrary uncatalogued
+anchor, missing destination anchor, stale exclusion or changed boundary fails.
+Review a failure rather than accepting the current inventory as a new baseline.
+When extracting connection-setup subviews, keep their files traversable and
+update only the reviewed control keys and counts, not broad component exemptions.
+Runtime navigation, provider access, lazy reveal and native focus still require
+behavioral tests; static coverage is not proof that a screen works.
+
+Searching for Hero, a Home banner, carousel, or spotlight opens the full Home
+Hero page at **Show hero**, ahead of the incidental movie/show Background match.
+This remains available when Hero is off and does not enable it automatically.
+On TV with Showcase selected, search instead focuses the Hero layout choice;
+changing layout still requires an explicit selection.
+
+Mobile customization menus reuse `SettingsMenuValue`, the value/chevron rendering
+used by `SettingsMenuLabel`. Playback details, per-view labels, and item-tap actions
+retain their native menus and adaptive labels without separate value pills.
+Artwork by view, label customization, and Hero subpages also use the shared
+mobile `SettingsPageList` surface and `SettingsSectionGroup` rows. They inherit
+the same page margins, headers, separators, corner radius, theme/gradient
+background, and toolbar treatment as other Settings destinations, rather than
+adding native inset-grouped styling or an opaque background. Lazy grouped
+artwork and label rows register their contained search targets.
+
+Playback > **Ask to resume or start over** is per-profile and off by default, including
+for existing profiles. TV and mobile resume partially watched movies and episodes
+directly unless it is enabled. Enabled profiles get the shared native Resume /
+Start Over dialog before user-initiated playback; explicit restart and
+automatic episode advancement do not gain a confirmation. Rewind on resume
+remains independent. The preference travels with the existing playback settings.
 
 On tvOS, Everyone > Profiles keeps **Automatically Sign In** in its own
 `SettingsControlGroup` above the profile list, using the shared native switch.
@@ -17,9 +184,11 @@ The return defaults, PIN boundaries, and playback
 exemptions are documented in `FeatureProfiles/README.md`. Mobile is unchanged.
 
 **Appearance** owns global visual styling: theme, cards, artwork, display size,
-and Circadian Mode. **Screens & Navigation → All screens** contains shared
-visibility and navigation preferences, including Spoiler Protection and the
+and Circadian Mode. **Screens & Navigation → All screens** is a destination for shared
+visibility preferences, including Spoiler Protection and the
 profile-wide **Show content ratings** switch, on by default.
+Spoiler controls appear inline below content ratings on both platforms, without
+another subpage.
 Its label includes small, noninteractive PG-13 and R examples using the actual
 classification badge style; the examples stay visible when the switch is off.
 The label adapts to narrow widths and accessibility text sizes. This controls
@@ -28,17 +197,17 @@ and exported Top Shelf classifications, not review scores or parental restrictio
 On tvOS, the example lettering and outlines follow the native row's focus
 foreground so they remain visible on its inverted focused surface.
 
-Home, Libraries, and Detail Page expose the same card-label choices as
+Home, Libraries, and Movie & show details expose the same card-label choices as
 Appearance → Cards → Customize by view. These are additional controls over the
 existing profile-scoped `CardCaptionSettings`, not independent preferences.
 Home exposes Home rows and Continue Watching; Libraries exposes Recommended,
 Browse, collections, playlists, and the shared Continue Watching choice.
-Detail Page exposes episodes, related titles, and extras. Central presets still
+Movie & show details exposes episodes, related titles, and extras. Central presets still
 replace all overrides; contextual edits preserve other views. Screen-specific
 sizing stays with its screen, while overall display size stays in Appearance.
 
 Collection-cover layout is a presentation setting, not a browse filter.
-Customize Libraries lists collection directories alongside video libraries and
+Libraries lists collection directories alongside video libraries and
 owns each library's Auto/Posters/Landscape choice. Collection-only directories
 do not request or display a Recommended-page editor. Home and Recommended rows
 retain their separate cover-layout choices in their settings editors.
@@ -102,14 +271,14 @@ Playback's **Prefer lossless audio** toggle uses one short helper:
 **Turn off for surround sound over regular HDMI ARC, which requires compressed audio.**
 It defaults on for new and upgrading devices and is shared by Plozz
 profiles on that device, not synced to other audio setups. Off selects the
-ordinary compatibility-surround bridge; the spatial-height setting is separate.
+ordinary compatibility-surround bridge. Height-channel conversion is disabled.
 
 Title navigation uses native page opening and closing. The former
 **Zoom when opening titles** setting is removed, and saved values are ignored.
 The hero's staged content reveal remains, without waiting for backdrop artwork,
 and still respects Reduce Motion.
 
-Home hero, Showcase (TV), Recommended Page (TV), and Detail Page have independent
+Home hero, Showcase (TV), Recommended Page (TV), and Movie & show details have independent
 profile-scoped **Logo size** controls. Thirteen stops span 0.5x to 1.5x, with finer
 adjustments around the unchanged 1x default, marked at the center. Previously
 saved intermediate sizes keep their exact scale until adjusted.
@@ -130,7 +299,7 @@ Labels, ticks, and adjustment glyphs share a vertical center; there is no Defaul
 caption or Reset button. VoiceOver still announces the default value.
 Long labels can wrap rather than shrink. Home and Showcase update their existing
 layout-choice previews live instead of adding a second preview to the control.
-Recommended retains its 320-point-wide preview. Detail Page uses a 400-by-300
+Recommended retains its 320-point-wide preview. Movie & show details uses a 400-by-300
 preview showing the hero, right-side credits, and episode captions scaling
 together. Both retain the shared group inset and inner corner radius.
 The complete preview-and-controls group is one native tvOS focus section, so
@@ -140,7 +309,7 @@ while Home and detail previews use edge-to-edge artwork.
 Mobile Home keeps native sliders beside their labels and one stacked preview.
 No artwork lookup is needed for these fictional previews.
 
-Detail Page theme music uses the shared `ThemeMusicVolumeControl` on TV and mobile:
+Movie & show details theme music uses the shared `ThemeMusicVolumeControl` on TV and mobile:
 0–100%, with native touch sliders and the shared remote-adjustable Settings stepper.
 TV shows the current percentage instead of notches, so each 1% Left/Right press
 has visible numeric feedback. This control opts into the shared fast hold-repeat:
@@ -183,26 +352,16 @@ with schematic Home Screen previews. A slightly larger solid-white tile marks
 the focused app, without an icon. Posters stays the default; full-screen explains
 tvOS's swipe-up expansion and retains the same two item limits.
 
-Playback > Advanced also contains **Dolby Vision FEL (experimental)** on TV,
-iPhone and iPad. This is a profile-scoped, default-on preference, unlike the
-device-wide external-player choice. It applies to new built-in on-demand sessions
-and travels through profile settings transfer. Values saved under the earlier
-default-off key are ignored, so existing profiles also start lossless. Its short
-helper warns that it may impact performance. On iPhone/iPad and tvOS before 26
-it also warns that FEL disables spatial audio; ordinary channel audio still
-plays. On tvOS 26+,
-eligible FEL tracks can retain spatial audio when the Spatial audio setting is on.
-Live playback, shared players and muted previews do not opt in.
+Playback > Advanced retains the device-wide external-player choice on TV,
+iPhone and iPad. The experimental Dolby Vision FEL control is removed, and the
+engine's dual-layer reconstruction component is disabled. Old saved or transferred
+FEL preferences are ignored; normal Dolby Vision playback remains unchanged.
 See [playback engines](../../docs/playback-engines.md#dolby-vision-fel) for eligibility
 and output limits.
 
-On tvOS 26+, Playback > Advanced also offers **Rendering layout** in a native
-menu: 5.1.2, 5.1.4, 7.1.2, 7.1.4 and the default 9.1.6. This device-local choice
-is shared by profiles, excluded from profile transfer and read on each new load.
-It does not enable Spatial audio or alter saved On/Off choices. The helper
-discloses that DTS:X heights require 7.1.4 or 9.1.6; smaller layouts retain
-ordinary channel playback for those tracks. This is a rendering bed, not a
-speaker-detection setting.
+The former height-channel switch and **Rendering layout** picker are also removed,
+including their Settings search results. Legacy profile flags and device layout
+values cannot enable conversion.
 
 **Remember audio language per series** stores only the selected language, not a
 specific audio track or format. Its label needs no explanatory footer.
@@ -210,8 +369,8 @@ specific audio track or format. Its label needs no explanatory footer.
 On TV, related control groups can share one section heading through
 `SettingsConnectedControlGroups`: an 8pt gap and tighter 8pt facing corners keep
 them connected, while the section's outer corners retain the standard radius.
-Audio language controls share the first group; Prefer lossless audio and Spatial
-audio share the second, retaining their independent preferences and helpers.
+Audio language controls share the first group; Prefer lossless audio occupies
+the second, retaining its device-local preference and helper.
 Autoplay switches share a group, separate from the Up Next card and its
 conditional timing control. These use the existing surfaces and native controls,
 without an enclosing card or changing the independent settings.
@@ -248,18 +407,13 @@ profile-scoped and travel through settings transfer. Community-marker attributio
 and identifier sharing appear as a short caption attached to its switch, without
 a separate section footer.
 
-The **Spatial audio (height channel support)** switch is available on tvOS 26 and later. Its
-profile-scoped `trueHDAtmosEnabled` preference defaults on, preserves saved Off
-choices and travels through profile transfer. It applies to new supported
-on-demand sessions, not live streams, shared players or muted previews. The
-helper identifies TrueHD Atmos and DTS:X as inputs, PCM rendering and lossy
-AirPlay output. Format names describe compatibility, not certification,
-lossless passthrough, or patent clearance.
-FEL can use the same spatial conversion on tvOS 26+; source eligibility and
-fallback remain engine-owned. Unsupported platforms
-keep ordinary channel playback; directly compatible spatial audio is unaffected.
-Feature descriptions use neutral spatial-audio wording; track
-metadata, diagnostics and legal notices retain accurate format and dependency names.
+Height-channel conversion is disabled in both the adapter and the engine's
+package traits. Older `trueHDAtmosEnabled` values are ignored when decoding
+profile preferences and omitted on the next save; other preferences and profile
+transfers remain intact. Ordinary surround audio and directly compatible native
+spatial audio remain available. Plozz does not override the OS's Spatial Audio
+or head-tracking preferences. Track metadata, diagnostics and legal notices
+retain accurate format and dependency names.
 See [spatial audio](../../docs/playback-engines.md#spatial-audio) for limitations.
 
 Playback > Advanced > External player is a device-only, default-off preference
@@ -276,6 +430,10 @@ All IPTV content (including movies/episodes), NAS shares, and Silo bypass extern
 negotiation altogether. Silo's session-bound grants need its built-in lifecycle;
 no speculative external session is opened. Live TV, trailers, and music keep
 their existing runtimes.
+
+On iPhone/iPad, downloaded movies and episodes play inside Plozz. Downloads
+menus do not export files to other apps, regardless of the external-player
+preference. External playback remains available for supported online sources.
 
 External playback requires directly accessible HTTP(S) media: no app-local
 proxy, downloaded file, private share credentials, separate audio stream, or
@@ -319,18 +477,27 @@ watch history and planning-list behavior are documented in
 ## Responsibility
 
 - **Screen customization hierarchy** follows task boundaries. Screens & Navigation presents
-  App navigation before shared screen preferences and individual screen editors.
+  App navigation and All screens before Home, Libraries, Movie & show details,
+  and Music player (TV only). Shared and screen-specific destinations are separated
+  without an extra category heading. Navigation labels name destinations;
+  explanatory copy uses "screen" for destinations and "view" for grid/list presentation.
   The App navigation entry and destination share that title on TV and mobile.
-  Customize Home opens Layout/Hero, Card labels, or Rows through matching
+  Home opens Layout/Hero, Card labels, Rows, or Filtering through matching
   full-height navigation rows, without redundant subtitles. TV shows the current
   layout as a secondary value. Home rows owns Preset, one Add row action, the
   row list, and Edit/Done. Mobile uses a native toolbar editing action; TV places
   the native action inline with the scrolling page title and Back control.
   Editing remains available for one row so it can be removed; movement does not.
   Presets and reordering never change page appearance. Showcase's fixed Discovery
-  row links back to Home layout rather than pretending to be reorderable.
+  row links back to Row style rather than pretending to be reorderable.
   Shared Continue Watching settings remain accessible when its Home row is hidden.
-  Detail Page keeps hero controls together and places its label editor under Cards.
+  Home → Filtering groups two independent switches under **Hide watched content**:
+  **Recently Added** (off by default) and **Hero & discovery** (on by default).
+  Filtering stays available when the hero is off. These controls are moved, not
+  duplicated in the row or hero editors, and retain their existing profile-scoped stores.
+  Recently Added applies to combined, library, and server Recently Added rows,
+  not Continue Watching, Next Up, Watchlist, collections, or the hero.
+  Movie & show details keeps hero controls together and places its label editor under Cards.
   These destinations preserve the existing profile-scoped stores. See CoreUI's
   row-geometry guidance; the deprecated text-height focus strip must not return.
 - **Customize labels** uses one shared, page-organized visual editor from
@@ -352,7 +519,7 @@ watch history and planning-list behavior are documented in
   at a distance. Mixed has a visible, platform-specific explanation; Home and
   Recommended explicitly distinguish per-page inheritance from their shared
   Continue Watching On/Off override.
-- **Customize Libraries** lives in Screens & Navigation on TV and mobile.
+- **Libraries customization** lives in Screens & Navigation on TV and mobile.
   Library Navigation comes first, including the first Down move from Back on TV.
   Page appearance follows it, containing Recommended Page sizing on TV and the
   separate label editor for all library tabs. Recommended rows lists libraries
@@ -371,7 +538,7 @@ watch history and planning-list behavior are documented in
   Manual hides and ordering stay
   profile-scoped. Refreshing Libraries also updates the main navigation inventory;
   unchanged results must not invalidate the navigation chrome during Settings entry.
-  Mobile retains its existing built-in destinations rather than adding library tabs.
+  Mobile includes enabled library tabs alongside its built-in destinations.
   VoiceOver retains the equivalent state description.
   Use default retains the existing inheritance; On/Off remains
   one shared override, explicitly noted as also affecting Home.
@@ -381,11 +548,13 @@ watch history and planning-list behavior are documented in
   Library tabs share an arrangement across the profile; each library separately
   owns its Recommended row arrangement. Both editors use `LiftableReorderList`,
   its Hidden divider, native focus/drag behavior, and scoped reset actions.
+  Navigation library rows use the shared content-kind glyph, with the provider
+  mark and server name below the library name rather than beside the drag handle.
   `LibraryPresentationLoading` connects the settings UI to the existing browse
   and discovery pipeline through AppRuntime, without a feature-to-feature
   dependency. Identity changes cancel pending discovery and replace row editors.
   These choices never disable a library or alter its Home rows.
-- **Libraries** owns profile-wide library availability. Mobile Customize Home
+- **Libraries** owns profile-wide library availability. Mobile Home customization
   does not duplicate its Enabled controls: the Home editor manages section presentation,
   and Hero source selection uses the enabled library inventory. Discovering
   libraries for those controls must not restore a separate management list.
@@ -402,15 +571,26 @@ watch history and planning-list behavior are documented in
   One full-width Add row action appears below Preset and above the editable rows.
   A centered plus-and-label, native capsule style, and vertical spacing distinguish
   the action from the editable rows. Edit/Done switches to native movement controls
-  with no Hidden drop zone. Hero and Showcase remain on their separate layout page.
+  with no Hidden drop zone. Hero and Row style remain separate Home settings.
   Mobile uses the shared page inset without extra gutters.
   Add row separates **From a collection** from **Available rows** not already
   shown. Empty results omit the empty heading; discovery failures show source
   errors and Retry instead of claiming no rows are available. Creation starts with
   a library collection; the editor identifies that source as Content and its
   presentation as Layout (see [Home terminology](../../CONTEXT.md)). Choose a source collection first,
-  then edit its name and Posters, Landscape or Featured presentation with the layout control immediately above a real-title
-  preview. The preview uses the existing artwork preferences and spoiler protection.
+  then edit its name and Posters, Landscape or Featured presentation. A live
+  real-title preview leads the editor, with compact native **Layout** and **Logo**
+  menu rows underneath rather than controls inside the preview.
+  The preview uses the existing artwork preferences and spoiler protection.
+  Landscape exposes **Logo: On / Off** for movie/show cards on all platforms,
+  defaulting to Off. Older Automatic values migrate to Off; saved On/Off choices
+  remain intact. On uses the shared background/logo treatment and is never
+  suppressed by an artwork-type guess. It prefers clean backgrounds when allowed
+  by the artwork settings, but still overlays the available artwork when none is
+  found. Off adds no overlay; it cannot remove a logo embedded in the image.
+  The preference persists
+  with each row, survives layout changes and profile transfer, and previews
+  without saving until the user applies the edit. Episode stills are unchanged.
   Each navigation destination explicitly forwards the active profile's card settings,
   including Add row's nested creation destination; iOS navigation does not
   inherit dependencies injected only into the preceding page.
@@ -427,23 +607,33 @@ watch history and planning-list behavior are documented in
   provider mark beside each library's second-line server label, including personal
   collection sources. Featured previews share the live card's artwork, logo and
   metadata layout without starting playback in Settings. Reorder menus include Move to top
-  and Move to bottom within the movable sections, never above Home layout.
+  and Move to bottom within the movable sections.
   On TV, picked-up rows retain native focus during rapid directional presses
   and held Up/Down; reaching an edge does not move focus out of the list.
   Home's latest section warnings also appear here with Details and Retry.
   These are transient results fenced by profile, account, effective viewer,
   credentials, and the loaded Home settings; catalog discovery is not treated
   as evidence that the actual Home content request succeeded.
-  Continue Watching owns its merge and artwork controls. Hero owns its sources
-  and presentation, including the existing TV Home Layout/Showcase options.
+  Continue Watching owns its merge and artwork controls. TV Hero owns its
+  enabled state, sources, sizing, rotation, ratings, and trailers. Its On/Off
+  preview cards use the shared settings selection style; Off previews the current
+  Classic or Showcase rows without changing that preference. Row style has
+  Showcase followed by Classic preview cards independent of Hero, with Showcase
+  sizing and inline rating controls below, rather than a Ratings subpage.
+  Standalone Showcase also exposes Discovery and its
+  providers, respecting Kids policy. These controls map to existing persisted
+  hero style/enabled fields without resetting content preferences. Mobile keeps
+  its Hero controls and carousel presentation. Fresh TV profiles default to
+  Hero + Showcase; existing saved choices remain unchanged.
   Continue Watching groups artwork, playback details and labels before their shared
   Recommended-page scope note; Include Next Up and selection behavior follow.
   Showcase groups Ratings and Discovery with their dependent controls.
-  **Center button action** on TV and **When tapping an item** on iPhone/iPad
+  **Center button action** on TV and **Tap action** on iPhone/iPad
   select **Play** or **Open detail page** for Home's movie/episode cards.
-  Play remains the default for fresh and existing profiles. The choice uses the
-  existing profile-scoped Home settings store and profile transfer; it does not
-  change artwork or Live TV shortcuts.
+  Open detail page is the default when no action has been saved. Existing saved
+  choices remain unchanged. Episodes open their own detail page, not the parent
+  show's page. The choice uses the existing profile-scoped Home settings store
+  and profile transfer; it does not change artwork or Live TV shortcuts.
   On Apple TV this setting controls the center button only; the remote's
   Play/Pause button always starts the focused Continue Watching movie or episode.
   Helper text below the control describes Play/Pause, with its filled circular
@@ -530,16 +720,37 @@ watch history and planning-list behavior are documented in
   Appearance, Screens & Navigation, Trackers, Language. Compact mobile windows
   use native push navigation; regular-width windows use a sidebar and detail stack.
   Both mobile layouts share their category section and destinations. Appearance
-  groups Theme, Cards, Artwork, Spoiler Protection, and Circadian Mode; Display
-  Size is last inside Cards. Screens & Navigation groups Customize Home,
-  Navigation, and Detail Page; Music Player remains TV-only because mobile does
+  groups Theme, Cards, Artwork, and Circadian Mode; Display
+  Size is last inside Cards. Screens & Navigation groups App navigation,
+  All screens, Home, Libraries, and Movie & show details; Music player remains TV-only because mobile does
   not implement those presentation choices. Mobile navigation editing includes
-  every enabled video library from the shared discovery inventory; Music and
-  All Libraries remain TV-only. Refreshing Libraries updates native navigation
+  every enabled video library from the shared discovery inventory; Music remains
+  TV-only. Refreshing Libraries updates the available shortcuts
   without resetting saved hide/order choices.
-  The mobile app shell uses native adaptive tabs, sidebar, and system More
-  overflow. Destination declarations and their navigation stacks stay mounted
+  Home, Downloads, and Search are the iPhone/iPad defaults, even before content
+  discovery. Watchlist, Live TV, Settings, All Libraries, and individual libraries
+  are opt-in through App navigation. Discovery never adds tabs automatically.
+  Explicit Show/Hide choices and ordering stay profile-scoped; Reset Navigation
+  restores these three defaults without changing content availability or TV defaults.
+  The mobile app shell uses native adaptive tabs and sidebar, with system More
+  overflow on iPhone only above five enabled pages. Destination declarations and their navigation stacks stay mounted
   across width changes; profile-scoped ordering and visibility remain authoritative.
+  Pages opened from More use their existing stack's single navigation bar: Back,
+  an inline title, and page actions share one row. The outer More bar is hidden
+  only while showing a destination and restored on return. Direct tabs keep their
+  normal title styles; deeper pages keep their own back navigation.
+  The bridge resolves destinations from native `UITab` objects when present:
+  newer iOS versions leave the legacy `viewControllers` array empty. More-row
+  interception and destination matching must use the same controller inventory.
+  Downloads composes the shared Back item inside its page toolbar so its actions
+  do not displace the shell's root navigation control.
+  Library tabs use the same content-kind icons as tvOS and library names without
+  server suffixes. Same-named libraries remain separate destinations; the
+  arrangement editor identifies their servers on a second line.
+  All Libraries is also available on iPhone/iPad when the profile has more than
+  one visible video library. It can be shown, moved, or hidden in App navigation, using
+  the same saved key as tvOS. Hiding an individual navigation shortcut does not
+  exclude that library's content from the combined grid; disabling its content does.
   Settings opens as a sheet from direct tabs or native More without replacing
   the selected page or its navigation history.
   Everyone uses the TV order, with mobile-only Downloads last. Version/build,
@@ -615,16 +826,32 @@ watch history and planning-list behavior are documented in
   saved for later use outside Kids mode; this restriction is not synced as an
   editable setting. Connected server-user restrictions still govern library
   content—Plozz does not infer maturity from incomplete external catalog ratings.
-- `CardAppearanceControls` — the independent **Show unwatched episode count**
-  toggle lives beside Watched Indicator on both platforms. It defaults on,
+- `CardAppearanceControls` — **Watch indicators** offers Watched, Unwatched,
+  and Hidden. Hidden removes only watch marks, preserving episode counts,
+  playback progress, download badges, and library/request status. The saved
+  color is retained while its control is hidden. TV keeps side-by-side previews;
+  iOS also shows side-by-side choices when the settings content fits three
+  200-point cards plus spacing (scaled with text size). Narrow windows and
+  accessibility text sizes use one compact live preview and a native menu for
+  both Labels and Watch indicators. This responds to available width, including
+  iPad multitasking, rather than device type. Custom label overrides leave the
+  visual presets unselected and show Custom in the menu until a preset replaces them.
+  The independent **Show unwatched episode count** toggle defaults on,
   persists per profile, and transfers/syncs with that profile without changing
   its watched/unwatched style. Both previews show a sample count on the
   in-progress series when enabled; toggling it updates the previews immediately
   without removing the separate watched check or unwatched flag examples.
-  **Episode count style** offers Attached or Floating while counts are enabled;
-  it is profile-scoped, transfers with the profile, and never changes watch marks.
+  **Episode count style** offers Attached or Floating while counts are enabled.
+  Mobile uses the same native menu picker as Watch indicators, with a trailing
+  selected value and the system menu affordance.
+  The choice is profile-scoped, transfers with the profile, and never changes watch marks.
   Turning counts off retains the style. Existing profiles keep their previous
   placement on upgrade; both previews then follow this independent choice.
+  **Show progress bars** is a separate default-on, profile-scoped toggle below
+  the count controls. It hides viewing-progress bars on media and episode cards,
+  including Continue Watching and live previews, without removing episode/time
+  text, download indicators, or changing player timelines and play-button progress.
+  The preference transfers/syncs with the profile.
   The eight watch-mark colors appear as one horizontal swatch row below the
   indicator previews. White remains the default; changes update the previews
   immediately and persist/transfer per profile. Narrow mobile layouts scroll
@@ -669,9 +896,9 @@ watch history and planning-list behavior are documented in
   and Circadian location the same whole-row focus and native menu presentation.
   A setting's label and current value form one control, not a detached value pill.
   Appearance contains Theme (including gradient backgrounds and Liquid Glass),
-  Cards (with Display Size last), Artwork, Spoiler Protection and Circadian Mode.
-  Screens & Navigation contains Customize Home, Navigation, Detail Page and
-  Music Player. Moving these controls does not change their profile-scoped stores.
+  Cards (with Display Size last), Artwork and Circadian Mode.
+  Screens & Navigation contains App navigation, All screens, Home, Libraries,
+  Movie & show details and Music player. Moving these controls does not change their profile-scoped stores.
   Playback groups
   audio, autoplay/Up Next, marker skipping, seeking and display fades.
   **Skip intros, credits & more** has one inline toggle and a conditional **Customize**
@@ -803,13 +1030,18 @@ watch history and planning-list behavior are documented in
   submitting any diagnostics; automatic crash reports are unchanged.
   Each submission appears in Sentry's User Feedback inbox with the required message,
   linked to the diagnostic event in Issues and its `plozz-diagnostics.json`
-  attachment. No name or email is collected. The privacy filter retains only the
+  attachment. The playback section includes the last three independently
+  preserved failed attempts, including late native evidence and numeric engine
+  telemetry, in both Debug and Release. Successful retries and routine journal
+  churn do not erase them; they expire after 48 hours. This is allowlisted
+  structured evidence, not an upload of local free-form log files.
+  No name or email is collected. The privacy filter retains only the
   feedback message, custom source,
   and valid associated event ID, not identity or arbitrary feedback fields.
   Success means SDK handoff, not server acknowledgment; inactive reporting or a
   rejected event returns failure. Feedback is not submitted when its diagnostic
   event is rejected. Both events pass through the same privacy hook before upload.
-- `HeroCollectionPickerView` — Customize Home's opt-in **Collections** hero source
+- `HeroCollectionPickerView` — Home's opt-in **Collections** hero source
   chooses multiple collections across enabled movie and TV libraries, or from accounts'
   personal collections when its provider advertises that capability. The native picker
   is shared by TV, iPhone and iPad, scopes requests to the active account and
@@ -872,6 +1104,12 @@ watch history and planning-list behavior are documented in
   child path throughout the Settings visit; the new chrome takes effect on exit.
   Settings columns remain centered and subpage headers keep their full-height
   layout; only root foreground reserves space below the top bar.
+  That reservation remains constant while subpages cover the retained root, so
+  its scroll viewport and offset do not change as navigation hides or returns.
+  Settings pages retain their horizontal slide/fade transitions without resizing
+  their scroll viewports. Parent pages retain their scroll positions and return
+  focus to the originating row. Navigation chrome animates independently, only
+  while visible.
   The top bar scrolls away with root content, without a foreground fade.
   Root Back restores the page top and navigation; subpage Back remains one level.
   The profile action reserves a stable 100-point height: native focus shifts the
@@ -947,7 +1185,12 @@ watch history and planning-list behavior are documented in
   caption bars on only one half. Show labels everywhere and Hide labels everywhere
   govern all media captions; App default owns Showcase and title-artwork exceptions.
   Explicit per-view choices, including Episodes, last until a preset replaces them.
-  Library navigation names and on-artwork information are not captions.
+  Home's Libraries row has a Use default / On / Off override alongside Continue Watching.
+  Use default inherits Home's label setting, including Showcase; explicit choices
+  affect only the Home library-card caption, not the library directory. Library-directory
+  captions continue to follow the global preset. All label editors place page defaults
+  first, then the live preview, then any Overrides section on TV and mobile. Library
+  names in navigation bars, sidebars, menus, and on-artwork information remain visible.
   Per-view help states whether labels are visible or hidden; Mixed explains
   the Showcase and series-artwork exceptions. It follows the focused setting
   and updates when that setting changes.
@@ -1006,7 +1249,7 @@ watch history and planning-list behavior are documented in
   layout with contained row focus.
 - **Mobile Settings is a presentation action.** The profile button is the default
   entry point. Its navigation shortcut starts hidden on iPhone and iPad, keeping
-  the default navigation at five destinations or fewer even with Watchlist.
+  the default navigation at Home, Downloads, and Search.
   The arranger can explicitly Show it; this profile-scoped override survives
   relaunches, while Reset Navigation restores the hidden default. Automatic
   hiding is not saved as a manual preference and does not hide Settings on TV.

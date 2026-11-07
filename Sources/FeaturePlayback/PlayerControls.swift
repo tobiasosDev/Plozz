@@ -65,6 +65,7 @@ struct PlayerControls: View {
 
     enum Category: Hashable {
         case subtitles, audio, playback, sync, info, cast, chapters, episodes, playlist, version
+        case continueWatching
 
         var title: LocalizedStringResource {
             switch self {
@@ -95,16 +96,42 @@ struct PlayerControls: View {
                     defaultValue: "Info",
                     comment: "Tab in the in-player options panel showing playback details."
                 )
-            case .cast:
-                return LocalizedStringResource(
-                    "player.category.cast",
-                    defaultValue: "Cast",
-                    comment: "Tab beneath the in-player scrub bar listing the cast of what is playing."
-                )
-            case .episodes: return "Episodes"
-            case .playlist: return "Playlist"
-            case .chapters: return "Chapters"
+            case .cast: return PlayerOptionalTab.cast.title
+            case .episodes: return PlayerOptionalTab.episodes.title
+            case .playlist: return PlayerOptionalTab.playlist.title
+            case .continueWatching: return PlayerOptionalTab.continueWatching.title
+            case .chapters: return PlayerOptionalTab.chapters.title
             }
+        }
+
+        init(_ tab: PlayerOptionalTab) {
+            switch tab {
+            case .chapters: self = .chapters
+            case .cast: self = .cast
+            case .episodes: self = .episodes
+            case .playlist: self = .playlist
+            case .continueWatching: self = .continueWatching
+            }
+        }
+
+        var tabAccessibilityID: String {
+            self == .continueWatching ? "player-tab-continue-watching" : "player-tab-\(self)"
+        }
+
+        @MainActor static func visibleCardTabs(
+            model: PlayerControlsModel, player: PlayerViewModel?
+        ) -> [Self] {
+            [.info] + PlayerOptionalTab.allCases.filter { tab in
+                guard player?.isTabEnabled(tab)
+                    ?? PlaybackSettings.default[keyPath: tab.visibilityKeyPath] else { return false }
+                switch tab {
+                case .cast: return !model.infoCard.cast.isEmpty
+                case .chapters: return player != nil && !model.infoCard.chapters.isEmpty
+                case .episodes: return player?.episodeBrowser != nil
+                case .playlist: return player?.playlistContext != nil
+                case .continueWatching: return !(player?.continueWatchingItems.isEmpty ?? true)
+                }
+            }.map(Self.init)
         }
 
         var icon: String {
@@ -118,6 +145,7 @@ struct PlayerControls: View {
             case .cast: return "person.2"
             case .episodes: return "rectangle.stack"
             case .playlist: return "text.line.first.and.arrowtriangle.forward"
+            case .continueWatching: return "play.rectangle.on.rectangle"
             case .chapters: return "list.number"
             }
         }
@@ -132,9 +160,11 @@ struct PlayerControls: View {
         case infoPrev       // Info panel: Previous Episode
         case infoRestart    // Info panel: Restart
         case infoStats      // Info panel: Playback Info (diagnostics) toggle
+        case infoSong       // Info panel: the playing song (opens Apple Music)
         /// One face in the Cast card, by position in the row.
         case castMember(Int)
         case sequenceItem(Int)
+        case continueWatching(String)
         case episodeItem(PlayerEpisodeEntry.ID)
         case chapter(MediaChapter.ID)
         /// Back out of a cast member's details to the row.
@@ -341,6 +371,11 @@ struct PlayerControls: View {
             guard let panel = PlayerScreenshotHook.pendingPanel else { return }
             PlayerScreenshotHook.pendingPanel = nil
             switch panel {
+            case .info:
+                model.controlsVisible = true
+                model.controlBar.entry = .info
+                model.controlBarVisible = true
+                openPanel = .info
             case .playback:
                 try? await Task.sleep(for: .milliseconds(600))
                 model.controlsVisible = true
@@ -435,7 +470,11 @@ struct PlayerControls: View {
             // the reveal. `entryFocusTarget` is non-nil for exactly that window.
             if case let .button(tab)? = slot, Self.usesBottomCard(tab),
                openPanel != tab, !isRestoringCastRow, entryFocusTarget == nil {
-                revealInfoCard(tab)
+                if Self.usesBottomCard(openPanel) {
+                    selectCardTab(focusedTo: slot)
+                } else {
+                    revealInfoCard(tab)
+                }
             }
             // Focus reached the strip above the tab, which only a deliberate Up from
             // the tab itself can do: that's the exit gesture. Acting on where focus
@@ -476,7 +515,7 @@ struct PlayerControls: View {
             // the transport up forever after every Down entry. The card behaves like
             // the old control bar instead: idle for the timeout and it hides.
             model.isPanelOpen = panel != nil && panel != .info
-                && panel != .episodes && panel != .playlist
+                && panel != .episodes && panel != .playlist && panel != .continueWatching
             model.controlBar.episodeBrowserOpen = panel == .episodes
             // ANY card tab, not just Info.
             //
@@ -523,6 +562,9 @@ struct PlayerControls: View {
             // curve at the same time, which is exactly the kind of near-miss timing
             // that made the transport look like separate pieces.
             if !Self.usesBottomCard(panel) { titleVisible = false }
+            // Card tabs already own native focus. Re-queuing the old tab can
+            // pull focus backwards after the viewer has moved to its neighbour.
+            guard !Self.usesBottomCard(panel) else { return }
             // (The panel seeds its own height from `cachedPanelHeight`.)
             // Land initial focus on the active/selected row. This MUST be deferred to
             // the next runloop tick: opening a panel simultaneously inserts the panel's
@@ -539,8 +581,10 @@ struct PlayerControls: View {
             // while the panel is still at ~0 opacity (mid fade-in), so it's imperceptible.
             restoreFocus(preferredPanelFocus)
         }
-        .onChange(of: model.infoCard.chapters.isEmpty) { _, empty in
-            if empty, openPanel == .chapters { closeInfoCard() }
+        .onChange(of: visibleCardTabs) { _, tabs in
+            if let panel = openPanel, Self.usesBottomCard(panel), !tabs.contains(panel) {
+                closeInfoCard()
+            }
         }
         .plozzRemoteCommands(
             onExit: handleExit,
@@ -679,8 +723,9 @@ struct PlayerControls: View {
             // undone from inside, so fading the block faded the open panel with it.
             // Each piece of chrome hides itself instead (see `chromeHidden`), leaving
             // the menu overlay, which hangs off the buttons, unaffected.
-            // The Info card is a PERMANENT member of the stack, never inserted or
-            // removed. That's the whole trick behind the reveal moving as one unit:
+            // The card's fixed-height stage is a permanent member of the stack.
+            // Its contents mount on first use and then stay mounted while parked.
+            // That's the whole trick behind the reveal moving as one unit:
             // the layout always holds the revealed arrangement (card at the bottom,
             // tab above it), and the resting look is produced purely by translating
             // the cluster down so the card sits just off the bottom edge. Opening it
@@ -977,7 +1022,7 @@ struct PlayerControls: View {
     /// mounts a second card, which would reflow the stage and break that.
     static func usesBottomCard(_ category: Category?) -> Bool {
         category == .info || category == .cast || category == .chapters
-            || category == .episodes || category == .playlist
+            || category == .episodes || category == .playlist || category == .continueWatching
     }
 
     /// `openPanel` with Info masked out, so the options panels' own animation can be
@@ -1081,66 +1126,22 @@ struct PlayerControls: View {
             .focused($focus, equals: .button(.info))
             .accessibilityIdentifier("player-tab-info")
             .disabled(!tabFocusable(.info))
-            .onChange(of: focus) { _, slot in selectCardTab(focusedTo: slot) }
 
-            if isTabVisible(.chapters) {
-                Button { toggle(.chapters) } label: {
-                    Label(Category.chapters.title, systemImage: Category.chapters.icon)
+            ForEach(visibleCardTabs.filter { $0 != .info }, id: \.self) { category in
+                Button { toggle(category) } label: {
+                    Label(category.title, systemImage: category.icon)
                         .labelStyle(PlayerTabLabelStyle())
                 }
                 .buttonStyle(PlayerTabButtonStyle(
-                    focused: focus == .button(.chapters), selected: openPanel == .chapters
+                    focused: focus == .button(category), selected: openPanel == category
                 ))
                 .reportSubtitleControlsFrame(
-                    in: model.subtitleLayout, region: .tab("chapters"),
+                    in: model.subtitleLayout, region: .tab(String(describing: category)),
                     isVisible: model.controlsVisible && !model.isScrubbing && !chromeHidden
                 )
-                .focused($focus, equals: .button(.chapters))
-                .accessibilityIdentifier("player-tab-chapters")
-                .disabled(!tabFocusable(.chapters))
-            }
-
-            // Hidden entirely when what is playing has no cast: a tab that opens
-            // an empty card is worse than an absent one, and `.disabled` alone
-            // would leave it visible but dead.
-            if isTabVisible(.cast) {
-                Button {
-                    toggle(.cast)
-                } label: {
-                    Label(Category.cast.title, systemImage: Category.cast.icon)
-                        .labelStyle(PlayerTabLabelStyle())
-                }
-                .buttonStyle(PlayerTabButtonStyle(focused: focus == .button(.cast), selected: openPanel == .cast))
-                .reportSubtitleControlsFrame(
-                    in: model.subtitleLayout, region: .tab("cast"),
-                    isVisible: model.controlsVisible && !model.isScrubbing && !chromeHidden
-                )
-                .focused($focus, equals: .button(.cast))
-                .accessibilityIdentifier("player-tab-cast")
-                .disabled(!tabFocusable(.cast))
-            }
-            if isTabVisible(.episodes) {
-                Button { toggle(.episodes) } label: {
-                    Label(Category.episodes.title, systemImage: Category.episodes.icon)
-                        .labelStyle(PlayerTabLabelStyle())
-                }
-                .buttonStyle(PlayerTabButtonStyle(
-                    focused: focus == .button(.episodes), selected: openPanel == .episodes
-                ))
-                .focused($focus, equals: .button(.episodes))
-                .accessibilityIdentifier("player-tab-episodes")
-                .disabled(!tabFocusable(.episodes))
-            }
-            if isTabVisible(.playlist) {
-                Button { toggle(.playlist) } label: {
-                    Label(Category.playlist.title, systemImage: Category.playlist.icon)
-                        .labelStyle(PlayerTabLabelStyle())
-                }
-                .buttonStyle(PlayerTabButtonStyle(
-                    focused: focus == .button(.playlist), selected: openPanel == .playlist
-                ))
-                .focused($focus, equals: .button(.playlist))
-                .disabled(!tabFocusable(.playlist))
+                .focused($focus, equals: .button(category))
+                .accessibilityIdentifier(category.tabAccessibilityID)
+                .disabled(!tabFocusable(category))
             }
 
             Spacer(minLength: 20)
@@ -1239,16 +1240,12 @@ struct PlayerControls: View {
         return false
     }
 
-    /// Cast hides itself when what is playing has no cast to show — a tab that
-    /// opens an empty card is worse than an absent one.
+    private var visibleCardTabs: [Category] {
+        Category.visibleCardTabs(model: model, player: player)
+    }
+
     private func isTabVisible(_ tab: Category) -> Bool {
-        switch tab {
-        case .cast: !model.infoCard.cast.isEmpty
-        case .chapters: player != nil && !model.infoCard.chapters.isEmpty
-        case .episodes: player?.episodeBrowser != nil
-        case .playlist: player?.playlistContext != nil
-        default: true
-        }
+        visibleCardTabs.contains(tab)
     }
 
     /// The floating options menu (Speed · Audio · Subtitles), including the Subtitle
@@ -1387,7 +1384,7 @@ struct PlayerControls: View {
         switch focus {
         case .button(let tab):
             return Self.usesBottomCard(tab)
-        case .infoNext, .infoPrev, .infoRestart, .infoStats:
+        case .infoNext, .infoPrev, .infoRestart, .infoStats, .infoSong:
             return true
         default:
             return false
@@ -1419,6 +1416,8 @@ struct PlayerControls: View {
                 source: parkedCardTab == .playlist ? .playlist : .episodes,
                 focus: $focus
             )
+        } else if parkedCardTab == .continueWatching, let player {
+            PlayerSequencePanel(player: player, source: .continueWatching, focus: $focus)
         } else if parkedCardTab == .cast {
             // Deliberately NOT clipped, unlike Info. The cast row is a set of
             // separate cards that GROW on focus, and clipping to the stage sliced
@@ -1473,8 +1472,16 @@ struct PlayerControls: View {
     }
 
     private var infoCard: some View {
-        cardContent
-            .frame(maxWidth: .infinity, alignment: .leading)
+        Group {
+            #if os(tvOS)
+            PlayerControlsCardStage(isPresented: infoMode) {
+                cardContent
+            }
+            #else
+            cardContent
+            #endif
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Move between card tabs by *moving focus*, with no press needed — the
@@ -1551,8 +1558,8 @@ struct PlayerControls: View {
     }
 
     /// The focus target a freshly-opened panel should land on: the active/selected
-    /// row for the track lists, the first available delay row for Sync, the tab
-    /// itself for Info, and the right control for each Subtitles sub-screen. Deferred
+    /// row for the track lists, the first available delay row for Sync,
+    /// and the right control for each Subtitles sub-screen. Deferred
     /// onto `focus` in `onChange(of: openPanel)` via `restoreFocus`.
     private var preferredPanelFocus: FocusSlot? {
         guard let panel = openPanel else { return nil }
@@ -1738,6 +1745,31 @@ struct PlayerControls: View {
             : .easeOut(duration: 0.2).delay(0.45)
     }
 }
+
+#if os(tvOS)
+/// Reserve the card's layout without initializing its optional content on transport entry.
+struct PlayerControlsCardStage<Content: View>: View {
+    let isPresented: Bool
+    @ViewBuilder var content: () -> Content
+    @State private var hasPresented = false
+
+    var body: some View {
+        Group {
+            if hasPresented || isPresented {
+                content().transition(.identity)
+            } else {
+                Color.clear
+                    .frame(height: InfoPanelView.cardHeight)
+                    .accessibilityHidden(true)
+                    .transition(.identity)
+            }
+        }
+        .onChange(of: isPresented, initial: true) { _, presented in
+            if presented { hasPresented = true }
+        }
+    }
+}
+#endif
 
 extension PlayerControlsModel {
     var subtitleTrackListFocus: PlayerControls.FocusSlot {

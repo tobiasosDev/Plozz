@@ -49,11 +49,14 @@ struct NavigationRailFocusHost<Content: View>: UIViewControllerRepresentable {
             target.themeMusicPreviewController = source.themeMusicPreviewController
             target.themeMusicDetailAllowed = source.themeMusicDetailAllowed
             target.themeMusicAuthorization = source.themeMusicAuthorization
+            target.detailPlaybackPreparation = source.detailPlaybackPreparation
+            target.detailPlaybackPreparationAllowed = source.detailPlaybackPreparationAllowed
             target.seasonRequestContextID = source.seasonRequestContextID
             target.libraryPresentationLoader = source.libraryPresentationLoader
             target[NavigationChromeModel.self] = source[NavigationChromeModel.self]
             target[ProfilesModel.self] = source[ProfilesModel.self]
             target[HeroTrailerController.self] = source[HeroTrailerController.self]
+            target.heroTrailerPlayerFactory = source.heroTrailerPlayerFactory
             target[HeroBackgroundSettingsModel.self] = source[HeroBackgroundSettingsModel.self]
             target[HeroSettingsModel.self] = source[HeroSettingsModel.self]
             target[LibraryPresentationSettingsModel.self] = source[LibraryPresentationSettingsModel.self]
@@ -97,6 +100,7 @@ final class NavigationRailFocusHostController: UIHostingController<AnyView> {
     var rootUpdateCount = 0
     #endif
     private weak var requestedFocus: (any UIFocusItem)?
+    weak var directionalContentEntry: NavigationContentFocusRequester.RequestView?
 
     static func containing(_ view: UIView) -> NavigationRailFocusHostController? {
         var responder = view.next
@@ -145,7 +149,9 @@ final class NavigationRailFocusHostController: UIHostingController<AnyView> {
     }
 
     func allowsFocusUpdate(heading: UIFocusHeading) -> Bool {
-        !(isNavigationFocused && !heading.intersection(contentExitHeading).isEmpty)
+        guard isNavigationFocused, !heading.intersection(contentExitHeading).isEmpty else { return true }
+        directionalContentEntry?.scheduleDirectionalEntry()
+        return false
     }
 
     @discardableResult

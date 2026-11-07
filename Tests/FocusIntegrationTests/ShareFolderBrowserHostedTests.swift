@@ -43,27 +43,47 @@ final class ShareFolderBrowserHostedTests: XCTestCase {
             previous?.makeKeyAndVisible()
             model.stopScan()
         }
-        try await Task.sleep(for: .milliseconds(250))
-        window.layoutIfNeeded()
+        // Exclude the root table's asynchronous self-sizing from folder-navigation timing.
+        try await wait {
+            window.layoutIfNeeded()
+            guard let table = self.scrollViews(in: window).compactMap({ $0 as? UITableView }).first else {
+                return false
+            }
+            return table.visibleCells.count == model.locations.count
+                && table.bounds.height > 0 && table.bounds.height < 250
+        }
         let rootTable = try XCTUnwrap(scrollViews(in: window).compactMap { $0 as? UITableView }.first)
         XCTAssertLessThan(rootTable.bounds.height, 250, "Short lists must retain their natural height.")
 
         for _ in 0..<2 {
+            let setupStart = ContinuousClock.now
+            try await waitForHostedLayout(window)
+            print("Folder fixture settling: \(setupStart.duration(to: .now))")
             let movies = try XCTUnwrap(model.locations.first { $0.name == "Movies" })
             model.selectLocation(movies)
             let clock = ContinuousClock()
             var worst = Duration.zero
+            var worstWakeDelay = Duration.zero
+            var worstLayoutDuration = Duration.zero
             for _ in 0..<20 {
                 let start = clock.now
                 try await Task.sleep(for: .milliseconds(20))
+                let resumed = clock.now
                 window.layoutIfNeeded()
-                worst = max(worst, start.duration(to: clock.now) - .milliseconds(20))
+                let finished = clock.now
+                let delay = start.duration(to: finished) - .milliseconds(20)
+                if delay > worst {
+                    worst = delay
+                    worstWakeDelay = start.duration(to: resumed) - .milliseconds(20)
+                    worstLayoutDuration = resumed.duration(to: finished)
+                }
             }
             XCTAssertEqual(model.locationLoad, .loaded)
             XCTAssertEqual(model.locations.count, 1_551)
             let milliseconds = Double(worst.components.seconds) * 1_000
                 + Double(worst.components.attoseconds) / 1_000_000_000_000_000
-            let measurement = "1,551 folders: worst main-actor delay \(milliseconds)ms"
+            let measurement = "1,551 folders: worst main-actor delay \(milliseconds)ms; "
+                + "wake delay=\(worstWakeDelay), forced layout=\(worstLayoutDuration)"
             let attachment = XCTAttachment(string: measurement)
             attachment.lifetime = .keepAlways
             add(attachment)
@@ -102,7 +122,6 @@ final class ShareFolderBrowserHostedTests: XCTestCase {
             try await wait { model.currentPath == "/media" && model.locationLoad == .loaded }
             XCTAssertEqual(model.locations.map(\.name), ["Movies", "TV Shows"])
             XCTAssertFalse(model.canNavigateUp, "Browsing must retain the originally entered root boundary.")
-            try await Task.sleep(for: .milliseconds(100))
         }
     }
 

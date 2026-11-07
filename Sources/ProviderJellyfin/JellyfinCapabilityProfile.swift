@@ -35,7 +35,8 @@ public struct JellyfinCapabilityProfile: Encodable, Sendable, Equatable {
 
     public func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
-        // Missing keys restore the server's 8 Mbps defaults. Null means no client limit.
+        // Jellyfin restores 8 Mbps defaults for missing keys; null means unlimited.
+        // JellyfinClient replaces Original's nulls with Emby's numeric protocol ceiling.
         try values.encode(maxStreamingBitrate, forKey: .maxStreamingBitrate)
         try values.encode(maxStaticBitrate, forKey: .maxStaticBitrate)
         try values.encode(musicStreamingTranscodingBitrate, forKey: .musicStreamingTranscodingBitrate)
@@ -50,7 +51,7 @@ public struct JellyfinCapabilityProfile: Encodable, Sendable, Equatable {
 
 extension JellyfinCapabilityProfile {
     /// Legacy Live TV/music default. On-demand requests replace this with the
-    /// selected quality's limit, or no client limit for Original.
+    /// selected quality's limit, or the provider's unlimited representation for Original.
     public static let defaultMaxBitrate = 120_000_000
 
     /// Advertise the linked engine's input formats when available. Native-only

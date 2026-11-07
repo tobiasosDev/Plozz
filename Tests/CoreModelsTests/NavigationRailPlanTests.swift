@@ -219,9 +219,13 @@ final class NavigationRailPlanTests: XCTestCase {
         let libraries = (0..<20).map { library("\($0)", title: "Library \($0)", account: "server") }
         let music = library("music", title: "Music", account: "server", isMusic: true)
         let keys = NavigationDestinationDefaults.iOS(visibleLibraries: libraries + [music])
-        XCTAssertEqual(keys.filter { !Set(libraries.map(\.key)).contains($0) }, NavigationDestinationDefaults.iOS)
+        XCTAssertEqual(
+            keys.filter { !Set(libraries.map(\.key) + [NavigationLibraryLayout.allLibrariesKey]).contains($0) },
+            NavigationDestinationDefaults.iOS
+        )
+        XCTAssertTrue(keys.contains(NavigationLibraryLayout.allLibrariesKey))
         XCTAssertEqual(keys.filter { $0.hasPrefix("server:") }, libraries.map(\.key))
-        XCTAssertEqual(keys.last, NavigationLibraryLayout.searchKey)
+        XCTAssertEqual(Array(keys.prefix(3)), NavigationDestinationDefaults.iOSDefaultVisibleKeys)
         let layout = NavigationLibraryLayout(order: ["server:19", "server:0"], hiddenKeys: ["server:1"])
         let visible = layout.sections(available: keys, requiredEnabled: []).enabled
         XCTAssertFalse(visible.contains("server:1"))
@@ -229,6 +233,50 @@ final class NavigationRailPlanTests: XCTestCase {
         XCTAssertTrue(NavigationDestinationDefaults.iPhoneOverflowKeys(visible: visible).contains("server:18"))
     }
 
+
+    func testMobileAllLibrariesRequiresMultipleVideoLibrariesAndRemainsArrangeable() {
+        let movies = library("movies", title: "Movies", account: "plex")
+        let shows = library("shows", title: "Shows", account: "jellyfin", kind: .series)
+        let music = library("music", title: "Music", account: "plex", isMusic: true)
+        let key = NavigationLibraryLayout.allLibrariesKey
+        XCTAssertFalse(NavigationDestinationDefaults.iOS(visibleLibraries: []).contains(key))
+        XCTAssertFalse(NavigationDestinationDefaults.iOS(visibleLibraries: [movies, music]).contains(key))
+        let available = NavigationDestinationDefaults.iOS(visibleLibraries: [movies, shows, music])
+        let layout = NavigationLibraryLayout(order: [key, NavigationLibraryLayout.homeKey], hiddenKeys: [movies.key])
+        XCTAssertEqual(layout.visibleKeys(available: available).first, key)
+        let hidden = NavigationLibraryLayout(hiddenKeys: [key])
+        XCTAssertFalse(hidden.visibleKeys(available: available).contains(key))
+    }
+
+    func testMobileLibrariesStayOptInAndMoreRequiresSixExplicitPages() throws {
+        let libraries = (0..<20).map { library("\($0)", title: "Library \($0)", account: "server") }
+        let available = NavigationDestinationDefaults.iOS(visibleLibraries: libraries)
+        let automatic = NavigationDestinationDefaults.iOSAutomaticallyHiddenKeys(available: available)
+        var layout = NavigationLibraryLayout.default
+        func sections() -> OrderedVisibilityList.Sections<String> {
+            layout.resolvingAutomaticVisibility(hidden: automatic).sections(available: available, requiredEnabled: [])
+        }
+        XCTAssertEqual(sections().enabled, NavigationDestinationDefaults.iOSDefaultVisibleKeys)
+        XCTAssertTrue(sections().disabled.contains(NavigationLibraryLayout.allLibrariesKey))
+        for additions in [
+            [NavigationLibraryLayout.allLibrariesKey, "server:0"],
+            [NavigationLibraryLayout.allLibrariesKey, "server:0", NavigationLibraryLayout.watchlistKey]
+        ] {
+            let enabled = NavigationDestinationDefaults.iOSDefaultVisibleKeys + additions
+            layout.apply(.init(enabled: enabled, disabled: available.filter { !enabled.contains($0) }),
+                         available: available, requiredEnabled: [], automaticallyHiddenKeys: automatic)
+            layout = try JSONDecoder().decode(NavigationLibraryLayout.self, from: JSONEncoder().encode(layout))
+            XCTAssertEqual(sections().enabled, enabled)
+            XCTAssertEqual(NavigationDestinationDefaults.iPhoneOverflowKeys(visible: sections().enabled),
+                           enabled.count == 5 ? [] : Set(enabled.dropFirst(4)))
+        }
+        let expanded = available + ["server:new"]
+        XCTAssertTrue(layout.resolvingAutomaticVisibility(
+            hidden: NavigationDestinationDefaults.iOSAutomaticallyHiddenKeys(available: expanded)
+        ).sections(available: expanded, requiredEnabled: []).disabled.contains("server:new"))
+        layout = .default
+        XCTAssertEqual(sections().enabled, NavigationDestinationDefaults.iOSDefaultVisibleKeys)
+    }
 
     private func library(
         _ id: String,
@@ -274,6 +322,7 @@ final class NavigationRailPlanTests: XCTestCase {
         var expected = [
             NavigationLibraryLayout.homeKey,
             NavigationLibraryLayout.tonightKey,
+            NavigationLibraryLayout.discoverKey,
             NavigationLibraryLayout.watchlistKey,
         ]
         expected.append(NavigationLibraryLayout.liveTVKey)
@@ -470,6 +519,7 @@ final class NavigationRailPlanTests: XCTestCase {
     func testAllHiddenDestinationsStillRenderAndFallBackToSettings() {
         var hidden: Set<String> = [
             NavigationLibraryLayout.homeKey,
+            NavigationLibraryLayout.discoverKey,
             NavigationLibraryLayout.searchKey,
             NavigationLibraryLayout.watchlistKey,
             NavigationLibraryLayout.tonightKey,

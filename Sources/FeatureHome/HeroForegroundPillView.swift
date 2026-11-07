@@ -117,7 +117,7 @@ final class HeroForegroundPillView: UIView {
     private let vPadding: CGFloat = 18
     private let glyphTextGap: CGFloat = 12
     private let glyphSize: CGFloat = 30
-    /// Half the former 150 — the resume trailing now also carries the "S5, E12 • "
+    /// Half the former 150 — the resume trailing now also carries the "S5 E12 • "
     /// prefix, so a shorter bar keeps the pill from growing over-wide. Mirrors
     /// `PlayResumeButtonLabel.capsuleWidth`.
     private let barWidth: CGFloat = 75
@@ -267,6 +267,9 @@ final class HeroForegroundPillView: UIView {
             layoutIfNeeded()
         }
         coordinator.addCoordinatedAnimations({ self.applyLift() })
+        if selected {
+            HeroFocusDiagnostics.entry("hero-highlight-applied")
+        }
     }
 
     /// Re-reads the real focus state, for the case a hop onto an edge catcher

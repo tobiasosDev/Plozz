@@ -812,8 +812,8 @@ of 32 entries and 24 MB; weak source references avoid pinning decoded artwork,
 and an identity check rejects recycled object identifiers. Recreated lazy cards
 can reuse completed pixels instead of rendering the reflection again.
 On tvOS these are concrete, unrounded pixels. Adaptive logo dimming and the
-resume/progress scrim are composited with the picture before its one final
-rounded mask, not hosted on UIKit's nearer overlay plane. That avoids the
+resume/progress scrim are composited with the opaque picture before UIKit applies
+its native outer shape, not hosted on UIKit's nearer overlay plane. That avoids the
 focused dark outline without rerendering the reflection when legibility changes.
 The logo and resume controls stay live, and Continue Watching has no top watch
 mark. Hosted coverage compares pixels just outside all four artwork edges with
@@ -822,8 +822,8 @@ and without the live overlay, and checks the unchanged logo and resume positions
 Focus-only caption movement changes transforms and colors, not intrinsic row
 geometry. Native focus presentation and artwork clipping are separate:
 `TVCardView` still needs clips around artwork nested above captions, while
-shared native posters bake rounded alpha into their normalized artwork and
-clip live overlays to the same shape. The hosted framed/landscape return
+shared native posters use opaque normalized artwork and UIKit-owned corners.
+The hosted framed/landscape return
 regression checks the actual painted artwork bounds.
 
 For corner artifacts, check fractional raster dimensions at 2x first.
@@ -848,18 +848,20 @@ configuration did not preserve both the no-crop composition and clean highlight.
 The `TVCardView` trial removed the desired moving sheen and was rejected.
 Do not modify private UIKit layers or compensate with per-frame transforms.
 
-Portrait row posters and native Browse cells retain the native image effect with its rectangular
+Portrait, landscape, square, Continue Watching and native Browse cards retain the native image effect with its rectangular
 focus mask and the explicitly accepted small internal crop. Hosted measurements
 at 200-320pt widths show about 1-2% extra enlargement inside the visible frame.
 Their source bitmaps and placeholders are fully opaque rectangles, as required
 by UIKit's non-content-masked mode. UIKit owns the only outer corner shape.
 Retaining baked rounded-alpha corners underneath that surface left competing
-artwork/highlight silhouettes; transparent portrait sources now receive a dark
+artwork/highlight silhouettes; transparent sources now receive a dark
 backing before composition. No clipping view or per-frame mask is added.
-Continue Watching and landscape/square artwork keep their alpha-masked
-no-internal-zoom path. Rows and Browse share `NativePosterImageView`; the existing
+Rows and Browse share `NativePosterImageView`; the existing
 UIButton or collection cell remains the sole focus owner. There is no card
 ancestor or custom animation.
+Home library covers use the same rectangular focus surface. Server artwork with
+transparent reflections is flattened onto the shared opaque backing for native TV
+presentation only; cached source pixels and mobile/custom focus styles are unchanged.
 Count-tile backgrounds stay flush. The original 2pt trailing/aspect-scaled top
 padding adjustment was baked into the whole image. Applying it permanently made
 resting digits uneven. Switching images at focus changes fixed the padding but
@@ -868,7 +870,7 @@ motion but caused the reported late number jump; that delay was deliberately
 introduced by the completion callback, not evidence of slow rendering.
 
 The current path never changes the artwork image for focus. Count backgrounds
-and corner flags stay baked, while portrait count digits and floating badges use
+and corner flags stay baked, while count digits and floating badges at every aspect use
 a separate cached foreground on the public `UIImageView.overlayContentView`.
 Only that foreground's geometry is normalized against the public artwork viewport
 and overlay projection. Model/destination transforms are used, not presentation
@@ -882,8 +884,7 @@ Background and foreground pixels reuse the same 24 MiB/64-entry indicator cache.
 The layer role, rather than focus, participates in the key. Environment overrides
 stay inside the full environment injection. Stable layouts and focus changes
 reuse both images; data/size/environment changes invalidate the appropriate pixels.
-Continue Watching, landscape/square artwork and mobile stay on the
-combined rendering path.
+Mobile stays on the combined rendering path.
 
 The library header retains its scrolling offset while another page covers the
 library. Disappearance is not a scroll-to-top event; resetting then overlays
@@ -925,7 +926,10 @@ a surrounding band of tile background at every offset.
 highlight's spatial brightness to move left/right on gray artwork: differing
 screenshots alone would also pass when only the card moves, as the trial did.
 Shared aspect-ratio checks retain a 1-point landmark tolerance and explicitly
-allow only the small portrait crop. Actual Siri Remote feel still needs physical
+allow only the small native crop across all shapes.
+`testNativeLandscapeAndSquareCardsKeepMovingHighlightAndContainedCounts` covers
+moving native sheen and badge containment for Continue Watching, 16:9 and square
+artwork with the same public motion-effect fixture. Actual Siri Remote feel still needs physical
 acceptance; a simulator render is not that acceptance.
 
 For horizontal cards disappearing early, inspect actual rendered pixels as
@@ -945,7 +949,7 @@ published through a second observable state after construction, so even warmed
 cards first created placeholder artwork and then updated the native view.
 The direct bitmap path keeps one native view identity across loading and loaded
 states, using the same source ordering, provider policy, and progressive loading.
-Creation now shares rounded loading masks; artwork and attached status are
+Creation now shares opaque loading surfaces; artwork and attached status are
 prepared in mounted UIKit layout at the committed size, inside a per-poster
 autorelease pool. `sizeThatFits` only answers measurements. Rendering during
 SwiftUI lazy-row estimation previously generated fallback-width and proposed-width
@@ -962,6 +966,18 @@ concrete Core Graphics pixels from a bounded shared cache (24 MiB, 64 entries),
 instead of constructing and reading a new deferred SwiftUI image per card.
 The cache stores value keys and pixels, not the inherited environment or its
 view graph. Protected/extended artwork keeps its existing treatment.
+
+Do not blank completed artwork for a chrome-only update. Late logo dimming or
+changed episode counts previously replaced the picture with a gray placeholder
+until composition finished. The native poster coordinator now retains the last
+completed composition for unchanged artwork, treatment and geometry, and publishes
+the new picture with its matching badge foreground. Progressive preview-to-full
+upgrades retain pixels only within the resolver's displayed source/policy key,
+including the account-qualified artwork identity. New subjects, protected-treatment
+changes, missing sources and geometry changes still clear immediately.
+Composition regressions exercise retention, superseded requests, atomic badge
+publication and source/protection boundaries. This addresses those reproduced
+placeholder flashes, not every possible physical-device loading artifact.
 
 For startup recovery, verify the same process remains alive and responds to
 remote input on the populated page before collecting its app-data-container
@@ -1293,6 +1309,28 @@ tools/trace-device.sh --device "$DEVICE_ID" --time-limit 90s
 # tvOS only: verify the named button already has focus, then press Select ONCE.
 tools/trace-device.sh --device "$DEVICE_ID" --time-limit 120s --press-focused Movies
 ```
+For manual reproduction, the recorder now waits at **Ready to record**. The
+requested duration starts only after explicit start confirmation and the visible
+red Recording acknowledgement, not when Instruments begins preparing. Once the
+user is on the intended screen and ready, run the exact `notifyutil -p ...`
+command printed by that invocation (also retained in its temporary `ready.json`).
+Agent-driven captures must ask the user to confirm before posting it. The
+single-use notification is unique per attempt; do not reuse an earlier command.
+Readiness expires after five minutes by default (`--start-timeout` changes that
+bounded wait). `--auto-start` explicitly opts into the old immediate-start
+interaction after readiness; the verified `--press-focused` driver starts
+automatically because its exact action has already been arranged.
+
+Instruments may collect preparation/waiting samples before the requested window.
+The report retains the window's start/end epochs, duration, and its start offset
+after the recorder-ready notification. Export verification aligns the confirmed
+window with the trace start and excludes setup samples from the app CPU summary;
+an empty requested window is not a verified capture. Do not treat the whole
+trace as user interaction. An outer Instruments time limit bounds preparation plus the window,
+while the helper requests stop only after the complete post-acknowledgement
+window. An early exit or disconnect cannot pass merely because setup produced
+a long trace. **Saving recording** is not success: only validated exported data
+produces **Recording finished**.
 The device is explicit (CoreDevice ID, hardware ID, or name); the helper resolves
 its hardware ID and takes a per-device lock shared across worktrees. It verifies
 the installed app and live PID, never launches/replaces Plozz, and never resets
@@ -1301,8 +1339,10 @@ runner, rejects app-bound runner metadata, and rechecks the exact focused label
 before input. It does not navigate to the control for you.
 
 **Do not tell someone to reproduce while the recorder is merely starting.**
-Current local Debug builds show a non-focusable status badge on tvOS and iOS:
-preparing (wait), **Recording** with a red dot (ready), and finished/failed. The helper requires
+Current local Debug builds show a non-focusable, input-transparent scene-level
+status badge above app content on tvOS and iOS, including full-screen playback
+and secondary app windows: preparing (wait), ready (confirm start),
+**Recording** with a red dot (perform the action), saving, and finished/failed. The helper requires
 the app's visible-status acknowledgement, the recorder's Darwin start
 notification, and five seconds without an early disconnect before authorizing
 input. Heartbeats maintain the badge; a missing heartbeat expires it after
@@ -2216,6 +2256,56 @@ xcrun devicectl device copy from --device <UDID> \
   --source Library/Caches/Plozz/playback-trace.log --destination /tmp/trace.log
 grep "vm LIFECYCLE" /tmp/trace.log     # healthy: every init has a deinit, ends live=0
 ```
+
+In diagnostic builds with handoff tracing enabled, text is appended on a utility
+queue rather than rereading and replacing the journal for each event. The current
+`playback-trace.log` and `.1.log`, `.2.log`, `.3.log` rotations each retain up to
+1 MiB (oldest is `.3.log`). Records end at UTF-8/line boundaries and are capped at
+16 KiB. Pending writes are bounded to 256 KiB / 512 records; overflow and disk
+errors are reported in the `handoff` OSLog category rather than recursively logged.
+Unchanged paused pipeline samples are emitted every 30 seconds instead of every
+2 seconds; phase, attempt, route, audio and subtitle changes still emit promptly.
+
+Typed playback failures (including preparation), startup timeouts and unavailable
+engines also freeze the preceding trace with a session/attempt marker in
+`playback-failure.log`, retaining two older snapshots as `playback-failure.1.log`
+and `playback-failure.2.log`. Each is at most 512 KiB. A successful retry does not
+replace these snapshots. Copy these files using the same command with the source
+and destination filenames changed; missing rotations simply mean they have not
+been created yet. Read trace rotations oldest to newest. Correlate failure markers
+with `Library/Application Support/Plozz/Diagnostics/playback.json` for typed
+failure details. These are cache files, not a crash-proof archive: queued writes
+can be lost at termination and the OS can evict caches.
+
+Offline-download diagnostics use the same gated journal. Filter `download ` for
+attempts, managed-source resolution, transfer mode, Plex rendition validation,
+and failures. Keys are hashed; URLs and credential assignments in error details
+are redacted. Failure records include native error domain/code and one underlying
+error code. The mobile catalog also records existing failed entries once when
+loaded, so inspecting an earlier failure does not require restarting its transfer.
+These markers do not change download retries, persistence, or network policy.
+
+The existing in-process text snapshot remains limited to 64 KiB. This larger
+local retention does not change diagnostic consent, enable persistent text in
+non-diagnostic builds, or attach raw traces to Sentry/manual structured reports.
+
+**Send to Developer** includes a separate, Release-capable
+`playback.failureSnapshots` array in `plozz-diagnostics.json` (playback schema 3).
+It preserves the last three failed attempts independently of the ordinary
+256-event journal, with up to 64 events / 64 KiB per snapshot and a 384 KiB
+combined on-disk bound. Startup failures and engine unavailability also create
+snapshots; a timeout and typed failure for the same attempt share one snapshot.
+Late native evidence and teardown events remain attached to that original attempt,
+not the successful retry. Snapshots survive relaunch but expire after 48 hours.
+
+Snapshots export only the existing typed playback vocabulary plus numeric
+buffer, frame, bitrate and cache telemetry captured at failure events.
+There is no new periodic sampling or release text logging. Session/attempt IDs
+are remapped consistently within each submission; times become relative ages.
+Titles, URLs, paths, credentials, engine descriptions and raw trace files are
+never added. Existing crash-sharing consent and explicit submission are still
+required, automatic reports are unchanged, and success still means SDK handoff
+rather than confirmed Sentry receipt.
 
 `CFGetRetainCount(self)` at teardown tells you HOW MANY owners remain (one
 stubborn owner vs a race) but never WHO. Only the memory graph answers who.

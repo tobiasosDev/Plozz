@@ -66,6 +66,12 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
     /// re-establish context. `.five` by default; `.off` restores exact resume.
     public var resumeRewindInterval: ResumeRewindInterval
 
+    public var askBeforeResuming: Bool
+
+    public func shouldAskBeforeResuming(at position: TimeInterval?, fromBeginning: Bool = false) -> Bool {
+        askBeforeResuming && !fromBeginning && (position ?? 0) > 1
+    }
+
     /// iOS only. Keep video audio playing on lock/app background without PiP.
     /// Opt-in so existing profiles retain pause-on-lock behavior.
     public var backgroundAudio: Bool
@@ -154,16 +160,6 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
     /// `.original`, `false` → `.device`), migrated in the decoder below.
     public var audioLanguagePreference: AudioLanguagePreference
 
-    /// Spatial conversion for supported tvOS on-demand sessions. Keep the original
-    /// key so saved Off choices and transferred profile preferences survive.
-    public var trueHDAtmosEnabled: Bool
-
-    /// Profile 7 FEL reconstruction, which keeps the enhancement layer's residual
-    /// instead of discarding it in a Profile 8.1 conversion. On by default; applies
-    /// to new on-demand sessions the engine judges eligible. Where spatial
-    /// conversion is unavailable, those sessions use channel-based audio.
-    public var dolbyVisionFELEnabled: Bool
-
     /// Remember the chosen **audio language** per series: switching audio on any
     /// episode makes that language stick for every other episode of that series
     /// (per profile). Stored by language, re-resolved to a concrete track per
@@ -173,6 +169,17 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
     /// Remember the chosen **subtitle language (or Off)** per series, the subtitle
     /// counterpart to `rememberAudioTrackPerSeries`. ON by default.
     public var rememberSubtitleTrackPerSeries: Bool
+
+    /// Listen to the playing audio with ShazamKit and show the song in the
+    /// player's Info card (#351). Per profile, ON by default.
+    public var identifySongs: Bool
+
+    /// Optional player tabs, per profile. Availability still depends on content.
+    public var chaptersInPlayer: Bool
+    public var castInPlayer: Bool
+    public var episodesInPlayer: Bool
+    public var playlistInPlayer: Bool
+    public var continueWatchingInPlayer: Bool
 
     /// Fade to black around the HDMI handshake the TV performs when the **dynamic
     /// range** changes (SDR ⇄ HDR10 / HLG / Dolby Vision) — i.e. what tvOS calls
@@ -202,6 +209,7 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
         skipBackwardInterval: SkipInterval = .ten,
         skipForwardInterval: SkipInterval = .ten,
         resumeRewindInterval: ResumeRewindInterval = .five,
+        askBeforeResuming: Bool = false,
         syncWatchAcrossServers: Bool = true,
         seekWithoutPausing: Bool = true,
         autoPlayNextEpisode: Bool = true,
@@ -209,10 +217,14 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
         showUpNextCard: Bool = true,
         upNextLeadSeconds: Int = 30,
         audioLanguagePreference: AudioLanguagePreference = .original,
-        trueHDAtmosEnabled: Bool = true,
-        dolbyVisionFELEnabled: Bool = true,
         rememberAudioTrackPerSeries: Bool = true,
         rememberSubtitleTrackPerSeries: Bool = true,
+        identifySongs: Bool = true,
+        chaptersInPlayer: Bool = true,
+        castInPlayer: Bool = true,
+        episodesInPlayer: Bool = true,
+        playlistInPlayer: Bool = true,
+        continueWatchingInPlayer: Bool = true,
         fadeOnDynamicRangeChange: Bool = true,
         fadeOnFrameRateChange: Bool = true,
         backgroundAudio: Bool = false,
@@ -240,6 +252,7 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
         self.skipBackwardInterval = skipBackwardInterval
         self.skipForwardInterval = skipForwardInterval
         self.resumeRewindInterval = resumeRewindInterval
+        self.askBeforeResuming = askBeforeResuming
         self.syncWatchAcrossServers = syncWatchAcrossServers
         self.seekWithoutPausing = seekWithoutPausing
         self.autoPlayNextEpisode = autoPlayNextEpisode
@@ -247,10 +260,14 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
         self.showUpNextCard = showUpNextCard
         self.upNextLeadSeconds = upNextLeadSeconds
         self.audioLanguagePreference = audioLanguagePreference
-        self.trueHDAtmosEnabled = trueHDAtmosEnabled
-        self.dolbyVisionFELEnabled = dolbyVisionFELEnabled
         self.rememberAudioTrackPerSeries = rememberAudioTrackPerSeries
         self.rememberSubtitleTrackPerSeries = rememberSubtitleTrackPerSeries
+        self.identifySongs = identifySongs
+        self.chaptersInPlayer = chaptersInPlayer
+        self.castInPlayer = castInPlayer
+        self.episodesInPlayer = episodesInPlayer
+        self.playlistInPlayer = playlistInPlayer
+        self.continueWatchingInPlayer = continueWatchingInPlayer
         self.fadeOnDynamicRangeChange = fadeOnDynamicRangeChange
         self.fadeOnFrameRateChange = fadeOnFrameRateChange
         self.backgroundAudio = backgroundAudio
@@ -408,6 +425,7 @@ public extension PlaybackSettings {
         case skipBackwardInterval
         case skipForwardInterval
         case resumeRewindInterval
+        case askBeforeResuming
         case backgroundAudio
         case volumeBrightnessGestures
         case orientation
@@ -422,15 +440,17 @@ public extension PlaybackSettings {
         case showUpNextCard
         case upNextLeadSeconds
         case audioLanguagePreference
-        case trueHDAtmosEnabled
-        /// The off-by-default experiment stored `dolbyVisionFELEnabled`; that key is
-        /// retired so profiles which only saved its default adopt lossless Profile 7.
-        case dolbyVisionFELEnabled = "dolbyVisionLosslessFEL"
         /// Legacy boolean predecessor of `audioLanguagePreference`, still read for
         /// migration (`true` → `.original`, `false` → `.device`).
         case preferOriginalLanguageAudio
         case rememberAudioTrackPerSeries
         case rememberSubtitleTrackPerSeries
+        case identifySongs
+        case chaptersInPlayer
+        case castInPlayer
+        case episodesInPlayer
+        case playlistInPlayer
+        case continueWatchingInPlayer
         case fadeOnDynamicRangeChange
         case fadeOnFrameRateChange
     }
@@ -450,11 +470,7 @@ public extension PlaybackSettings {
     /// `resumeRewindInterval` defaults to `.five` when absent — the maintainer
     /// wants the resume-rewind nudge on for upgrading installs too, not just fresh
     /// ones (`.off` is available for anyone who prefers exact resume).
-    /// Spatial audio defaults on when absent, while an existing Off choice survives.
-    /// Profile 7 FEL reconstruction defaults on when absent. The retired
-    /// experimental `dolbyVisionFELEnabled` key is ignored, including in imported
-    /// profiles: every saved profile wrote its Off default, and an opt-in already
-    /// matches the new default.
+    /// Retired height-conversion and FEL preferences are ignored in older payloads.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = PlaybackSettings.default
@@ -516,6 +532,8 @@ public extension PlaybackSettings {
             (try? container.decodeIfPresent(ResumeRewindInterval.self, forKey: .resumeRewindInterval))
             .flatMap { $0 } ?? defaults.resumeRewindInterval
         self.backgroundAudio = try container.decodeIfPresent(Bool.self, forKey: .backgroundAudio) ?? false
+        self.askBeforeResuming = try container.decodeIfPresent(Bool.self, forKey: .askBeforeResuming)
+            ?? defaults.askBeforeResuming
         self.volumeBrightnessGestures =
             try container.decodeIfPresent(Bool.self, forKey: .volumeBrightnessGestures)
             ?? defaults.volumeBrightnessGestures
@@ -557,18 +575,30 @@ public extension PlaybackSettings {
         } else {
             self.audioLanguagePreference = defaults.audioLanguagePreference
         }
-        self.trueHDAtmosEnabled =
-            (try? container.decodeIfPresent(Bool.self, forKey: .trueHDAtmosEnabled))
-            .flatMap { $0 } ?? defaults.trueHDAtmosEnabled
-        self.dolbyVisionFELEnabled =
-            (try? container.decodeIfPresent(Bool.self, forKey: .dolbyVisionFELEnabled))
-            .flatMap { $0 } ?? defaults.dolbyVisionFELEnabled
         self.rememberAudioTrackPerSeries =
             (try? container.decodeIfPresent(Bool.self, forKey: .rememberAudioTrackPerSeries))
             .flatMap { $0 } ?? defaults.rememberAudioTrackPerSeries
         self.rememberSubtitleTrackPerSeries =
             (try? container.decodeIfPresent(Bool.self, forKey: .rememberSubtitleTrackPerSeries))
             .flatMap { $0 } ?? defaults.rememberSubtitleTrackPerSeries
+        self.identifySongs =
+            (try? container.decodeIfPresent(Bool.self, forKey: .identifySongs))
+            .flatMap { $0 } ?? defaults.identifySongs
+        self.chaptersInPlayer =
+            (try? container.decodeIfPresent(Bool.self, forKey: .chaptersInPlayer))
+            .flatMap { $0 } ?? defaults.chaptersInPlayer
+        self.castInPlayer =
+            (try? container.decodeIfPresent(Bool.self, forKey: .castInPlayer))
+            .flatMap { $0 } ?? defaults.castInPlayer
+        self.episodesInPlayer =
+            (try? container.decodeIfPresent(Bool.self, forKey: .episodesInPlayer))
+            .flatMap { $0 } ?? defaults.episodesInPlayer
+        self.playlistInPlayer =
+            (try? container.decodeIfPresent(Bool.self, forKey: .playlistInPlayer))
+            .flatMap { $0 } ?? defaults.playlistInPlayer
+        self.continueWatchingInPlayer =
+            (try? container.decodeIfPresent(Bool.self, forKey: .continueWatchingInPlayer))
+            .flatMap { $0 } ?? defaults.continueWatchingInPlayer
         // Both fades default to `true` when absent so installs that predate the
         // toggles keep (dynamic range) / gain (frame rate) the smooth transition.
         self.fadeOnDynamicRangeChange =
@@ -607,6 +637,7 @@ public extension PlaybackSettings {
         try container.encode(skipBackwardInterval, forKey: .skipBackwardInterval)
         try container.encode(skipForwardInterval, forKey: .skipForwardInterval)
         try container.encode(resumeRewindInterval, forKey: .resumeRewindInterval)
+        try container.encode(askBeforeResuming, forKey: .askBeforeResuming)
         try container.encode(backgroundAudio, forKey: .backgroundAudio)
         try container.encode(volumeBrightnessGestures, forKey: .volumeBrightnessGestures)
         try container.encode(orientation, forKey: .orientation)
@@ -620,10 +651,14 @@ public extension PlaybackSettings {
         try container.encode(showUpNextCard, forKey: .showUpNextCard)
         try container.encode(upNextLeadSeconds, forKey: .upNextLeadSeconds)
         try container.encode(audioLanguagePreference, forKey: .audioLanguagePreference)
-        try container.encode(trueHDAtmosEnabled, forKey: .trueHDAtmosEnabled)
-        try container.encode(dolbyVisionFELEnabled, forKey: .dolbyVisionFELEnabled)
         try container.encode(rememberAudioTrackPerSeries, forKey: .rememberAudioTrackPerSeries)
         try container.encode(rememberSubtitleTrackPerSeries, forKey: .rememberSubtitleTrackPerSeries)
+        try container.encode(identifySongs, forKey: .identifySongs)
+        try container.encode(chaptersInPlayer, forKey: .chaptersInPlayer)
+        try container.encode(castInPlayer, forKey: .castInPlayer)
+        try container.encode(episodesInPlayer, forKey: .episodesInPlayer)
+        try container.encode(playlistInPlayer, forKey: .playlistInPlayer)
+        try container.encode(continueWatchingInPlayer, forKey: .continueWatchingInPlayer)
         try container.encode(fadeOnDynamicRangeChange, forKey: .fadeOnDynamicRangeChange)
         try container.encode(fadeOnFrameRateChange, forKey: .fadeOnFrameRateChange)
     }

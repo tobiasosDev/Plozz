@@ -18,9 +18,9 @@ struct PlozziOSServersSettingsView: View {
 
     var body: some View {
         SettingsPageList {
-            SettingsSectionGroup("Servers") {
+            SettingsSectionGroup(SettingsCopy.sources) {
                 if groups.isEmpty {
-                    Text("You’re not signed in to any servers yet.")
+                    Text("No sources have been added yet.")
                         .plozzForeground(.secondary)
                 } else {
                     ForEach(groups, id: \.serverKey) { group in
@@ -34,7 +34,7 @@ struct PlozziOSServersSettingsView: View {
                         } label: {
                             serverRowLabel(group)
                         }
-                        .buttonStyle(.plain)
+                        .settingsActionRow()
                     }
                 }
             } footer: {
@@ -42,21 +42,18 @@ struct PlozziOSServersSettingsView: View {
             }
 
             SettingsSectionGroup {
-                Button("Add Server", systemImage: "plus", action: onAddServer)
-                NavigationLink {
-                    PlozziOSAddShareView(appModel: appModel)
-                } label: {
-                    HStack(spacing: 12) {
-                        ProviderBrandMark(
-                            provider: .mediaShare,
-                            size: 24
-                        )
-                        Text("Add Network Share")
+                Button(action: onAddServer) {
+                    Label {
+                        Text(SettingsCopy.addSource)
+                    } icon: {
+                        Image(systemName: "plus")
                     }
                 }
+                .settingsActionRow()
+                .accessibilityIdentifier("sources-add-source")
             }
         }
-        .navigationTitle("Servers")
+        .navigationTitle(Text(SettingsCopy.sources))
         .navigationDestination(item: $selectedServerKey) { key in
             PlozziOSServerSettingsDetailView(appModel: appModel, serverKey: key)
         }
@@ -137,7 +134,7 @@ private struct PlozziOSServerSettingsDetailView: View {
                             }
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .settingsActionRow()
                     }
                 } footer: {
                     Text("Removing a sign-in affects every profile on this \(deviceName).")
@@ -149,6 +146,7 @@ private struct PlozziOSServerSettingsDetailView: View {
                             Button("Edit connection", systemImage: "pencil") {
                                 providerSetupRouter.connectIPTV(account: account)
                             }
+                            .settingsActionRow()
                         }
                     }
                 }
@@ -165,6 +163,7 @@ private struct PlozziOSServerSettingsDetailView: View {
                         Button("Remove Server", role: .destructive) {
                             confirmRemoveServer = true
                         }
+                        .settingsActionRow()
                     } footer: {
                         Text("Signs out every account on \(group.serverName).")
                     }
@@ -269,17 +268,56 @@ struct PlozziOSMyLibrariesSettingsView: View {
         appModel.profiles.activeProfileID
     }
 
+    private func searchGroup(for target: String) -> ServerAccountGroup? {
+        let candidates = groups.filter {
+            target == "watcher-plex-user" ? $0.providerKind == .plex
+                : target == "watcher-server-user" ? $0.providerKind != .mediaShare : true
+        }
+        return candidates.first(where: isWatching) ?? candidates.first
+    }
+
+    private func searchTargets(for group: ServerAccountGroup) -> [String] {
+        let dependentTargets = ["profile-library-inclusion", "watcher-server-user", "watcher-plex-user"].filter {
+            searchGroup(for: $0)?.serverKey == group.serverKey
+        }
+        return (group.serverKey == groups.first?.serverKey ? ["profile-source-inclusion"] : []) + dependentTargets
+    }
+
+    @Environment(SettingsSearchRequest.self) private var searchRequest: SettingsSearchRequest?
+
     var body: some View {
         SettingsPageList {
+            if searchRequest?.targetID == "watcher-plex-user",
+               searchGroup(for: "watcher-plex-user") == nil {
+                Text("Add a Plex server to choose a Plex user.")
+                    .settingsSearchAnchor("watcher-plex-user")
+            } else if searchRequest?.targetID == "watcher-server-user",
+                      searchGroup(for: "watcher-server-user") == nil {
+                Text("Add a media server to choose who you watch as.")
+                    .settingsSearchAnchor("watcher-server-user")
+            }
             if groups.isEmpty {
                 SettingsSectionGroup {
-                    Text("No servers are available on this \(deviceName).")
+                    Text("No sources are available on this \(deviceName).")
                         .plozzForeground(.secondary)
-                    Button("Add Server", systemImage: "plus", action: onAddServer)
                 }
             } else {
                 ForEach(groups, id: \.serverKey) { group in
                     serverGroup(group)
+                }
+            }
+            if presentation == .settings || groups.isEmpty {
+                SettingsSectionGroup {
+                    Button(action: onAddServer) {
+                        Label {
+                            Text(SettingsCopy.addSource)
+                        } icon: {
+                            Image(systemName: "plus")
+                        }
+                    }
+                    .accessibilityIdentifier("libraries-add-source")
+                } footer: {
+                    Text("New sources are available to every profile on this \(deviceName).")
                 }
             }
         }
@@ -347,6 +385,11 @@ struct PlozziOSMyLibrariesSettingsView: View {
                     Text(group.serverName)
                 }
             }
+            .settingsSearchAnchor(
+                group.serverKey == groups.first?.serverKey
+                    ? "profile-source-inclusion" : "profile-source-\(group.serverKey)",
+                fallbackFor: isWatching(group) ? [] : searchTargets(for: group)
+            )
 
             if isWatching(group) {
                 identityControl(for: group)
@@ -397,17 +440,22 @@ struct PlozziOSMyLibrariesSettingsView: View {
                     // switches here made "watch this server" and "show this
                     // library" look like the same kind of decision.
                     ForEach(librariesForActiveIdentity(in: group)) { library in
-                        libraryCheckRow(library)
+                        libraryCheckRow(
+                            library,
+                            isSearchTarget: group.serverKey == searchGroup(for: "profile-library-inclusion")?.serverKey
+                                && library.id == librariesForActiveIdentity(in: group).first?.id
+                        )
                     }
                 }
             }
         } footer: {
             Text("Saved for profile “\(appModel.profiles.activeProfile.name)”.")
         }
+        .settingsSearchGroup(searchTargets(for: group))
     }
 
     /// One library, as a checkmark child of its server's master switch.
-    private func libraryCheckRow(_ library: ProfileLibraryChoice) -> some View {
+    private func libraryCheckRow(_ library: ProfileLibraryChoice, isSearchTarget: Bool) -> some View {
         let isOn = appModel.settings.homeVisibility.isVisibleOnHome(library.key, library: library.library)
         return Button {
             appModel.settings.homeVisibility.setEnabled(!isOn, for: library.key)
@@ -420,14 +468,17 @@ struct PlozziOSMyLibrariesSettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .settingsActionRow()
         .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+        .settingsSearchAnchor(
+            isSearchTarget ? "profile-library-inclusion" : "profile-library-\(library.id)"
+        )
     }
 
     @ViewBuilder
     private func identityControl(for group: ServerAccountGroup) -> some View {
         if group.providerKind == .plex, let account = activeAccount(in: group) {
-            NavigationLink {
+            SettingsPageLink {
                 PlozziOSPlexHomeUserSettingsView(
                     appModel: appModel,
                     account: account
@@ -441,6 +492,13 @@ struct PlozziOSMyLibrariesSettingsView: View {
                     Text(plexIdentityName(for: account))
                 }
             }
+            .settingsActionRow()
+            .settingsSearchAnchor(
+                group.serverKey == searchGroup(for: "watcher-plex-user")?.serverKey
+                    ? "watcher-plex-user" : "watcher-plex-\(group.serverKey)",
+                fallbackFor: group.serverKey == searchGroup(for: "watcher-server-user")?.serverKey
+                    ? ["watcher-server-user"] : []
+            )
         } else if group.providerKind != .mediaShare, group.accounts.count > 1 {
             Picker(
                 "Watching as",
@@ -454,6 +512,10 @@ struct PlozziOSMyLibrariesSettingsView: View {
                         .tag(account.id)
                 }
             }
+            .settingsSearchAnchor(
+                group.serverKey == searchGroup(for: "watcher-server-user")?.serverKey
+                    ? "watcher-server-user" : "watcher-server-\(group.serverKey)"
+            )
         }
         addUserButton(group)
     }

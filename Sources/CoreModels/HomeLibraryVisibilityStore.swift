@@ -235,6 +235,16 @@ public final class HomeLibraryVisibilityModel {
         store.save(visibility)
     }
 
+    public func setEmptyHomeRowDismissed(_ dismissed: Bool, id: HomeRowID) {
+        guard visibility.dismissedEmptyHomeRows.contains(id) != dismissed else { return }
+        if dismissed {
+            visibility.dismissedEmptyHomeRows.insert(id)
+        } else {
+            visibility.dismissedEmptyHomeRows.remove(id)
+        }
+        store.save(visibility)
+    }
+
     public func setHomeSectionVisible(
         _ visible: Bool, id: HomeRowID, catalog: HomeSectionCatalog
     ) throws {
@@ -362,6 +372,12 @@ public final class HomeLibraryVisibilityModel {
     public func setMergeNextUpIntoContinueWatching(_ merge: Bool) {
         guard visibility.mergeNextUpIntoContinueWatching != merge else { return }
         visibility.mergeNextUpIntoContinueWatching = merge
+        store.save(visibility)
+    }
+
+    public func setHideWatchedRecentlyAdded(_ hide: Bool) {
+        guard visibility.hideWatchedRecentlyAdded != hide else { return }
+        visibility.hideWatchedRecentlyAdded = hide
         store.save(visibility)
     }
 

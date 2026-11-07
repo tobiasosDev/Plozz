@@ -47,6 +47,7 @@ extension EnvironmentValues {
 public struct FallbackAsyncImage<Content: View, Placeholder: View>: View {
     private let references: [ArtworkReference]
     private let prefersPrimaryReference: Bool
+    private let prefersLandscape: Bool
     private let maxAspectRatio: CGFloat?
     private let variant: ArtworkImageVariant
     private let previewVariant: ArtworkImageVariant?
@@ -62,6 +63,7 @@ public struct FallbackAsyncImage<Content: View, Placeholder: View>: View {
     public init(
         references: [ArtworkReference],
         prefersPrimaryReference: Bool = false,
+        prefersLandscape: Bool = false,
         maxAspectRatio: CGFloat? = nil,
         variant: ArtworkImageVariant = .original,
         previewVariant: ArtworkImageVariant? = nil,
@@ -75,6 +77,7 @@ public struct FallbackAsyncImage<Content: View, Placeholder: View>: View {
     ) {
         self.references = references
         self.prefersPrimaryReference = prefersPrimaryReference
+        self.prefersLandscape = prefersLandscape
         self.maxAspectRatio = maxAspectRatio
         self.variant = variant
         self.previewVariant = previewVariant
@@ -93,6 +96,7 @@ public struct FallbackAsyncImage<Content: View, Placeholder: View>: View {
             FilteredArtworkImage(
                 references: references,
                 prefersPrimaryReference: prefersPrimaryReference,
+                prefersLandscape: prefersLandscape,
                 maxAspectRatio: maxAspectRatio,
                 variant: variant,
                 previewVariant: previewVariant,
@@ -136,6 +140,7 @@ public struct FallbackAsyncImage<Content: View, Placeholder: View>: View {
             FilteredArtworkImage(
                 references: references,
                 prefersPrimaryReference: prefersPrimaryReference,
+                prefersLandscape: prefersLandscape,
                 maxAspectRatio: maxAspectRatio,
                 variant: variant,
                 previewVariant: previewVariant,
@@ -155,14 +160,16 @@ public struct FallbackAsyncImage<Content: View, Placeholder: View>: View {
     }
 
     /// Supplies the resolver's initial cached bitmap directly to native artwork,
-    /// retaining one content identity while an uncached image arrives.
+    /// retaining one content identity while an uncached image arrives. The key
+    /// identifies the displayed resolution, including its source/policy boundary.
     func resolvedBitmap<ResolvedContent: View>(
-        @ViewBuilder content: @escaping (UIImage?) -> ResolvedContent
+        @ViewBuilder content: @escaping (UIImage?, String?) -> ResolvedContent
     ) -> some View {
         ArtworkPolicyReader(policy: artworkPolicy) { policy in
             FilteredArtworkImage(
                 references: references,
                 prefersPrimaryReference: prefersPrimaryReference,
+                prefersLandscape: prefersLandscape,
                 maxAspectRatio: maxAspectRatio,
                 variant: variant,
                 previewVariant: previewVariant,
@@ -332,7 +339,8 @@ enum ArtworkResolveKey {
         maxAspectRatio: CGFloat?,
         pinIdentity: String?,
         providerPolicyIdentity: String = "default",
-        prefersPrimaryReference: Bool = false
+        prefersPrimaryReference: Bool = false,
+        prefersLandscape: Bool = false
     ) -> String {
         (
             [
@@ -342,6 +350,7 @@ enum ArtworkResolveKey {
                 "policy:\(providerPolicyIdentity)"
             ]
             + (prefersPrimaryReference ? ["primary-reference-first"] : [])
+            + (prefersLandscape ? ["landscape-first"] : [])
             + references.map(\.privacySafeIdentity)
         )
         .joined(separator: "\n")
@@ -419,12 +428,13 @@ enum ArtworkSeedMemo {
 
 private enum ResolvedArtworkContent<Content: View> {
     case image((Image) -> Content)
-    case bitmap((UIImage?) -> Content)
+    case bitmap((UIImage?, String?) -> Content)
 }
 
 private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
     let references: [ArtworkReference]
     let prefersPrimaryReference: Bool
+    let prefersLandscape: Bool
     let maxAspectRatio: CGFloat?
     let variant: ArtworkImageVariant
     /// A cheaper variant to show FIRST while `variant` is still decoding.
@@ -493,6 +503,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
     init(
         references: [ArtworkReference],
         prefersPrimaryReference: Bool = false,
+        prefersLandscape: Bool = false,
         maxAspectRatio: CGFloat?,
         variant: ArtworkImageVariant,
         previewVariant: ArtworkImageVariant? = nil,
@@ -509,6 +520,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
     ) {
         self.references = references
         self.prefersPrimaryReference = prefersPrimaryReference
+        self.prefersLandscape = prefersLandscape
         self.maxAspectRatio = maxAspectRatio
         self.variant = variant
         self.previewVariant = previewVariant
@@ -539,7 +551,8 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
             maxAspectRatio: maxAspectRatio,
             pinIdentity: pinIdentity,
             providerPolicyIdentity: providerPolicyIdentity,
-            prefersPrimaryReference: prefersPrimaryReference
+            prefersPrimaryReference: prefersPrimaryReference,
+            prefersLandscape: prefersLandscape
         )
         let prepared = ArtworkSeedMemo.prepared(for: memoKey, variant: variant)
         let preparedPreview = previewVariant.flatMap { preview in
@@ -547,7 +560,8 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
                 for: ArtworkResolveKey.make(
                     references: references, variant: preview, maxAspectRatio: maxAspectRatio,
                     pinIdentity: pinIdentity, providerPolicyIdentity: providerPolicyIdentity,
-                    prefersPrimaryReference: prefersPrimaryReference
+                    prefersPrimaryReference: prefersPrimaryReference,
+                    prefersLandscape: prefersLandscape
                 ),
                 variant: preview
             )
@@ -558,6 +572,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
                 references: references,
                 maxAspectRatio: maxAspectRatio,
                 variant: variant,
+                prefersLandscape: prefersLandscape,
                 stopAtPrimary: true
             ) ?? ArtworkSeedMemo.value(for: memoKey).map { (image: $0, index: references.startIndex) }
         let previewReferences: [ArtworkReference]
@@ -571,7 +586,8 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
             Self.cachedUsableImage(
                 references: previewReferences,
                 maxAspectRatio: maxAspectRatio,
-                variant: $0
+                variant: $0,
+                prefersLandscape: prefersLandscape
             )
         } : nil
         _image = State(initialValue: prepared?.image ?? seeded?.image ?? preparedPreview?.image ?? seededPreview?.image)
@@ -579,15 +595,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
         _isPreviewQuality = State(initialValue: prepared == nil && seeded == nil
             && (preparedPreview != nil || seededPreview != nil))
         _loadedKey = State(initialValue: prepared != nil || seeded?.index == references.startIndex
-            ? ArtworkResolveKey.make(
-                references: references,
-                variant: variant,
-                maxAspectRatio: maxAspectRatio,
-                pinIdentity: pinIdentity,
-                providerPolicyIdentity: providerPolicyIdentity,
-                prefersPrimaryReference: prefersPrimaryReference
-            )
-            : nil)
+            || preparedPreview != nil || seededPreview != nil ? memoKey : nil)
         _pinnedIdentity = State(initialValue: prepared != nil || seeded != nil
             || preparedPreview != nil || seededPreview != nil ? pinIdentity : nil)
         _displayedReference = State(
@@ -606,7 +614,8 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
             maxAspectRatio: maxAspectRatio,
             pinIdentity: pinIdentity,
             providerPolicyIdentity: providerPolicyIdentity,
-            prefersPrimaryReference: prefersPrimaryReference
+            prefersPrimaryReference: prefersPrimaryReference,
+            prefersLandscape: prefersLandscape
         )
     }
 
@@ -614,7 +623,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
         Group {
             switch content {
             case .bitmap(let render):
-                render(image)
+                render(image, loadedKey)
             case .image(let render):
                 if let image {
                     render(Image(uiImage: image))
@@ -659,6 +668,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
     }
 
     private func resolve() async {
+        guard !Task.isCancelled else { return }
         let key = taskKey
         let hasSamePriority = selectedPrimaryPriority == prefersPrimaryReference
         selectedPrimaryPriority = prefersPrimaryReference
@@ -679,11 +689,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
             return
         }
         let isSameSubject = pinIdentity != nil && pinnedIdentity == pinIdentity && hasSamePriority
-        if isSameSubject, image != nil, !isPreviewQuality {
-            loadedKey = key
-            return
-        }
-        if isSameSubject, image != nil, isPreviewQuality,
+        if loadedKey == key, isSameSubject, image != nil, isPreviewQuality,
            let displayedReference {
             let loaded = await ArtworkImageCache.shared.image(for: displayedReference, variant: variant)
             guard !Task.isCancelled else { return }
@@ -718,6 +724,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
                 references: references,
                 maxAspectRatio: maxAspectRatio,
                 variant: variant,
+                prefersLandscape: prefersLandscape,
                 stopAtPrimary: true
             )
         if let seeded {
@@ -765,8 +772,33 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
         }
         #endif
         guard !Task.isCancelled else { return }
-        if image == nil, prefersOnlineArtwork, asyncFallbackURL != nil {
-            let firstVariant = previewVariant ?? variant
+        if prefersLandscape {
+            for attempt in 0..<ArtworkResolveRetry.maxAttempts {
+                if let firstPaint = await ArtworkFirstPaintResolver.resolve(
+                    references: references,
+                    prefersPrimaryReference: prefersPrimaryReference,
+                    variant: image == nil ? previewVariant ?? variant : variant,
+                    maxAspectRatio: maxAspectRatio,
+                    prefersLandscape: true,
+                    asyncOnlineURL: asyncFallbackURL,
+                    prefersOnlineArtwork: prefersOnlineArtwork,
+                    sharedKey: sharedResolutionIdentity.map { "\($0)|\(providerPolicyIdentity)" }
+                ) {
+                    await adoptFirstPaint(firstPaint, for: key)
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                if attempt < ArtworkResolveRetry.maxAttempts - 1 {
+                    try? await Task.sleep(nanoseconds: ArtworkResolveRetry.delayNanoseconds)
+                }
+            }
+            guard !Task.isCancelled else { return }
+            resolved = true
+            loadedKey = key
+            return
+        }
+        if prefersOnlineArtwork, asyncFallbackURL != nil {
+            let firstVariant = image == nil ? previewVariant ?? variant : variant
             if let firstPaint = await ArtworkFirstPaintResolver.resolve(
                 references: references,
                 prefersPrimaryReference: prefersPrimaryReference,
@@ -796,6 +828,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
             image = loaded
             resolved = true
             isPreviewQuality = true
+            loadedKey = key
             pinnedIdentity = pinIdentity
             displayedReference = first
         }
@@ -809,7 +842,9 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
         for attempt in 0..<ArtworkResolveRetry.maxAttempts {
             // 1) Try provider candidates in order, skipping any that are too wide.
             for reference in references {
+                guard !Task.isCancelled else { return }
                 guard let loaded = await ArtworkImageCache.shared.image(for: reference, variant: variant) else { continue }
+                guard !Task.isCancelled else { return }
                 guard Self.usableSize(loaded, maxAspectRatio: maxAspectRatio) != nil else { continue }
                 image = loaded
                 resolved = true
@@ -824,6 +859,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
             // 2) Nothing usable from the provider — try the async fallback (TMDb).
             if let asyncFallbackURL,
                let url = await asyncFallbackURL() {
+                guard !Task.isCancelled else { return }
                 // Posterless cards have no direct `references`, so the progressive
                 // pass above has nothing to inspect. Once the fallback URL itself
                 // is known, give it the same cheap first frame as an ordinary
@@ -837,6 +873,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
                     image = preview
                     resolved = true
                     isPreviewQuality = true
+                    loadedKey = key
                     pinnedIdentity = pinIdentity
                     displayedReference = .remote(url)
                 }
@@ -844,6 +881,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
                     for: url,
                     variant: variant
                 ) {
+                    guard !Task.isCancelled else { return }
                     image = loaded
                     resolved = true
                     isPreviewQuality = false
@@ -851,7 +889,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
                     ArtworkSeedMemo.store(loaded, reference: .remote(url), for: key)
                     pinnedIdentity = pinIdentity
                     displayedReference = .remote(url)
-                    onResolveReference?(nil)
+                    onResolveReference?(.remote(url))
                     return
                 }
             }
@@ -874,6 +912,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
         image = firstPaint.image
         resolved = true
         isPreviewQuality = firstPaint.variant != variant
+        loadedKey = key
         pinnedIdentity = pinIdentity
         displayedReference = firstPaint.reference
         onResolveReference?(firstPaint.reference)
@@ -884,6 +923,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
             image = loaded
             isPreviewQuality = false
         }
+        guard !Task.isCancelled else { return }
         if !isPreviewQuality, let image {
             ArtworkSeedMemo.store(image, reference: firstPaint.reference, for: key)
         }
@@ -914,6 +954,7 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
         references: [ArtworkReference],
         maxAspectRatio: CGFloat?,
         variant: ArtworkImageVariant,
+        prefersLandscape: Bool = false,
         stopAtPrimary: Bool = false
     ) -> (image: UIImage, index: Int)? {
         for (index, reference) in references.enumerated() {
@@ -922,7 +963,8 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
                 if stopAtPrimary { return nil }
                 continue
             }
-            if usableSize(cached, maxAspectRatio: maxAspectRatio) != nil {
+            if usableSize(cached, maxAspectRatio: maxAspectRatio) != nil,
+               !prefersLandscape || cached.size.width > cached.size.height {
                 return (cached, index)
             }
             if stopAtPrimary { return nil }

@@ -186,7 +186,7 @@ private struct LiveTVAutomaticChannelsToggle: View {
         }
         .disabled(action.isUpdating || (state.isWorking && !state.enabled))
         .accessibilityIdentifier("live-tv-automatic-enabled")
-        .onDisappear { update?.cancel(); update = nil }
+        .onDisappear { update?.cancel(); update = nil }.settingsSearchAnchor("live-automatic-lineup")
     }
 }
 
@@ -294,6 +294,7 @@ private extension LibraryChannelSourceFailure.Reason {
         case .unreachable: "Couldn't connect. Check the server address."
         case .authorization: "Library access denied. Check your sign-in."
         case .invalidResponse: "Couldn't read the library response."
+        case .unsupported: "This source doesn't support Plozz channels."
         case .unknown: "Couldn't load libraries."
         }
     }

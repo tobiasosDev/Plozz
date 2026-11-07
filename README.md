@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://testflight.apple.com/join/EKfReNMu"><img src="docs/assets/testflight-button.png" alt="Join the Plozz public beta on TestFlight" width="264" /></a>
+  <a href="https://apps.apple.com/app/plozz-player/id6782668147"><img src="docs/assets/app-store-badge.svg" alt="Download Plozz Player on the App Store" width="180" /></a>
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/brandomoore/Plozz/releases"><img src="https://img.shields.io/github/v/release/brandomoore/Plozz?include_prereleases&sort=date&display_name=release&label=TestFlight%20beta&color=orange&logo=apple" alt="Latest TestFlight beta" /></a>
+  <a href="https://github.com/brandomoore/Plozz/releases"><img src="https://img.shields.io/github/v/release/brandomoore/Plozz?include_prereleases&sort=date&display_name=release&label=Latest%20build&color=orange&logo=apple" alt="Latest GitHub build, including TestFlight releases" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0" /></a>
   <a href="https://www.apple.com/apple-tv-4k/"><img src="https://img.shields.io/badge/Platform-tvOS%20%C2%B7%20iOS%20%C2%B7%20iPadOS-black.svg?logo=apple" alt="Platform: tvOS, iOS, iPadOS" /></a>
   <a href="https://github.com/sponsors/brandomoore"><img src="https://img.shields.io/badge/Donate-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white" alt="Donate" /></a>
@@ -102,7 +102,7 @@ available when you want them.
   Library scans run while the app is active: normal passes skip unchanged
   folders, while a daily deep pass (or **Scan now**) rechecks all contents,
   including changes a server's folder timestamps cannot reveal.
-  (Share support is still evolving during the beta.)
+  (Share support is still evolving.)
 - **One merged library** — connect several servers and see one set of rows
   instead of picking a server first.
 - **Jump to a letter** — an A–Z menu for name-sorted individual and combined
@@ -130,10 +130,8 @@ available when you want them.
   other clients hand back to you, powered by
   [AetherEngine](https://github.com/superuser404notfound/AetherEngine).
   ([The full format list](https://github.com/superuser404notfound/AetherEngine/blob/main/docs/formats.md).)
-- **Spatial audio** — optional lossy conversion adds overhead sound from
-  supported tracks on tvOS 26 and compatible equipment. Other paths retain
-  compatible channel playback. Dolby Digital Plus streams keep their native
-  playback path.
+- **Surround audio** — ordinary multichannel playback and native spatial audio
+  from compatible streams and equipment. Height-channel conversion is not available.
   [Compatibility details](docs/playback-engines.md#spatial-audio).
 - **Change versions without leaving the player** — switch between files or
   editions on the active server on Apple TV, iPhone, and iPad. Keep your
@@ -204,6 +202,28 @@ limits and refuses an incompatible plan rather than quietly using Maximum.
   a compact Download All, Pause All, or Resume All control. Show headers retain
   completed download counts without inventing an unknown total episode count.
   When space is tight, the action moves below the details before its label wraps.
+  With Ask Before Downloading enabled, every new download opens a confirmation.
+  With it disabled, a single movie or episode with one version starts immediately
+  using the saved quality, without opening a preparation sheet. Multiple versions and season/show downloads still
+  open the selection sheet before queueing.
+  Single-episode downloads show version choices directly. Season/show downloads
+  use season sections with one row per episode and nested version lists.
+  Version rows identify their server and, for network shares, their relative folder.
+  Tap a downloaded episode's button to confirm removing that offline copy;
+  other saved versions remain available.
+  Individual episode preparation appears on that episode's row; bulk preparation
+  stays with the season or show action.
+  Episode download rows reserve one caption line to keep ordinary progress
+  updates from shifting the list, while allowing larger text to expand.
+  Visible episode text stays vertically centered and gently repositions when
+  status appears or disappears, unless Reduce Motion is enabled.
+  Tappable download progress indicators include a pause symbol while downloading
+  and a resume triangle when paused, keeping the same neutral progress ring.
+  One version is preselected using the existing explicit,
+  remembered-series, and device-compatible version selection rules. You can
+  exclude episodes or deliberately select multiple versions, which keep separate
+  saved files and download controls. Equal filenames
+  or sizes do not prove files are identical, so alternatives remain available.
 - **Choose download quality separately** — streaming preferences don't change
   your saved download settings. Available renditions and background-transfer
   behavior depend on the provider. Apple TV does not offer offline downloads.
@@ -324,16 +344,18 @@ If you're choosing between Apple TV media apps, here's where Plozz fits:
   for Apple TV, with Plex, Emby, Silo, and network shares available in the same
   app.
 
-Plozz is an independent project, not affiliated with these apps. It's still
-in [public beta](#getting-started), not a promise of feature-for-feature parity.
+Plozz is an independent project, not affiliated with these apps. These comparisons
+are not a promise of feature-for-feature parity.
 You bring your own media; server-side permissions and any provider subscription
 requirements still apply. Plozz replaces the player, not your media server.
 
 ## Getting started
 
-Plozz is in **public beta** on TestFlight.
-[**Join the beta**](https://testflight.apple.com/join/EKfReNMu) and it installs
-on your Apple TV, iPhone, and iPad.
+Download **[Plozz Player on the App Store](https://apps.apple.com/app/plozz-player/id6782668147)**
+for Apple TV, iPhone and iPad.
+
+To try upcoming changes, join the optional
+[TestFlight beta](https://testflight.apple.com/join/EKfReNMu).
 
 You'll need an Apple TV, iPhone, or iPad running tvOS/iOS/iPadOS 18 or later,
 plus a Jellyfin, Plex, Emby, or Silo server—or a network share—with your own

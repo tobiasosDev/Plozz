@@ -629,6 +629,19 @@ private struct PlozziOSAirPlayRouteButton: UIViewRepresentable {
     }
 }
 
+struct PlozziOSPlayerCloseButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.headline)
+        }
+        .buttonStyle(PlayerGlassCircleButtonStyle(diameter: 44))
+        .accessibilityLabel("Close player")
+    }
+}
+
 /// Close, AirPlay and Picture in Picture — all leading.
 ///
 /// The title moved out of here to sit above the scrub bar, matching tvOS, where
@@ -643,13 +656,8 @@ private struct PlozziOSPlayerTopBar: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.headline)
-            }
-            .buttonStyle(PlayerGlassCircleButtonStyle(diameter: 44))
-            .accessibilityLabel("Close player")
-            .reportSubtitleControlsFrame(in: subtitleLayout, region: .topControls)
+            PlozziOSPlayerCloseButton(action: onClose)
+                .reportSubtitleControlsFrame(in: subtitleLayout, region: .topControls)
 
             PlayerGlassControlGroup {
                 PlozziOSAirPlayRouteButton()
@@ -1119,17 +1127,12 @@ private struct PlozziOSSubtitleOptionsSheet: View {
     private var appearance: some View {
         if viewModel.controls.subtitleStyleAdjustable {
             Section("Appearance") {
-                if let format =
-                    viewModel.controls.secondarySubtitleImagePrimaryFormat {
-                    Label(
-                        "\(format) subtitles are rendered as images and can’t be restyled.",
-                        systemImage: "photo"
-                    )
-                    .plozzForeground(.secondary)
-                } else {
-                    NavigationLink {
-                        MobileSubtitleStyleEditor(viewModel: .init(player: viewModel))
-                    } label: {
+                NavigationLink {
+                    MobileSubtitleStyleEditor(viewModel: .init(player: viewModel))
+                } label: {
+                    if viewModel.controls.secondarySubtitleImagePrimaryFormat != nil {
+                        Text("Position")
+                    } else {
                         LabeledContent {
                             viewModel.controls.subtitleStyle.fontDisplayName
                         } label: {

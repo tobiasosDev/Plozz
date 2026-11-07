@@ -123,6 +123,12 @@ struct PlozziOSBackgroundHTTPDownloadEngine:
         guard let source = record.managedHTTPSource else {
             throw BackgroundDownloadError.missingSource
         }
+        let diagnosticKey = HandoffDiagnostics.isEnabled
+            ? HandoffDiagnostics.correlationID(record.identityKey) : "disabled"
+        HandoffDiagnostics.emit(
+            "download RESOLVE key=\(diagnosticKey) provider=\(source.provider.rawValue)"
+                + " original=\(source.quality == .original)"
+        )
         let resolution = try await resolveURL(
             source,
             { updatedSource in
@@ -153,6 +159,7 @@ struct PlozziOSBackgroundHTTPDownloadEngine:
             source.provider == .plex && source.quality != .original
         if case .constrained(let constraint) = source.quality,
            !usesProgressiveRendition, !resolution.singleFile {
+            HandoffDiagnostics.emit("download TRANSFER key=\(diagnosticKey) mode=backgroundHLS")
             return try await BackgroundHLSDownloadSession.shared.download(
                 profileID: profileID,
                 identityKey: record.identityKey,
@@ -186,6 +193,7 @@ struct PlozziOSBackgroundHTTPDownloadEngine:
         if BackgroundDownloadSession.shared.usesForegroundRateLimit(
             profileID: profileID
         ) {
+            HandoffDiagnostics.emit("download TRANSFER key=\(diagnosticKey) mode=rateLimitedHTTP")
             let policy = BackgroundDownloadSession.shared.policy(
                 profileID: profileID
             )
@@ -199,6 +207,7 @@ struct PlozziOSBackgroundHTTPDownloadEngine:
                     onProgress: onProgress
                 )
         } else {
+            HandoffDiagnostics.emit("download TRANSFER key=\(diagnosticKey) mode=backgroundHTTP")
             if FileManager.default.fileExists(
                 atPath: destination.appendingPathExtension("source").path
             ) {
@@ -218,6 +227,7 @@ struct PlozziOSBackgroundHTTPDownloadEngine:
             )
         }
         if usesProgressiveRendition {
+            HandoffDiagnostics.emit("download VALIDATE key=\(diagnosticKey) mode=plexRendition")
             do {
                 try await PlexRenditionValidator.validate(
                     fileURL: destination,
@@ -242,6 +252,7 @@ struct PlozziOSBackgroundHTTPDownloadEngine:
             throw BackgroundDownloadError.incompleteTransfer(expected: expected, actual: transferredBytes)
         }
         try await resolution.didComplete?(destination)
+        HandoffDiagnostics.emit("download COMPLETE key=\(diagnosticKey) bytes=\(transferredBytes)")
         return transferredBytes
     }
 
@@ -253,7 +264,7 @@ struct PlozziOSBackgroundHTTPDownloadEngine:
             timeoutInterval: 20
         )
         request.httpMethod = "DELETE"
-        _ = try? await URLSession.shared.data(for: request)
+        _ = try? await OfflineNetworkSession.shared.data(for: request)
     }
 }
 
@@ -988,7 +999,7 @@ private final class BackgroundDownloadCoordinator:
         configuration.sessionSendsLaunchEvents = true
         configuration.isDiscretionary = false
         configuration.allowsCellularAccess = true
-        return URLSession(
+        return OfflineNetworkSession.make(
             configuration: configuration,
             delegate: self,
             delegateQueue: nil
@@ -1352,7 +1363,7 @@ private actor ForegroundManagedDownloadCoordinator {
             }
         }
 
-        let (stream, response) = try await URLSession.shared.bytes(
+        let (stream, response) = try await OfflineNetworkSession.shared.bytes(
             for: request, delegate: headers["X-Silo-Device-Id"] == nil ? nil : SiloDownloadRedirectDelegate(origin: url))
         try Task.checkCancellation()
         guard let response = response as? HTTPURLResponse else {

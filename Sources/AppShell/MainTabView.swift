@@ -167,10 +167,11 @@ struct MainTabView: View {
             case .home:
                 switch activeLibraryNavigationDestination {
                 case .home, .library, .allLibraries, .tonight: return true
-                case .watchlist, .search, .music, .settings: return false
+                case .watchlist, .discover, .search, .music, .settings: return false
                 case .liveTV: return false
                 }
             case .watchlist: return activeLibraryNavigationDestination == .watchlist
+            case .discover: return activeLibraryNavigationDestination == .discover
             case .search: return activeLibraryNavigationDestination == .search
             case .liveTV: return activeLibraryNavigationDestination == .liveTV
             case .music: return activeLibraryNavigationDestination == .music
@@ -181,7 +182,7 @@ struct MainTabView: View {
     }
 
     private enum MainTab: String {
-        case home, watchlist, search
+        case home, watchlist, discover, search
         case liveTV
         case music, settings
     }
@@ -592,6 +593,7 @@ struct MainTabView: View {
     /// player has closed. Same hand-off as `pendingPersonRoute`.
     @State private var pendingTitleRoute: MediaItem?
     @State private var retainsExplicitHomeEntry = false
+    @State private var retainsExplicitWatchlistEntry = false
     /// Settings navigation identity owned above all three navigation shells.
     /// MainTabView passes the reference but never reads its path, so Settings
     /// pushes do not invalidate this large shell body.
@@ -724,15 +726,19 @@ struct MainTabView: View {
 
     private func releaseExplicitLiveTVEntry(ifLeavingFor destination: NavigationRailDestination) {
         if destination != .home { retainsExplicitHomeEntry = false }
+        if destination != .watchlist { retainsExplicitWatchlistEntry = false }
         if destination != .liveTV { retainsExplicitLiveTVEntry = false }
     }
 
     private func includingExplicitLiveTVEntry(
         _ destinations: [NavigationRailDestination]
     ) -> [NavigationRailDestination] {
-        let destinations = Self.includingExplicitHome(
+        var destinations = Self.includingExplicitHome(
             destinations, isRequested: retainsExplicitHomeEntry
         )
+        if retainsExplicitWatchlistEntry, !destinations.contains(.watchlist) {
+            destinations.append(.watchlist)
+        }
         return AppAdmissionNavigation.destinations(
             destinations,
             liveTV: .liveTV,
@@ -798,6 +804,7 @@ struct MainTabView: View {
         switch destination {
         case .home, .library, .allLibraries, .tonight: return .home
         case .watchlist: return .watchlist
+        case .discover: return .discover
         case .search: return .search
         case .liveTV: return .liveTV
         case .music: return .music
@@ -817,10 +824,32 @@ struct MainTabView: View {
         NotificationCenter.default.post(name: LiveTVGuideButton.pressed, object: nil)
     }
 
+    private func openWatchlist() {
+        retainsExplicitWatchlistEntry = true
+        refreshWatchlistNavigation()
+        if navigationStyle == .tabBar {
+            selectedTab.wrappedValue = .watchlist
+        } else {
+            if navigationStyle == .sidebar { nativeSidebarFocus.begin(.watchlist) }
+            libraryNavigationSelection.wrappedValue = .watchlist
+        }
+    }
+
+    private func openHomeCustomization() {
+        settingsNavigation.openHomeCustomization()
+        if navigationStyle == .tabBar {
+            selectedTab.wrappedValue = .settings
+        } else {
+            if navigationStyle == .sidebar { nativeSidebarFocus.begin(.settings) }
+            libraryNavigationSelection.wrappedValue = .settings
+        }
+    }
+
     private func destination(for tab: MainTab) -> NavigationRailDestination {
         switch tab {
         case .home: return .home
         case .watchlist: return .watchlist
+        case .discover: return .discover
         case .search: return .search
         case .liveTV: return .liveTV
         case .music: return .music
@@ -933,8 +962,8 @@ struct MainTabView: View {
     }
 
     private var effectiveNavigationLayout: NavigationLibraryLayout {
-        return navigationStyleModel.libraryLayout.resolvingAutomaticVisibility(
-            hidden: navigationAvailability.automaticallyHiddenKeys,
+        return navigationStyleModel.resolvedLayout(
+            additionallyHiddenKeys: navigationAvailability.automaticallyHiddenKeys,
             retainingWatchlist: retainsActiveWatchlist
         )
     }
@@ -1000,17 +1029,17 @@ struct MainTabView: View {
     }
 
     private var sidebarDestinationKeys: [String] {
-        NavigationDestinationDefaults.sidebar(
+        navigationStyleModel.availableNavigationKeys(NavigationDestinationDefaults.sidebar(
             visibleLibraries: availableRailLibraries,
             hasMusic: musicAvailability.hasMusic
-        )
+        ))
     }
 
     private var customRailDestinationKeys: [String] {
-        NavigationDestinationDefaults.rail(
+        navigationStyleModel.availableNavigationKeys(NavigationDestinationDefaults.rail(
             visibleLibraries: availableRailLibraries,
             hasMusic: musicAvailability.hasMusic
-        )
+        ))
     }
 
     /// The selection after pruning. A hidden/removed destination falls back to the
@@ -1205,6 +1234,7 @@ struct MainTabView: View {
             return HomeTab(
                 root: root,
                 accounts: accounts,
+                isProfileAuthorized: isLiveTVProfileAuthorized,
                 configuredServerCount: displayAccounts.count,
                 libraryPreferencesNamespace: liveTVPreferencesNamespace,
                 detailSnapshotCache: detailSnapshotCache,
@@ -1256,6 +1286,8 @@ struct MainTabView: View {
             // A rail library root gets its own identity, so switching libraries
             // rebuilds the stack instead of re-using the previous library's grid.
             .id(id ?? homeScopeKey)
+            .environment(\.openWatchlist, openWatchlist)
+            .environment(\.openHomeCustomization, openHomeCustomization)
     }
 
     /// The Music destination.
@@ -1281,6 +1313,7 @@ struct MainTabView: View {
             let runtime = homeRuntime
             return SearchTab(
                 accounts: accounts,
+                isProfileAuthorized: isLiveTVProfileAuthorized,
                 detailSnapshotCache: detailSnapshotCache,
                 authenticatedHTTPResolver: authenticatedHTTPResolver,
                 seer: seer,
@@ -1401,6 +1434,10 @@ struct MainTabView: View {
                 id: "\(homeScopeKey)|tonight",
                 isActive: isActive
             ))
+        case .discover:
+            return AnyView(homeTabContent(
+                root: .discover, id: "\(homeScopeKey)|discover", isActive: isActive
+            ))
         case .liveTV:
             return AnyView(LiveTVShellDestination(
                 isActive: isActive,
@@ -1445,6 +1482,11 @@ struct MainTabView: View {
             return AnyView(watchlistTabLabel)
         case .tonight:
             return AnyView(tonightTabLabel)
+        case .discover:
+            return AnyView(RootNavigationTabLabel(
+                title: Text("Discover"), systemImage: "sparkles",
+                usesCompactSidebarText: navigationStyle == .sidebar
+            ))
         case .liveTV:
             return AnyView(liveTVTabLabel)
         case .music:
@@ -1524,7 +1566,7 @@ struct MainTabView: View {
             uniqueKeysWithValues: entries.map { ($0.destination, $0) }
         )
         let browsableLibraries = NavigationRailPlan.browsableLibraries(libraries)
-        return TabView(selection: nativeSidebarSelection(in: destinations)) {
+        let tabs = TabView(selection: nativeSidebarSelection(in: destinations)) {
             Tab(value: NativeSidebarDestination.profile) {
                 // Selection immediately raises RootView's existing profile page.
                 AnyView(Color.clear.tvNavigationExitProtectionContent())
@@ -1559,6 +1601,7 @@ struct MainTabView: View {
         }
         .tabViewStyle(.sidebarAdaptable)
         .tvNavigationExitProtection(isEnabled: navigationStyleModel.preventsAccidentalExit)
+        return NativeSidebarNavigation(selection: selection, handoff: nativeSidebarFocus, content: tabs)
         .onChange(of: selection) { _, destination in
             if let request = nativeSidebarFocus.request, request.destination != destination {
                 nativeSidebarFocus.cancel()
@@ -1634,6 +1677,10 @@ struct MainTabView: View {
         switch activeLibraryNavigationDestination {
         case .home, .watchlist, .tonight:
             return AnyView(homeBackedRailDestination)
+        case .discover:
+            return AnyView(homeTabContent(
+                root: .discover, id: "\(homeScopeKey)|discover", isActive: true
+            ))
         case .search:
             return AnyView(searchTabContent())
         case .liveTV:
@@ -1890,6 +1937,7 @@ struct MainTabView: View {
         // inside the Music tab's navigation stack made it present a beat late under
         // the sidebar style (only appearing after a stray Back press).
         routedShell
+        .environment(\.detailPlaybackPreparationAllowed, playRequest == nil && resumePrompt == nil && !showNowPlaying)
         .plozzFullScreenCover(isPresented: $showNowPlaying) {
             NowPlayingView(
                 controller: audioController,
@@ -1928,7 +1976,8 @@ struct MainTabView: View {
             // navigation stacks live inside the tabs, so this is the only place
             // that can see both.
             onOpenPerson: openPersonFromPlayer,
-            onOpenTitle: openTitleFromPlayer
+            onOpenTitle: openTitleFromPlayer,
+            continueWatching: { [homeRuntime] in homeRuntime.continueWatchingRow }
         )
     }
 
@@ -1972,6 +2021,12 @@ struct MainTabView: View {
             "\(seer.connectionRevision)|\(activeProfile.id)|\(activeProfile.seerrUserID.map(String.init) ?? "admin")|\(activeProfile.seerrServerIdentity?.canonicalURL ?? "")"
         )
         .environment(heroTrailerController)
+        .environment(\.heroTrailerPlayerFactory, HeroTrailerPlayerFactory { player, surface, title, dismiss in
+            BorrowedTrailerPlayer(
+                player: player, surface: surface, title: title,
+                settings: playbackModel.settings, palette: resolvedPalette, onDismiss: dismiss
+            )
+        })
         .onChange(of: isLiveTVProfileAuthorized(), initial: true) { _, authorized in
             if authorized {
                 heroTrailerController.resumeAfterPlayback(owner: profileTrailerSuppressionID)
@@ -1992,7 +2047,7 @@ struct MainTabView: View {
             // Stop the shared trailer player only when NEITHER surface wants a
             // trailer; otherwise leave it to the active hero view. Mute is a live
             // session state on the controller, so it isn't touched here.
-            if !settings.homeTrailerEnabled && !settings.detailTrailerEnabled {
+            if !settings.homeTrailerPlaybackEnabled && !settings.detailTrailerEnabled {
                 heroTrailerController.stop()
             }
         }

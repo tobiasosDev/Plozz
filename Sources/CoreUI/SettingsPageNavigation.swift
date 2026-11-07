@@ -124,6 +124,14 @@ public final class SettingsPageNavigation<Route: Hashable> {
         returnGeneration = 0
     }
 
+    fileprivate func completeFullScreenDismissal() {
+        guard pages.isEmpty, returnSourceID != nil else { return }
+        // The root cannot accept focus until the native cover has finished dismissing.
+        transitionGeneration += 1
+        isTransitioning = false
+        returnGeneration += 1
+    }
+
     private func change(isReturning: Bool, _ update: () -> Void) {
         transitionGeneration += 1
         let generation = transitionGeneration
@@ -218,8 +226,11 @@ public struct SettingsPageStack<Route: Hashable, Root: View, Destination: View>:
         }
         .plozzFullScreenCover(isPresented: Binding(
             get: { presentsSubpagesFullScreen && !navigation.pages.isEmpty },
-            set: { if !$0 { navigation.reset() } }
-        ), onDismiss: onSubpagesDismiss) {
+            set: { if !$0, !navigation.pages.isEmpty { navigation.reset() } }
+        ), onDismiss: {
+            navigation.completeFullScreenDismissal()
+            onSubpagesDismiss?()
+        }) {
             GeometryReader { geometry in
                 subpages(in: geometry.size)
             }
@@ -302,13 +313,14 @@ public struct SettingsPageStack<Route: Hashable, Root: View, Destination: View>:
 private struct SettingsPageEntryFocus: ViewModifier {
     let enabled: Bool
     @Environment(\.settingsPageContext) private var context
+    @Environment(SettingsSearchRequest.self) private var searchRequest: SettingsSearchRequest?
     @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
         content
             .focused($focused)
             .task(id: context?.requestsEntryFocus) {
-                guard enabled, context?.requestsEntryFocus == true else { return }
+                guard enabled, searchRequest?.revealed != false, context?.requestsEntryFocus == true else { return }
                 await Task.yield()
                 guard !Task.isCancelled else { return }
                 focused = true
@@ -366,6 +378,8 @@ public struct SettingsPageLink<Destination: View, Label: View>: View {
     let label: () -> Label
     #if os(tvOS)
     @Environment(\.settingsPageContext) private var context
+    #else
+    @State private var isPresented = false
     #endif
 
     public init(@ViewBuilder destination: @escaping () -> Destination, @ViewBuilder label: @escaping () -> Label) {
@@ -383,7 +397,9 @@ public struct SettingsPageLink<Destination: View, Label: View>: View {
             NavigationLink(destination: destination, label: label)
         }
         #else
-        NavigationLink(destination: destination, label: label)
+        // A NavigationLink can claim all sibling controls in a composite List cell.
+        Button { isPresented = true } label: { label() }
+            .navigationDestination(isPresented: $isPresented, destination: destination)
         #endif
     }
 }

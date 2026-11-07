@@ -93,6 +93,7 @@ enum HomeHeroArtwork {
         )
         _ = await ArtworkFirstPaintResolver.resolve(
             references: references, variant: .heroPreview, maxAspectRatio: HeroBackdropArtworkPolicy.maxAspectRatio,
+            prefersLandscape: true,
             asyncOnlineURL: backdropLookup.map { lookup in
                 { await ArtworkSession.resolveArtwork(background: true, lookup) }
             },

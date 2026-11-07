@@ -294,6 +294,13 @@ private struct ProviderChooserView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+            if !showsBranding {
+                Text(SettingsCopy.addSource)
+                    .font(.title2.bold())
+                    .accessibilityAddTraits(.isHeader)
+                    .frame(maxWidth: .infinity)
+            }
+
             if showsBackButton {
                 Button(action: onBack) {
                     Label("Back", systemImage: "chevron.backward")

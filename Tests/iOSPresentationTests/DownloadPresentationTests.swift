@@ -1,4 +1,5 @@
 #if os(iOS)
+import AppRuntime
 import CoreModels
 import CoreUI
 import FeatureHomeCore
@@ -14,6 +15,309 @@ import XCTest
 
 @MainActor
 final class DownloadPresentationTests: XCTestCase {
+    func testDelayedWatchMutationKeepsItsCapturedServerUser() async throws {
+        let account = Account(
+            id: "emby",
+            server: .init(id: "server", name: "Server", baseURL: URL(string: "https://fixture.invalid")!, provider: .plex),
+            userID: "owner", userName: "Owner", deviceID: "fixture"
+        )
+        let profile = Profile(name: "Downloads")
+        let viewerA = profile.settingHomeUserBinding(.init(homeUserID: "a", name: "A"), forPlexAccount: account.id)
+        let viewerB = profile.settingHomeUserBinding(.init(homeUserID: "b", name: "B"), forPlexAccount: account.id)
+        let scopeA = WatchMutationServerScope(profile: viewerA, accounts: [account])
+        let scopeB = WatchMutationServerScope(profile: viewerB, accounts: [account])
+        var a = record(versionID: "a")
+        a.snapshot.sourceUserID = scopeA.accounts[0].downloadUserID
+        var b = record(versionID: "b")
+        b.snapshot.sourceUserID = scopeB.accounts[0].downloadUserID
+        let registry = DownloadedMediaRegistry(store: InMemoryDownloadedMediaStore(.init(
+            records: [a.identityKey: a, b.identityKey: b]
+        )))
+        let model = makeModel(
+            registry: registry, storage: try temporaryStorage(), probe: ArtworkProbe(data: imageData()),
+            startsActive: false, profileID: profile.id,
+            sourceUserID: { _ in scopeB.accounts[0].downloadUserID }
+        )
+        defer { model.beginProfileTransition() }
+        let item = try XCTUnwrap(model.playbackItem(for: a))
+        let mutation = try XCTUnwrap(WatchMutationFactory.playbackStop(
+            item: item, position: 42, watchedPercent: 20, primaryAccountID: account.id,
+            additionalSources: [], crossServerSync: false
+        )).bindingServerScope(scopeA)
+        await model.applyWatchMutation(mutation)
+        let updatedA = await registry.record(forKey: a.identityKey)
+        let unchangedB = await registry.record(forKey: b.identityKey)
+        XCTAssertEqual(updatedA?.snapshot.resumePosition, 42)
+        XCTAssertNil(unchangedB?.snapshot.resumePosition)
+    }
+
+    func testOfflineEpisodeNeighborsExcludeMissingAndUnfinishedFiles() async throws {
+        let previous = OfflineMode.shared.isEnabled
+        OfflineMode.shared.setEnabled(true)
+        defer { OfflineMode.shared.setEnabled(previous) }
+        var completed = record(id: "complete")
+        completed.snapshot.episodeNumber = 1
+        var unfinished = record(id: "unfinished")
+        unfinished.snapshot.episodeNumber = 2
+        unfinished.status = .paused
+        var missing = record(id: "missing")
+        missing.snapshot.episodeNumber = 3
+        let values = [completed, unfinished, missing]
+        let registry = DownloadedMediaRegistry(store: InMemoryDownloadedMediaStore(.init(
+            records: Dictionary(uniqueKeysWithValues: values.map { ($0.identityKey, $0) })
+        )))
+        let storage = try temporaryStorage()
+        let file = try storage.pinnedFileURL(for: completed)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: file)
+        let model = makeModel(
+            registry: registry, storage: storage, probe: ArtworkProbe(data: imageData()), startsActive: false
+        )
+        defer { model.beginProfileTransition() }
+        try await waitUntil { model.records.count == values.count }
+        XCTAssertEqual(model.offlineLibrary.shows.first?.records.map(\.identityKey), [completed.identityKey])
+        let neighbors = model.offlineNeighborItems(for: try XCTUnwrap(model.playbackItem(for: completed)))
+        XCTAssertNil(neighbors?.previous)
+        XCTAssertNil(neighbors?.next)
+        XCTAssertNil(model.downloadedRecord(matching: try XCTUnwrap(model.playbackItem(for: missing))))
+    }
+
+    func testDownloadHeadingCentersAndMovesWithinTheSameRowWhenStatusAppears() throws {
+        do {
+            var titlePositions: [CGFloat] = []
+            var heights: [Int] = []
+            for showsStatus in [false, true] {
+                let renderer = ImageRenderer(content:
+                    SeasonEpisodeRowContent(
+                        number: 8, title: "The Envoys", reservesStatusSpace: true,
+                        showsStatus: showsStatus
+                    ) {
+                        SeasonEpisodeRowArtwork(showsMediaEdge: false) { Color.gray }
+                    } status: {
+                        Text("Downloaded")
+                    } accessory: {
+                        Image(systemName: "arrow.down.circle").frame(width: 44, height: 44)
+                    }
+                    .frame(width: 370)
+                    .padding(16)
+                    .background(.black)
+                    .environment(\.colorScheme, .dark)
+                    .environment(\.locale, Locale(identifier: "en"))
+                )
+                renderer.scale = 3
+                let image = try XCTUnwrap(renderer.cgImage)
+                heights.append(image.height)
+                let text = try recognizedText(image)
+                let title = try XCTUnwrap(text.first { $0.text.contains("Envoys") })
+                titlePositions.append(title.bounds.midY)
+                let labels = text.filter {
+                    $0.text.contains("Envoys") || $0.text.contains("Episode") || $0.text.contains("Downloaded")
+                }
+                let bounds = labels.reduce(CGRect.null) { $0.union($1.bounds) }
+                XCTAssertEqual(bounds.midY, 0.5, accuracy: 0.06, "Visible text should be centered in the row.")
+                XCTAssertEqual(text.contains { $0.text.contains("Downloaded") }, showsStatus)
+                let attachment = XCTAttachment(image: UIImage(cgImage: image))
+                attachment.name = "centered-episode-status-\(showsStatus)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            XCTAssertEqual(heights[0], heights[1])
+            XCTAssertGreaterThan(titlePositions[1], titlePositions[0], "The title moves up as status appears.")
+        }
+    }
+
+    func testEpisodeDownloadRowsReserveStatusHeightAcrossTransferStates() throws {
+        let widths: [CGFloat] = [320, 402, 768]
+        for width in widths {
+            for size in [DynamicTypeSize.large, .accessibility3] {
+                var heights: [CGFloat] = []
+                for status in ["", "Preparing Download", "46% · 47.6 MB/s · 1 min remaining", "Downloaded"] {
+                    let renderer = ImageRenderer(content:
+                        SeasonEpisodeRowContent(
+                            number: 8, title: "The Envoys", reservesStatusSpace: true,
+                            showsStatus: !status.isEmpty
+                        ) {
+                            SeasonEpisodeRowArtwork(showsMediaEdge: false) { Color.gray }
+                        } status: {
+                            Text(verbatim: status)
+                        } accessory: {
+                            Color.clear.frame(width: 44, height: 44)
+                        }
+                        .frame(width: width)
+                        .environment(\.dynamicTypeSize, size)
+                        .environment(\.locale, Locale(identifier: "en"))
+                    )
+                    heights.append(try XCTUnwrap(renderer.uiImage).size.height)
+                }
+                if size.isAccessibilitySize {
+                    XCTAssertGreaterThanOrEqual(heights[2], heights[0])
+                    XCTAssertEqual(heights[0], heights[3], accuracy: 1)
+                } else {
+                    let baseline = ImageRenderer(content:
+                        SeasonEpisodeRowContent(number: 8, title: "The Envoys") {
+                            SeasonEpisodeRowArtwork(showsMediaEdge: false) { Color.gray }
+                        } status: {
+                            EmptyView()
+                        } accessory: {
+                            Color.clear.frame(width: 44, height: 44)
+                        }
+                        .frame(width: width)
+                        .environment(\.dynamicTypeSize, size)
+                        .environment(\.locale, Locale(identifier: "en"))
+                    )
+                    let baselineHeight = try XCTUnwrap(baseline.uiImage).size.height
+                    XCTAssertLessThanOrEqual(heights[0] - baselineHeight, 16, "Reserve at most one caption line.")
+                    for height in heights {
+                        XCTAssertEqual(height, heights[0], accuracy: 1, "Width \(width), size \(size)")
+                    }
+                }
+            }
+        }
+    }
+
+    func testEpisodePreparationBelongsToItsRowsNotTheBulkHeader() {
+        let season = MediaItem(id: "season", title: "Season 1", kind: .season)
+        let first = MediaItem(id: "file-a", title: "Episode", kind: .episode, sourceAccountID: "server")
+        let alternate = MediaItem(id: "file-b", title: "Episode", kind: .episode, sourceAccountID: "server")
+        let batch = PlozziOSSeasonDownloadPrompt.Batch(season: season, episodes: [first, alternate])
+        let episode = PlozziOSSeasonDownloadPrompt(scope: .episode("Episode"), batches: [batch])
+        XCTAssertFalse(episode.isBulk)
+        XCTAssertEqual(episode.preparingEpisodeIDs, Set([first.stablePresentationID, alternate.stablePresentationID]))
+        var otherAccount = first
+        otherAccount.sourceAccountID = "other"
+        XCTAssertFalse(episode.preparingEpisodeIDs.contains(otherAccount.stablePresentationID))
+        let scopes: [PlozziOSSeasonDownloadPrompt.Scope] = [.season(.content("Season 1")), .show("Show")]
+        for scope in scopes {
+            let bulk = PlozziOSSeasonDownloadPrompt(scope: scope, batches: [batch])
+            XCTAssertTrue(bulk.isBulk)
+            XCTAssertTrue(bulk.preparingEpisodeIDs.isEmpty)
+        }
+    }
+
+    func testDownloadVersionSourcesUseThePhysicalOwnerAndRelativeShareFolder() {
+        var item = MediaItem(
+            id: "f:torrents/episode/episode.mkv", title: "Episode", kind: .episode,
+            sourceAccountID: "share"
+        )
+        item.sources = [
+            .init(accountID: "other", itemID: item.id, kind: .episode, providerKind: .plex, serverName: "Wrong Server"),
+            .init(accountID: "share", itemID: item.id, kind: .episode, providerKind: .mediaShare, serverName: "My Share")
+        ]
+        let torrent = PlozziOSDownloadSourceDetails(item: item, accounts: [])
+        XCTAssertEqual(torrent.name, "My Share")
+        XCTAssertEqual(torrent.folder, "torrents/episode")
+        item.id = "f:links/episode.mkv"
+        item.sources[1].itemID = item.id
+        XCTAssertEqual(PlozziOSDownloadSourceDetails(item: item, accounts: []).folder, "links")
+        item.sources[1].providerKind = .jellyfin
+        XCTAssertNil(PlozziOSDownloadSourceDetails(item: item, accounts: []).folder)
+        item.sources[1].providerKind = .mediaShare
+        item.id = "f:https://example.invalid/file?token=secret"
+        item.sources[1].itemID = item.id
+        XCTAssertNil(PlozziOSDownloadSourceDetails(item: item, accounts: []).folder)
+        item.sourceAccountID = "unknown"
+        XCTAssertNil(PlozziOSDownloadSourceDetails(item: item, accounts: []).name)
+    }
+
+    func testExplicitEpisodeChoicesDoNotShareCachedDownloadControls() async throws {
+        let items = ["first", "second"].map { id -> MediaItem in
+            var item = MediaItem(
+                id: id, title: "Episode", kind: .episode,
+                seasonNumber: 1, episodeNumber: 1, seriesID: "show",
+                providerIDs: ["tvdb": "12345"], sourceAccountID: "fixture"
+            )
+            item.selectedVersionID = "1"
+            item.explicitSourceSelection = true
+            return item
+        }
+        let records = try items.map { item in
+            DownloadedMediaRecord(
+                identity: try XCTUnwrap(DownloadMediaIdentity.requestIdentity(for: item, existingRecords: [])),
+                versionID: item.selectedVersionID, sourceKind: .managedHTTP,
+                status: .completed, localFileName: "media.mkv", snapshot: PinnedMediaSnapshot(item: item)
+            )
+        }
+        let registry = DownloadedMediaRegistry(store: InMemoryDownloadedMediaStore(.init(
+            records: Dictionary(uniqueKeysWithValues: records.map { ($0.identityKey, $0) })
+        )))
+        let model = makeModel(
+            registry: registry, storage: try temporaryStorage(), probe: ArtworkProbe(data: imageData()),
+            startsActive: false
+        )
+        defer { model.beginProfileTransition() }
+        try await waitUntil { model.records.count == 2 }
+        for (item, record) in zip(items, records) {
+            XCTAssertEqual(model.cachedRecord(forSelectedVersionOf: item)?.identityKey, record.identityKey)
+            XCTAssertNotNil(model.cachedRecord(for: item.selectingVersion(nil)))
+        }
+        var foreign = items[0]
+        foreign.sourceAccountID = "other"
+        XCTAssertNil(model.cachedRecord(forSelectedVersionOf: foreign))
+    }
+
+    func testSingleItemMenusUseSelectionFlowWithoutBypassingConfirmation() async {
+        let suite = "EpisodeMenuSelection.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let app = PlozziOSAppModel(
+            appAdmissionStore: AppAdmissionStore(defaults: defaults),
+            profileStore: ProfileStore(defaults: defaults)
+        )
+        defer { app.downloads.beginProfileTransition() }
+        XCTAssertTrue(app.recordSuccessfulIPTVSetup())
+        let profile = app.profiles.add(name: "Downloads", isAwaitingSetup: false)
+        app.selectProfile(profile.id)
+        XCTAssertTrue(app.isActiveProfileAuthorized)
+        let episode = MediaItem(
+            id: "episode-choice", title: "Episode Choice", kind: .episode,
+            seasonNumber: 1, episodeNumber: 1, seriesID: "show",
+            sourceAccountID: "fixture"
+        )
+        let previousCount = app.downloads.records.count
+        await app.performDownloadMenuAction(.startDownload, on: episode)
+        XCTAssertEqual(app.pendingDownloadSelection?.id, episode.id)
+        XCTAssertEqual(app.pendingDownloadSelection?.sourceAccountID, "fixture")
+        XCTAssertEqual(app.downloads.records.count, previousCount)
+        let movie = MediaItem(id: "movie-choice", title: "Movie Choice", kind: .movie, sourceAccountID: "fixture")
+        await app.performDownloadMenuAction(.startDownload, on: movie)
+        XCTAssertEqual(app.pendingDownloadSelection?.id, episode.id, "Do not replace an in-flight selection.")
+        app.pendingDownloadSelection = nil
+        await app.performDownloadMenuAction(.startDownload, on: movie)
+        XCTAssertEqual(app.pendingDownloadSelection?.id, movie.id)
+        XCTAssertEqual(app.downloads.records.count, previousCount)
+        app.pendingDownloadSelection = nil
+    }
+
+    func testProfileTransitionClearsPendingEpisodeSelection() {
+        let suite = "EpisodeSelectionTransition.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let app = PlozziOSAppModel(profileStore: ProfileStore(defaults: defaults))
+        defer { app.downloads.beginProfileTransition() }
+        app.pendingDownloadSelection = MediaItem(id: "old-profile", title: "Episode", kind: .episode)
+        let profile = app.profiles.add(name: "Download Choice", isAwaitingSetup: false)
+        app.selectProfile(profile.id)
+        XCTAssertNil(app.pendingDownloadSelection)
+    }
+
+    func testAskBeforeDownloadingPersistsBothValuesWithinItsProfile() throws {
+        let model = makeModel(
+            registry: DownloadedMediaRegistry(store: InMemoryDownloadedMediaStore()),
+            storage: try temporaryStorage(), probe: ArtworkProbe(data: imageData()), startsActive: false
+        )
+        let key = "downloads.preferences.\(try XCTUnwrap(model.profileID))"
+        defer {
+            model.beginProfileTransition()
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        XCTAssertTrue(model.asksBeforeDownloading)
+        model.asksBeforeDownloading = false
+        XCTAssertFalse(PlozziOSDownloadPreferences.load(key: key).asksBeforeDownloading)
+        XCTAssertTrue(PlozziOSDownloadPreferences.load(key: "\(key)-other-profile").asksBeforeDownloading)
+        model.asksBeforeDownloading = true
+        XCTAssertTrue(PlozziOSDownloadPreferences.load(key: key).asksBeforeDownloading)
+    }
+
     func testDetailHeroResolvesActionsOnceForAllLayoutCandidates() throws {
         let model = makeModel(
             registry: DownloadedMediaRegistry(store: InMemoryDownloadedMediaStore()),
@@ -488,7 +792,7 @@ final class DownloadPresentationTests: XCTestCase {
         )
         defer { model.beginProfileTransition() }
         try await waitUntil { model.records.count == 1 }
-        let settings = PlozziOSDownloadSettingsView(model: model)
+        let settings = PlozziOSDownloadSettingsView(model: model, appModel: PlozziOSAppModel())
         let observer = DownloadObservationProbe { _ = settings.body }
         defer { observer.stop() }
 
@@ -662,6 +966,81 @@ final class DownloadPresentationTests: XCTestCase {
         }
     }
 
+    func testActionableDownloadProgressAddsPauseInsideTheUnchangedRing() throws {
+        let fractions: [Double?] = [nil, 0.6]
+        for fraction in fractions {
+            var centers: [Data] = []
+            for showsPause in [false, true] {
+                let renderer = ImageRenderer(content:
+                    PlozziOSDownloadControl(state: .inProgress(fraction: fraction), showsPauseIcon: showsPause)
+                        .foregroundStyle(.white)
+                        .background(.black)
+                        .environment(\.colorScheme, .dark)
+                )
+                renderer.scale = 3
+                let image = try XCTUnwrap(renderer.cgImage)
+                XCTAssertEqual(image.width, 132)
+                XCTAssertEqual(image.height, 132)
+                let center = try XCTUnwrap(image.cropping(to: CGRect(x: 54, y: 54, width: 24, height: 24)))
+                centers.append(try XCTUnwrap(UIImage(cgImage: center).pngData()))
+                let attachment = XCTAttachment(image: UIImage(cgImage: image))
+                attachment.name = "download-pause-\(showsPause)-\(fraction == nil ? "unknown" : "known")"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            XCTAssertNotEqual(centers[0], centers[1], "The pause glyph must be visible inside the ring.")
+        }
+    }
+
+    func testPausedDownloadAddsResumeInsideTheUnchangedRing() throws {
+        let fractions: [Double?] = [nil, 0, 0.6]
+        for fraction in fractions {
+            var centers: [Data] = []
+            var ringTops: [Data] = []
+            for showsResume in [false, true] {
+                let renderer = ImageRenderer(content:
+                    PlozziOSDownloadControl(state: .paused(fraction: fraction), showsResumeIcon: showsResume)
+                        .background(.black)
+                        .environment(\.colorScheme, .dark)
+                )
+                renderer.scale = 3
+                let image = try XCTUnwrap(renderer.cgImage)
+                XCTAssertEqual(image.width, 132)
+                XCTAssertEqual(image.height, 132)
+                let center = try XCTUnwrap(image.cropping(to: CGRect(x: 54, y: 54, width: 24, height: 24)))
+                centers.append(try XCTUnwrap(UIImage(cgImage: center).pngData()))
+                let ringTop = try XCTUnwrap(image.cropping(to: CGRect(x: 20, y: 20, width: 92, height: 28)))
+                ringTops.append(try XCTUnwrap(UIImage(cgImage: ringTop).pngData()))
+                let attachment = XCTAttachment(image: UIImage(cgImage: image))
+                attachment.name = "download-resume-\(showsResume)-\(fraction.map(String.init(describing:)) ?? "unknown")"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+                var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+                try pixels.withUnsafeMutableBytes { buffer in
+                    let context = try XCTUnwrap(CGContext(
+                        data: buffer.baseAddress, width: image.width, height: image.height,
+                        bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                        space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                            | CGBitmapInfo.byteOrder32Big.rawValue
+                    ))
+                    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+                }
+                let isNeutral = stride(from: 0, to: pixels.count, by: 4).allSatisfy { index in
+                    let red = Int(pixels[index])
+                    let green = Int(pixels[index + 1])
+                    let blue = Int(pixels[index + 2])
+                    return max(red, green, blue) - min(red, green, blue) <= 1
+                }
+                XCTAssertTrue(isNeutral, "Paused downloads must not use warning colors.")
+            }
+            XCTAssertNotEqual(centers[0], centers[1], "The resume glyph must be visible inside the paused ring.")
+            if fraction != nil {
+                XCTAssertEqual(ringTops[0], ringTops[1], "Adding resume must preserve the progress ring.")
+            }
+        }
+    }
+
     func testProgressDoesNotInvalidateUnrelatedEpisodeLookups() async throws {
         let registry = DownloadedMediaRegistry(store: InMemoryDownloadedMediaStore())
         var active = record(id: "active")
@@ -817,6 +1196,36 @@ final class DownloadPresentationTests: XCTestCase {
         await reopened.refreshArtwork()
         let reopenedCalls = await probe.calls
         XCTAssertEqual(reopenedCalls, calls, "Pinned artwork must survive a fresh registry/model without contacting a server.")
+    }
+
+    func testLegacyDownloadIdentityRepairsOnCellularWithoutDownloadingArtwork() async throws {
+        let storage = try temporaryStorage()
+        var download = record()
+        download.snapshot.artworkFileName = "artwork.png"
+        download.snapshot.resumePosition = 37
+        let media = try storage.pinnedFileURL(for: download)
+        try FileManager.default.createDirectory(at: media.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: media)
+        try imageData().write(to: media.deletingLastPathComponent().appendingPathComponent("artwork.png"))
+        let registry = DownloadedMediaRegistry(store: InMemoryDownloadedMediaStore(.init(
+            records: [download.identityKey: download]
+        )))
+        let probe = ArtworkProbe(data: imageData())
+        let observer = StaticDownloadNetworkObserver(.init(isSatisfied: true, isExpensive: true, isConstrained: false))
+        let model = makeModel(
+            registry: registry, storage: storage, probe: probe, observer: observer,
+            sourceUserID: { _ in "authenticated-viewer" }
+        )
+        defer { model.beginProfileTransition() }
+        try await waitUntil { model.records.first?.snapshot.sourceUserID == "authenticated-viewer" }
+        let repaired = try XCTUnwrap(model.records.first)
+        XCTAssertFalse(model.allowsCellular)
+        XCTAssertEqual(repaired.snapshot.artworkFileName, "artwork.png")
+        XCTAssertEqual(repaired.snapshot.resumePosition, 37)
+        XCTAssertEqual(repaired.status, .completed)
+        XCTAssertEqual(model.playableRecords.map(\.identityKey), [download.identityKey])
+        let imageRequests = await probe.calls
+        XCTAssertEqual(imageRequests, 0)
     }
 
     func testArtworkIndexResolvesOffMainAndCachesUntilRefreshOrReplacement() async throws {
@@ -1087,12 +1496,14 @@ final class DownloadPresentationTests: XCTestCase {
     private func makeModel(
         registry: DownloadedMediaRegistry, storage: any DownloadStorageLocating,
         probe: ArtworkProbe, startsActive: Bool = true,
-        observer: any DownloadNetworkObserving = StaticDownloadNetworkObserver()
+        observer: any DownloadNetworkObserving = StaticDownloadNetworkObserver(),
+        profileID: String? = nil,
+        sourceUserID: (@MainActor @Sendable (String) -> String?)? = nil
     ) -> PlozziOSDownloadsModel {
         PlozziOSDownloadsModel(
-            profileID: "download-test-\(UUID())", registry: registry, storage: storage,
+            profileID: profileID ?? "download-test-\(UUID())", registry: registry, storage: storage,
             networkObserver: observer, networkFileResolver: UnusedNetworkResolver(),
-            providerKind: { _ in .emby }, preferredAudioLanguages: { _ in [] },
+            providerKind: { _ in .emby }, sourceUserID: sourceUserID, preferredAudioLanguages: { _ in [] },
             startsActive: startsActive,
             activityScheduler: nil,
             notificationClient: DownloadNotificationClientStub(authorization: .denied),
@@ -1104,9 +1515,10 @@ final class DownloadPresentationTests: XCTestCase {
         )
     }
 
-    private func record(id: String = "episode") -> DownloadedMediaRecord {
+    private func record(id: String = "episode", versionID: String? = nil) -> DownloadedMediaRecord {
         DownloadedMediaRecord(
             identity: .external(source: "plozz-account:emby", value: id),
+            versionID: versionID,
             sourceKind: .managedHTTP, status: .completed, localFileName: "media.mkv",
             bytesDownloaded: 100, totalBytes: 100,
             snapshot: .init(

@@ -6,20 +6,37 @@ import XCTest
 
 @MainActor
 final class SettingsWorkspaceNavigationTests: XCTestCase {
-    func testAdvancedPlaybackIncludesProfileScopedFELWithoutChangingExternalPlayerScope() throws {
+    func testHomeCustomizationShortcutReplacesStalePagesWithoutGrowingTheStack() {
+        let navigation = SettingsNavigationModel()
+        #if os(tvOS)
+        navigation.pages.animationsEnabled = false
+        navigation.beginSearch()
+        navigation.searchQuery = "server"
+        #endif
+        navigation.path = [.appearance, .artwork]
+        for _ in 0..<3 {
+            navigation.openHomeCustomization()
+            XCTAssertEqual(navigation.section, .customizeHome)
+            XCTAssertEqual(navigation.path, [.customizeHome])
+            XCTAssertTrue(navigation.enteringDetail)
+            XCTAssertFalse(navigation.restoringSidebar)
+            #if os(tvOS)
+            XCTAssertFalse(navigation.isSearching)
+            XCTAssertTrue(navigation.searchQuery.isEmpty)
+            #endif
+            navigation.path.append(.searchResult("home-row-arrangement"))
+        }
+    }
+
+    func testAdvancedPlaybackKeepsExternalPlayerWithoutRetiredConversionControls() throws {
         let suite = "AdvancedPlaybackSettingsTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let playback = PlaybackSettingsModel(store: PlaybackSettingsStore(defaults: defaults, namespace: "guest"))
         let external = ExternalPlayerSettingsModel(defaults: defaults)
-        let rows = PlaybackAdvancedSettingsView.rows(playback: playback, model: external)
-        XCTAssertEqual(rows.map(\.id), ["external-player", "dolby-vision-fel"])
+        let rows = PlaybackAdvancedSettingsView.rows(model: external)
+        let expectedIDs = ["external-player"]
+        XCTAssertEqual(rows.map(\.id), expectedIDs)
         XCTAssertEqual(rows.first?.presentation, .page)
-        XCTAssertNil(rows.last?.childRows)
-        XCTAssertTrue(playback.settings.dolbyVisionFELEnabled)
-        playback.settings.dolbyVisionFELEnabled = false
-        XCTAssertFalse(PlaybackSettingsStore(defaults: defaults, namespace: "guest").load().dolbyVisionFELEnabled)
-        XCTAssertTrue(PlaybackSettingsStore(defaults: defaults).load().dolbyVisionFELEnabled)
         XCTAssertEqual(external.settings.player, .builtIn)
     }
 
@@ -42,6 +59,44 @@ final class SettingsWorkspaceNavigationTests: XCTestCase {
     }
 
     #if os(tvOS)
+    func testInlineSearchDoesNotPushAPageAndRetainsQueryAcrossResultNavigation() {
+        let navigation = SettingsNavigationModel()
+        navigation.pages.animationsEnabled = false
+        navigation.beginSearch()
+        XCTAssertTrue(navigation.isSearching)
+        XCTAssertEqual(navigation.section, .search)
+        XCTAssertTrue(navigation.path.isEmpty)
+        navigation.searchQuery = "subtitles"
+        let source = UUID()
+        navigation.pages.push(.searchResult("subtitle-size"), sourceID: source)
+        XCTAssertEqual(navigation.path, [.searchResult("subtitle-size")])
+        navigation.pages.pop()
+        navigation.restoreCategoryFocus()
+        XCTAssertEqual(navigation.searchQuery, "subtitles")
+        XCTAssertTrue(navigation.isSearching)
+        XCTAssertEqual(navigation.pages.returnSourceID, source)
+        navigation.endSearch()
+        XCTAssertFalse(navigation.isSearching)
+        XCTAssertTrue(navigation.searchQuery.isEmpty)
+        XCTAssertTrue(navigation.path.isEmpty)
+        XCTAssertEqual(navigation.section, .search)
+        XCTAssertTrue(navigation.restoringSidebar)
+        XCTAssertGreaterThan(navigation.sidebarFocusRequest, 0)
+    }
+
+    func testProfileResetClearsInlineSearchAndItsResult() {
+        let navigation = SettingsNavigationModel()
+        navigation.pages.animationsEnabled = false
+        navigation.beginSearch()
+        navigation.searchQuery = "server"
+        navigation.pages.push(.searchResult("servers"), sourceID: UUID())
+        navigation.resetForProfile()
+        XCTAssertFalse(navigation.isSearching)
+        XCTAssertTrue(navigation.searchQuery.isEmpty)
+        XCTAssertTrue(navigation.path.isEmpty)
+        XCTAssertEqual(navigation.section, .playback)
+    }
+
     func testSharedStackRetainsRepeatedRouteIdentityAndReturnsToItsSource() {
         let pages = SettingsPageNavigation<SettingsRoute>()
         pages.animationsEnabled = false
