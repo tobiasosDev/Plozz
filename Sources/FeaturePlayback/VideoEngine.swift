@@ -79,6 +79,13 @@ public struct PlayerEngineCapabilities: OptionSet, Sendable {
 ///    lives above the engine, not inside it.
 @MainActor
 public protocol VideoEngine: AnyObject {
+    /// Decoded playback audio for song identification (#351); nil when the engine
+    /// can't provide it. Call `removeSongTap()` when done.
+    func installSongTap() -> AsyncStream<SongTapChunk>?
+    func removeSongTap()
+    var supportsActivePictureAnalysis: Bool { get }
+    func sampleActivePicture() async -> VideoActivePictureState
+    func stopActivePictureAnalysis()
     /// Optional association for system Now Playing; custom decoders use the
     /// app-level center and still receive transport through this protocol.
     var nowPlayingPlayer: AVPlayer? { get }
@@ -223,6 +230,8 @@ public protocol VideoEngine: AnyObject {
 
     /// Current playback position in seconds (`0` when unknown).
     var currentTime: TimeInterval { get }
+    /// Rendered position on the source-PTS axis used by decoded audio taps.
+    var audioTapPresentationTime: TimeInterval { get }
     /// Clock on the emitted subtitle cues' axis, following the presented picture
     /// rather than a transport position advanced to a pending seek target.
     var subtitlePresentationTime: TimeInterval { get }
@@ -374,7 +383,13 @@ public protocol VideoEngine: AnyObject {
 }
 
 public extension VideoEngine {
+    func installSongTap() -> AsyncStream<SongTapChunk>? { nil }
+    func removeSongTap() {}
+    var supportsActivePictureAnalysis: Bool { false }
+    func sampleActivePicture() async -> VideoActivePictureState { .unsupported }
+    func stopActivePictureAnalysis() {}
     var subtitlePresentationTime: TimeInterval { currentTime }
+    var audioTapPresentationTime: TimeInterval { currentTime }
     func renderSubtitles(at time: TimeInterval, style: SubtitleStyle) {}
     func supportsSubtitleTimingAdjustments(for track: MediaTrack) -> Bool { true }
     var streamingFailure: StreamingPlaybackFailure? { nil }

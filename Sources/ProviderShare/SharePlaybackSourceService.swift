@@ -28,8 +28,48 @@ struct SharePlaybackSourceService: Sendable {
     }
 
     func networkFileLocator(for relativePath: String) async throws -> NetworkFileLocator {
+        HandoffDiagnostics.emit(
+            "shareLocator file=\(HandoffDiagnostics.correlationID(relativePath)) stage=statForOpening"
+        )
         let entry = try await store.statForOpening(relativePath: relativePath)
+        return try networkFileLocator(for: relativePath, entry: entry)
+    }
+
+    func playbackOpening(
+        for relativePath: String, reuseDirectoryMetadata: Bool
+    ) async throws -> (locator: NetworkFileLocator, directoryEntries: [RemoteFileEntry]?) {
+        let statLocator = reuseDirectoryMetadata ? nil : try await networkFileLocator(for: relativePath)
+        let directory = (relativePath as NSString).deletingLastPathComponent
+        let entries = try await sidecarDirectoryEntries(directory)
+        try Task.checkCancellation()
+        let matchingEntries = entries?.filter { $0.relativePath == relativePath } ?? []
+        let locator: NetworkFileLocator
+        if let statLocator {
+            locator = statLocator
+        } else if matchingEntries.count == 1, let entry = matchingEntries.first,
+           entry.kind == .file, entry.size != nil,
+           entry.strongETag != nil || entry.modifiedAt != nil {
+            // This listing is fresh for this Play request, not a browsing cache.
+            // Opening/claiming the source still revalidates its identity and size.
+            locator = try networkFileLocator(for: relativePath, entry: entry)
+        } else {
+            HandoffDiagnostics.emit(
+                "shareLocator file=\(HandoffDiagnostics.correlationID(relativePath)) stage=listingFallback"
+                    + " listed=\(entries != nil) matches=\(matchingEntries.count)"
+            )
+            locator = try await networkFileLocator(for: relativePath)
+        }
+        try Task.checkCancellation()
+        return (locator, entries)
+    }
+
+    private func networkFileLocator(
+        for relativePath: String, entry: RemoteFileEntry
+    ) throws -> NetworkFileLocator {
+        let diagnostic = Self.metadataDiagnostic(relativePath: relativePath, entry: entry)
+        HandoffDiagnostics.emit(diagnostic)
         guard entry.kind == .file, let size = entry.size else {
+            HandoffDiagnostics.emit("\(diagnostic) rejected=missingFileSize")
             throw MediaTransportError.protocolViolation(
                 reason: "network file lacks a stable size"
             )
@@ -44,10 +84,12 @@ struct SharePlaybackSourceService: Sendable {
         } else if let modifiedAt = entry.modifiedAt {
             identity = try RemoteFileIdentity(kind: .modificationTime, modifiedAt: modifiedAt)
         } else {
+            HandoffDiagnostics.emit("\(diagnostic) rejected=missingIdentity")
             throw MediaTransportError.protocolViolation(
                 reason: "network file lacks a stable identity (no strong ETag or modification time)"
             )
         }
+
         let representation = try RemoteFileRepresentation(
             size: size,
             identity: identity,
@@ -66,6 +108,45 @@ struct SharePlaybackSourceService: Sendable {
         )
     }
 
+    static func metadataDiagnostic(relativePath: String, entry: RemoteFileEntry) -> String {
+        "shareLocator file=\(HandoffDiagnostics.correlationID(relativePath)) stage=metadata"
+            + " isFile=\(entry.kind == .file) size=\(entry.size.map(String.init) ?? "missing")"
+            + " strongETag=\(entry.strongETag != nil) modifiedAt=\(entry.modifiedAt != nil)"
+    }
+
+    static func diagnosticErrorCode(_ error: Error) -> String {
+        if let error = error as? MediaTransportError { return "transport.\(error.description)" }
+        if let error = error as? AppError { return "app.\(HandoffDiagnostics.errorCode(error))" }
+        if error is CancellationError { return "cancelled" }
+        if let error = error as? MediaSourceModelError {
+            let code: String = switch error {
+            case .emptyIdentifier: "emptyIdentifier"
+            case .invalidHost: "invalidHost"
+            case .invalidPort: "invalidPort"
+            case .invalidRootPath: "invalidRootPath"
+            case .invalidRelativePath: "invalidRelativePath"
+            case .invalidFileSize: "invalidFileSize"
+            case .invalidRepresentationIdentity: "invalidRepresentationIdentity"
+            case .transportOptionsMismatch: "transportOptionsMismatch"
+            case .unsupportedProvider: "unsupportedProvider"
+            case .unsupportedScheme: "unsupportedScheme"
+            case .invalidOrigin: "invalidOrigin"
+            case .missingHost: "missingHost"
+            case .credentialBearingURL: "credentialBearingURL"
+            case .sensitiveQueryItem: "sensitiveQueryItem"
+            case .urlFragmentNotAllowed: "urlFragmentNotAllowed"
+            }
+            return "model.\(code)"
+        }
+        let native = error as NSError
+        switch native.domain {
+        case NSURLErrorDomain: return "url.\(native.code)"
+        case NSPOSIXErrorDomain: return "posix.\(native.code)"
+        case NSCocoaErrorDomain: return "cocoa.\(native.code)"
+        default: return "unknown"
+        }
+    }
+
     /// Finds text sidecar subtitles for a video by listing its directory (and a
     /// sibling `Subs`/`Subtitles` folder) and matching files by stem, then
     /// materialises each to a local `file://` temp so the player's overlay — which
@@ -77,21 +158,38 @@ struct SharePlaybackSourceService: Sendable {
         forVideoRelPath relPath: String,
         exactStemOnly: Bool = false
     ) async throws -> [MediaTrack] {
+        let directory = (relPath as NSString).deletingLastPathComponent
+        let entries = try await sidecarDirectoryEntries(directory)
+        return try await discoverSidecarSubtitles(
+            forVideoRelPath: relPath, exactStemOnly: exactStemOnly, directoryEntries: entries
+        )
+    }
+
+    func discoverSidecarSubtitles(
+        forVideoRelPath relPath: String,
+        exactStemOnly: Bool,
+        directoryEntries ownEntries: [RemoteFileEntry]?
+    ) async throws -> [MediaTrack] {
+        try Task.checkCancellation()
         let dir = (relPath as NSString).deletingLastPathComponent
         let videoStem = ShareMediaParser.videoStem((relPath as NSString).lastPathComponent)
 
         // Gather candidate (directory, entry, isDedicatedSubsFolder) triples from the
         // video's own folder and any sibling Subs/Subtitles folder. On a
-        // case-insensitive share (Windows/NTFS/exFAT/macOS-hosted SMB) "Subs" and
-        // "subs" resolve to the same folder, so dedup the probed candidates by a
-        // lowercased (dir, name) key to avoid surfacing every sidecar 2-4×.
+        // case-insensitive share, casing aliases must not duplicate tracks.
         var candidates: [(dir: String, name: String, dedicated: Bool)] = []
         var seenCandidateKeys = Set<String>()
-        let ownDir = dir
-        let subFolderNames = ["Subs", "Subtitles", "subs", "subtitles"]
+        // Use the real directory names rather than four speculative network
+        // requests. Keep the legacy probes when the parent cannot be listed.
+        let subFolderNames = ownEntries.map { entries in
+            Set(entries.filter {
+                $0.kind != .file && ["subs", "subtitles"].contains($0.name.lowercased())
+            }.map(\.name)).sorted()
+        } ?? ["Subs", "Subtitles", "subs", "subtitles"]
         let subDirs = subFolderNames.map { sub in dir.isEmpty ? sub : "\(dir)/\(sub)" }
-        for (listDir, dedicated) in [(ownDir, false)] + subDirs.map({ ($0, true) }) {
-            guard let entries = try? await store.rawEntries(inDirectory: listDir) else { continue }
+        for (listDir, dedicated) in [(dir, false)] + subDirs.map({ ($0, true) }) {
+            let entries = dedicated ? try await sidecarDirectoryEntries(listDir) : ownEntries
+            guard let entries else { continue }
             for entry in entries where entry.kind != .directory && ShareMediaParser.isSubtitleFile(entry.name) {
                 let key = "\(listDir.lowercased())/\(entry.name.lowercased())"
                 guard seenCandidateKeys.insert(key).inserted else { continue }
@@ -104,9 +202,15 @@ struct SharePlaybackSourceService: Sendable {
         var nextID = 5_000
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("plozz-sidecars", isDirectory: true)
-        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        } catch {
+            PlozzLog.playback.error("share.sidecars temporary directory unavailable")
+            return []
+        }
 
         for (candidateDir, name, dedicated) in candidates {
+            try Task.checkCancellation()
             guard let sidecar = ShareMediaParser.parseSidecar(name) else { continue }
             let matches = exactStemOnly
                 ? sidecar.stem.caseInsensitiveCompare(videoStem) == .orderedSame
@@ -118,13 +222,26 @@ struct SharePlaybackSourceService: Sendable {
             guard matches else { continue }
 
             let relSidecar = candidateDir.isEmpty ? name : "\(candidateDir)/\(name)"
-            guard let data = try? await store.readFile(relSidecar), !data.isEmpty else { continue }
+            let data: Data
+            do {
+                data = try await store.readFile(relSidecar)
+            } catch {
+                if error is CancellationError || (error as? MediaTransportError) == .cancelled {
+                    throw error
+                }
+                try Task.checkCancellation()
+                PlozzLog.playback.error("share.sidecars read unavailable")
+                continue
+            }
+            try Task.checkCancellation()
+            guard !data.isEmpty else { continue }
             // `.magnitude` (not `abs`) so `Int.min` can't trap; hex keeps it short.
             let stableKey = String(relSidecar.hashValue.magnitude, radix: 16)
             let localURL = tempDir.appendingPathComponent("\(stableKey)-\(name)")
             do {
                 try data.write(to: localURL, options: .atomic)
             } catch {
+                PlozzLog.playback.error("share.sidecars temporary file write failed")
                 continue
             }
             let language = sidecar.language
@@ -147,6 +264,25 @@ struct SharePlaybackSourceService: Sendable {
             nextID += 1
         }
         return tracks
+    }
+
+    private func sidecarDirectoryEntries(_ directory: String) async throws -> [RemoteFileEntry]? {
+        do {
+            try Task.checkCancellation()
+            return try await store.rawEntries(inDirectory: directory)
+        } catch {
+            if error is CancellationError || (error as? MediaTransportError) == .cancelled {
+                throw error
+            }
+            try Task.checkCancellation()
+            let code = Self.diagnosticErrorCode(error)
+            HandoffDiagnostics.emit(
+                "shareLocator directory=\(HandoffDiagnostics.correlationID(directory))"
+                    + " stage=listing event=failed error=\(code)"
+            )
+            PlozzLog.playback.error("share.sidecars directory listing unavailable: \(code)")
+            return nil
+        }
     }
 
     /// Whether a sidecar's parsed stem belongs to the video with `videoStem`.

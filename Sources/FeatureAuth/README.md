@@ -40,6 +40,55 @@ session persistence.
   removal still requires confirmation, and the original address cannot be removed.
   The add action uses a native title-and-icon label so the group's muted row-icon
   color cannot override the prominent button's contrasting foreground.
+- **Source entry points** — both platforms use **Sources** for the device's
+  connected accounts and **Add Source** for the general provider chooser, using
+  `SettingsCopy` for shared labels. Mobile Home and Settings do not have a
+  separate network-share shortcut: **Media Share** is one of the chooser's
+  provider choices. Profile Libraries retains its add action even with connected
+  sources, with device-wide scope made explicit. First-run provider choices,
+  provider-specific reconnects, additional-user sign-in, and device transfer
+  remain distinct flows. **TV Sources / Add TV Source** names the narrower
+  profile-scoped channel setup; its general connection action still opens
+  **Add Source**.
+- **Mobile server onboarding** — `AppShelliOS.AddServerView` starts with the
+  same provider choices as first-run setup, then uses native navigation to
+  discovery and sign-in. Seeded server/user, synced-server, and IPTV reconnect
+  routes skip the chooser. Saved and discovered servers open sign-in directly;
+  manual addresses still pass through `ServerPickerViewModel` validation.
+  `ServerOnboardingPage` keeps mobile discovery, Quick Connect, password, and
+  Plex screens scrollable and width-capped on iPhone and iPad. Plex keeps browser
+  linking and manual codes, preselects owned servers, and adds only the checked
+  servers after Continue. Empty selection cannot continue. Leaving the server
+  selection asks for confirmation, and leaving authentication cancels its work.
+  Mobile primary and secondary page actions use `plozzPageActionButton`, with matching
+  20-point page insets and a 640-point content cap across the server flows.
+  Welcome, Add Source, Silo, and IPTV page actions share `plozzPageActionLabel`
+  inside native large buttons, including alternative sign-in methods.
+  The mobile navigation owner supplies top-leading Cancel at the modal root
+  and Back on subsequent steps. Silo and IPTV suppress their standalone
+  in-content cancellation when hosted in that flow; leaving a step cancels its
+  authentication/import work. Plex preserves its selection-loss confirmation
+  for both root Cancel and pushed Back.
+  Silo uses a matching secondary button to reveal another-device instructions
+  and a short code-verification reminder below its browser action.
+  Mobile link codes use the shared mobile code size without an enclosing
+  settings card, and the code tile uses the shared theme-aware group surface
+  instead of a dark overlay. The shared `LinkCodeExpiryCountdown` sits beside the code when
+  it fits, stacking below at narrow widths or larger text sizes; its neutral
+  mobile tint turns orange near expiry. TV retains its existing layout and tint.
+  Shared Silo and IPTV retain their setup behavior and tvOS layout; media shares
+  retain their native form flow.
+
+Mobile interaction tests use deterministic transport fixtures for navigation,
+retry, cancellation, and selection coverage. `LiveMobileServerOnboardingTests`
+is opt-in through `PLOZZ_ONBOARDING_LIVE_HELPER`, a caller-owned loopback URL.
+The helper serves `GET connection/{jellyfin,emby}` with non-secret `baseURL` and
+`username` fields, and accepts `POST approve-jellyfin` with a `code` field to
+approve the displayed Quick Connect request. It must use dedicated authorized
+test identities and keep credentials in memory, outside launch arguments,
+XCTest logs, and attachments. These tests use real validation/authentication
+and an isolated in-memory account store; they never run against live servers
+in the default suite.
 
 ## Invariants
 
@@ -110,6 +159,21 @@ session persistence.
   than invalidating every provider and losing active Silo grants.
 - **Tokens NEVER leave the Keychain.** Never written to `UserDefaults`,
   never logged. `AccountStore` is split-storage by design.
+- **Offline entry retains normal profile and PIN authorization.** An online Plex
+  Home sign-in can establish a non-synchronizing, device-local Keychain proof for
+  that profile, account credential revision, device, and selected server user.
+  Protected users retain a salted `ProfileLock` verifier, not their PIN. Offline
+  entry restores only that user's server token; it does not install an owner or
+  cloud-discovery token, establish a new binding, or enable automatic sign-in.
+  A connection outage may use this proof in normal mode, so a saved, reachable
+  LAN server remains usable without plex.tv. Explicit credential rejection,
+  changed identity, cancellation, and TLS/protocol failures cannot authorize
+  cached entry. First-time sign-in still requires the provider to be reachable.
+  `RuntimeFeatureFlag.offlineMode` gates this fallback on both platforms.
+  Disabling it retains the proof but cannot use it to authorize entry or create
+  new offline proofs; ordinary online authentication is unchanged.
+  As with other offline authorization, remote PIN/account changes cannot be
+  learned until connectivity returns; an observed rejection revokes the proof.
 - **One Plex Home authorization across servers.** During one profile activation,
   a successful Home-user PIN authenticates that Plex login/user once. Other enabled
   servers with the same Plex account user ID and Home-user UUID reuse its in-memory

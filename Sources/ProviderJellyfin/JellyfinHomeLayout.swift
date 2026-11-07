@@ -6,8 +6,8 @@ struct HomeDisplayPreferencesDto: Decodable {
     let CustomPrefs: [String: String?]?
 }
 
-/// The native Emby ContentService contract. SectionType is deliberately not
-/// interpreted: its string vocabulary is not specified by the public API.
+/// The native Emby ContentService contract. Only verified SectionType values
+/// are interpreted; unknown sections retain their server-owned presentation.
 struct EmbyHomeSectionDto: Decodable {
     let Id: String
     let Name: String? // l10n:content — server-authored section heading
@@ -27,6 +27,31 @@ struct EmbyHomeQueryDto: Decodable {
 }
 
 extension JellyfinProvider {
+    public func homeRowPage(_ feed: HomeRowFeed, startIndex: Int, limit: Int) async throws -> HomeRowPage {
+        guard startIndex >= 0, limit > 0, limit <= PageRequest.defaultLimit,
+              startIndex < Int.max - limit else { throw AppError.invalidResponse }
+        if case let .latest(libraries?) = feed {
+            var items: [MediaItem] = []
+            var seen = Set<String>()
+            for library in libraries where library != collectionDirectoryID {
+                try Task.checkCancellation()
+                let latest = try await client.latestItems(
+                    userID: session.userID, limit: startIndex + limit + 1, parentID: library
+                )
+                items += latest.filter { seen.insert($0.Id).inserted }.map { map(item: $0).taggingLibrary(library) }
+            }
+            return .prefix(items, startIndex: startIndex, limit: limit)
+        }
+        guard case let .server(section, excluded, _, _) = feed else {
+            return try await homeRowPrefixPage(feed, startIndex: startIndex, limit: limit)
+        }
+        let items = try await loadServerHomeItems(
+            section: section, limit: startIndex + limit + 1, excludingLibraryIDs: excluded,
+            allowedParents: nil, isPreview: false
+        )
+        return .prefix(items, startIndex: startIndex, limit: limit)
+    }
+
     public func serverHomeLayout() async throws -> ServerHomeLayout? {
         if kind == .emby {
             let native: [EmbyHomeSectionDto]?
@@ -92,11 +117,11 @@ extension JellyfinProvider {
 
     private func loadServerHomeItems(
         section: ServerHomeSection, limit: Int, excludingLibraryIDs: Set<String>,
-        allowedParents: Result<[String?], AppError>?
+        allowedParents: Result<[String?], AppError>?, isPreview: Bool = true
     ) async throws -> [MediaItem] {
         guard limit > 0, section.kind != .libraries, section.kind != .liveTV,
               section.libraryID.map({ !excludingLibraryIDs.contains($0) }) ?? true else { return [] }
-        let boundedLimit = section.kind == .continueWatching ? limit : min(limit, 100)
+        let boundedLimit = section.kind == .continueWatching || !isPreview ? limit : min(limit, 100)
         if section.id.hasPrefix("emby:") {
             guard kind == .emby else { throw AppError.invalidResponse }
             let nativeID = String(section.id.dropFirst("emby:".count))
@@ -232,13 +257,15 @@ extension JellyfinProvider {
         )
         var seen = Set<String>()
         for section in native {
+            let sectionType = section.SectionType?.lowercased()
             let parent = section.ParentId ?? section.ParentItem?.Id
             let collectionType = section.CollectionType ?? section.ParentItem?.CollectionType
                 ?? views.first(where: { $0.Id == parent })?.CollectionType
             let collections = Set(([collectionType].compactMap { $0 }
                 + (section.Query?.CollectionTypes ?? [])).map { $0.lowercased() })
             let itemTypes = Set((section.ItemTypes ?? []).map { $0.lowercased() })
-            let music = collections.contains(where: { Self.isMusicCollection($0) })
+            let music = sectionType == "resumeaudio"
+                || collections.contains(where: { Self.isMusicCollection($0) })
                 || !itemTypes.isDisjoint(with: ["audio", "musicalbum", "musicartist"])
             let reading = collections.contains(where: { Self.isReadingCollection($0) })
                 || !itemTypes.isDisjoint(with: ["book", "audiobook"])
@@ -251,11 +278,13 @@ extension JellyfinProvider {
             if collections.contains("livetv")
                 || !itemTypes.isDisjoint(with: ["tvchannel", "program"]) {
                 kind = .liveTV
-            } else if !itemTypes.isEmpty
-                        && itemTypes.isSubset(of: ["collectionfolder", "userview"]) {
+            } else if sectionType == "userviews"
+                        || (!itemTypes.isEmpty && itemTypes.isSubset(of: ["collectionfolder", "userview"])) {
                 kind = .libraries
-            } else if section.Query?.IsResumable == true {
+            } else if sectionType == "resume" || section.Query?.IsResumable == true {
                 kind = .continueWatching
+            } else if sectionType == "latestmedia" {
+                kind = .recentlyAdded
             } else {
                 kind = .recommendations
             }

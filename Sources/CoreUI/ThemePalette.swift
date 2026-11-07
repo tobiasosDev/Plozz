@@ -169,6 +169,15 @@ public struct ThemePalette: Equatable, Sendable {
     /// Standard dimming behind app-owned dialogs; system presentations own theirs.
     public var dialogBackdropOpacity: Double { isLight ? 0.4 : 0.85 }
 
+    /// Feedback floats without a dimmed backdrop, including over a near-black page.
+    public var toast: SurfaceStyle {
+        SurfaceStyle(
+            fill: isLight ? .white : Color(red: 0.24, green: 0.25, blue: 0.27),
+            border: isLight ? Color.black.opacity(0.06) : Color.white.opacity(0.12),
+            shadow: SurfaceShadow(color: .black.opacity(isLight ? 0.10 : 0.20), radius: 12, y: 4)
+        )
+    }
+
     /// Only the module's own `dark`/`pureBlack`/`light` literals construct palettes;
     /// external callers use the static factories (`palette(for:)`) or the ready
     /// palettes. Kept `internal` (not `public`) so adding tokens here is never a
@@ -234,13 +243,18 @@ public struct ThemePalette: Equatable, Sendable {
 
 public extension ThemePalette {
     static let gradientSurfaceFillOpacity = 0.05
+    static let detailGradientSurfaceFillOpacity = 0.12
 
     var gradientSurfaceTint: Color { isLight ? .black : .white }
 
     var gradientSurface: SurfaceStyle {
+        gradientSurface(fillOpacity: Self.gradientSurfaceFillOpacity)
+    }
+
+    func gradientSurface(fillOpacity: Double) -> SurfaceStyle {
         SurfaceStyle(
-            fill: gradientSurfaceTint.opacity(Self.gradientSurfaceFillOpacity),
-            border: gradientSurfaceTint.opacity(Self.gradientSurfaceFillOpacity),
+            fill: gradientSurfaceTint.opacity(fillOpacity),
+            border: gradientSurfaceTint.opacity(fillOpacity),
             shadow: raised.shadow
         )
     }

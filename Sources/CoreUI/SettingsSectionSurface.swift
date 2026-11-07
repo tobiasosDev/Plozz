@@ -1,6 +1,83 @@
 #if canImport(SwiftUI)
 import SwiftUI
 
+#if os(iOS)
+private extension ContainerValues {
+    @Entry var settingsActionOwnsInsets = false
+}
+
+private struct SettingsActionRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+#endif
+
+public extension View {
+    /// A single action owns its padded hit area; the containing group adds no second inset.
+    @ViewBuilder func settingsActionRow() -> some View {
+        #if os(iOS)
+        buttonStyle(SettingsActionRowStyle())
+            .containerValue(\.settingsActionOwnsInsets, true)
+        #else
+        self
+        #endif
+    }
+
+    /// Use inside a control's label when it shares a row with other controls.
+    @ViewBuilder func settingsControlTarget() -> some View {
+        #if os(iOS)
+        frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+        #else
+        self
+        #endif
+    }
+}
+
+#if os(iOS)
+/// Keeps the minimum target inside the native menu trigger, including its empty space.
+public struct SettingsControlMenu<Content: View, Label: View>: View {
+    private let content: Content
+    private let label: Label
+
+    public init(@ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label) {
+        self.content = content()
+        self.label = label()
+    }
+
+    public var body: some View {
+        Menu { content } label: {
+            label
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .settingsControlTarget()
+        }
+        .buttonStyle(.plain)
+    }
+}
+#endif
+
+public struct SettingsMenuValue: View {
+    private let value: Text
+
+    public init(_ value: Text) { self.value = value }
+
+    public var body: some View {
+        HStack(spacing: 8) {
+            value
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.caption.weight(.semibold))
+                .accessibilityHidden(true)
+        }
+        .foregroundStyle(.primary)
+    }
+}
+
 public struct SettingsMenuLabel: View {
     private let title: LocalizedStringResource
     private let value: Text
@@ -17,13 +94,7 @@ public struct SettingsMenuLabel: View {
 
     public var body: some View {
         LabeledContent {
-            HStack(spacing: 8) {
-                value
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption.weight(.semibold))
-                    .accessibilityHidden(true)
-            }
-            .foregroundStyle(.primary)
+            SettingsMenuValue(value)
         } label: {
             Text(title)
         }
@@ -116,6 +187,7 @@ public struct SettingsSectionGroup<Content: View, Footer: View>: View {
     }
 
     public var body: some View {
+        let cornerRadius: CGFloat = 18
         VStack(alignment: .leading, spacing: 4) {
             if title != nil || accessory != nil {
                 HStack(alignment: .firstTextBaseline) {
@@ -139,9 +211,21 @@ public struct SettingsSectionGroup<Content: View, Footer: View>: View {
                     ForEach(subviews) { subview in
                         subview
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            #if os(iOS)
+                            .padding(.horizontal, subview.containerValues.settingsActionOwnsInsets ? 0 : 16)
+                            .padding(.vertical, subview.containerValues.settingsActionOwnsInsets ? 0 : 12)
+                            #else
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
+                            #endif
                             .contentShape(Rectangle())
+                            #if os(iOS)
+                            .modifier(SettingsSearchRowHighlight(
+                                isFirst: subview.id == subviews.first?.id,
+                                isLast: subview.id == subviews.last?.id,
+                                cornerRadius: cornerRadius
+                            ))
+                            #endif
                         if subview.id != subviews.last?.id {
                             Rectangle()
                                 .fill(palette.separator)
@@ -151,6 +235,10 @@ public struct SettingsSectionGroup<Content: View, Footer: View>: View {
                     }
                 }
             }
+            #if os(iOS)
+            // Subviews resolve their environment before the per-row modifiers are applied.
+            .environment(\.settingsSearchRowOwnsHighlight, true)
+            #endif
             .buttonStyle(SettingsSectionButtonStyle())
             .labelStyle(SettingsIconLabelStyle())
             #if os(tvOS)
@@ -161,7 +249,7 @@ public struct SettingsSectionGroup<Content: View, Footer: View>: View {
             // cell's primary action, stealing taps from sibling controls.
             .pickerStyle(.menu)
             #endif
-            .settingsGroupSurface(cornerRadius: 18)
+            .settingsGroupSurface(cornerRadius: cornerRadius)
 
             footer
                 #if os(tvOS)

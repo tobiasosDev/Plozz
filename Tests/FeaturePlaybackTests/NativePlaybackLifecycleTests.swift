@@ -5,6 +5,52 @@ import XCTest
 
 @MainActor
 final class NativePlaybackLifecycleTests: XCTestCase {
+    func testPictureCapabilityRequiresAnInjectedAnalyzerAndStopReleasesIt() async {
+        let plain = NativeVideoEngine(startsMuted: true)
+        XCTAssertFalse(plain.supportsActivePictureAnalysis)
+        let unsupported = await plain.sampleActivePicture()
+        XCTAssertEqual(unsupported, .unsupported)
+        let analyzer = PictureAnalyzer()
+        let engine = NativeVideoEngine(startsMuted: true, activePictureAnalyzer: analyzer)
+        XCTAssertTrue(engine.supportsActivePictureAnalysis)
+        let unavailable = await engine.sampleActivePicture()
+        XCTAssertEqual(unavailable, .unavailable)
+        XCTAssertEqual(analyzer.samples, 0)
+        engine.stop()
+        XCTAssertEqual(analyzer.stops, 1)
+        engine.stopActivePictureAnalysis()
+        XCTAssertEqual(analyzer.stops, 2)
+    }
+
+    private final class PictureAnalyzer: NativeVideoActivePictureAnalyzing {
+        var samples = 0
+        var stops = 0
+        func sample(player: AVPlayer, generation: UInt64, dynamicRange: SourceDynamicRange?) async -> VideoActivePictureState {
+            samples += 1
+            return .unavailable
+        }
+        func stop() { stops += 1 }
+    }
+
+    func testNativePlaybackDeclaresMultichannelContentBeforePlaying() async throws {
+        let session = AVAudioSession.sharedInstance()
+        let previous = session.supportsMultichannelContent
+        let engine = NativeVideoEngine(startsMuted: true)
+        defer {
+            engine.stop()
+            do {
+                try session.setSupportsMultichannelContent(previous)
+            } catch {
+                XCTFail("Could not restore the audio session: \(error)")
+            }
+        }
+        try session.setSupportsMultichannelContent(false)
+        await engine.load(request: request(), startPosition: 0)
+        XCTAssertEqual(session.category, .playback)
+        XCTAssertEqual(session.mode, .moviePlayback)
+        XCTAssertTrue(session.supportsMultichannelContent)
+    }
+
     func testRepeatedStopDisconnectsRetainedPlayersAndTheirOutputs() async throws {
         let engine = NativeVideoEngine(startsMuted: true)
         defer { engine.stop() }

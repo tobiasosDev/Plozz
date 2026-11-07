@@ -11,6 +11,48 @@ import XCTest
 
 @MainActor
 final class ForegroundProfileProtectionHostedTests: XCTestCase {
+    func testForegroundPickerStartsOnTheActiveProfile() async throws {
+        try await verifyPickerEntry(delayedInput: false)
+    }
+
+    func testForegroundPickerStartsOnAProfileWhenFocusBecomesAvailableLater() async throws {
+        try await verifyPickerEntry(delayedInput: true)
+    }
+
+    private func verifyPickerEntry(delayedInput: Bool) async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        fixture.model.pickerInputEnabled = !delayedInput
+        fixture.app.profileFlow.lockForForegroundIfNeeded()
+        try await waitUntil { !fixture.window.isUserInteractionEnabled }
+        let shield = try XCTUnwrap(fixture.scene.windows.first {
+            $0.isKeyWindow && $0 !== fixture.window
+        })
+
+        if delayedInput {
+            // The picker can mount while the app is still returning to the foreground.
+            try await Task.sleep(for: .milliseconds(300))
+            fixture.model.pickerInputEnabled = true
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        shield.layoutIfNeeded()
+        try await waitUntil { UIFocusSystem.focusSystem(for: shield)?.focusedItem != nil }
+        let focused = try XCTUnwrap(UIFocusSystem.focusSystem(for: shield)?.focusedItem)
+        let frame = try XCTUnwrap(NavigationRowFocusRequester.frame(of: focused, relativeTo: shield))
+        XCTAssertGreaterThan(frame.height, 150, "Entry focus must be on an avatar, not the Settings cog.")
+        XCTAssertGreaterThan(frame.midY, shield.bounds.height / 3)
+        XCTAssertLessThan(frame.midX, shield.bounds.width / 4, "The active profile leads the recency-ordered row.")
+        XCTAssertTrue(fixture.app.profileFlow.isForegroundLocked)
+        XCTAssertNil(fixture.app.profileFlow.pendingLockedProfile, "Focusing a profile must not select it.")
+        let image = UIGraphicsImageRenderer(bounds: shield.bounds).image { _ in
+            shield.drawHierarchy(in: shield.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "foreground-profile-picker-entry-focus-delayed-\(delayedInput)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testPINShieldKeepsDetailAndPresentedSettingsUntilSameProfileUnlocks() async throws {
         let fixture = try await makeFixture()
         defer { fixture.close() }
@@ -204,6 +246,7 @@ final class ForegroundProfileProtectionHostedTests: XCTestCase {
     final class BrowsingModel {
         var path: [String] = []
         var playerPresented = false
+        var pickerInputEnabled = true
     }
 
     private struct BrowsingRoot: View {
@@ -223,10 +266,20 @@ final class ForegroundProfileProtectionHostedTests: XCTestCase {
             .environment(\.tvProfileForegroundState, foreground)
             .background(
                 TVProfileForegroundShield(flow: app.profileFlow) { dismiss in
-                    ForegroundProfileGateView(appState: app, onUnlock: dismiss).environment(app.profilesModel)
+                    ForegroundProfileGateView(appState: app, onUnlock: dismiss)
+                        .environment(app.profilesModel)
+                        .modifier(PickerReadiness(model: model))
                 }
                 .frame(width: 0, height: 0)
             )
+        }
+    }
+
+    private struct PickerReadiness: ViewModifier {
+        let model: BrowsingModel
+
+        func body(content: Content) -> some View {
+            content.disabled(!model.pickerInputEnabled)
         }
     }
 }

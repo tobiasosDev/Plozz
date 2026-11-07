@@ -11,6 +11,104 @@ import UIKit
 
 @MainActor
 final class StreamingPlaybackTests: XCTestCase {
+    func testForceTranscodingHintRequiresAFailedConvertedStream() async {
+        for enabled in [false, true] {
+            for converted in [false, true] {
+                let provider = QualityPlaybackProvider()
+                if converted { await provider.setCompatibilityRendition() }
+                else { await provider.setDeliversOriginal() }
+                let engine = QualityEngine()
+                let model = PlayerViewModel(
+                    provider: provider, itemID: "movie",
+                    streamingOptions: .init(quality: .original, forceTranscoding: enabled),
+                    engineFactory: .init(makeNative: { _ in engine })
+                )
+                await model.load()
+                XCTAssertEqual(model.phase, .ready)
+                XCTAssertFalse(model.showsForcedTranscodingFailureHint)
+                XCTAssertEqual(model.streamingIsTranscoding, converted)
+                model.handoffSetPhase(.failed(.invalidResponse))
+                XCTAssertEqual(model.showsForcedTranscodingFailureHint, enabled && converted)
+                XCTAssertNotNil(model.playbackFailureReport?.message)
+                XCTAssertEqual(model.streamingOptions?.forceTranscoding, enabled)
+                model.retryPlayback()
+                XCTAssertFalse(model.showsForcedTranscodingFailureHint)
+                await wait { model.phase == .ready }
+                XCTAssertFalse(model.showsForcedTranscodingFailureHint)
+                await model.stop()
+            }
+        }
+    }
+
+    func testForceTranscodingHintDistinguishesConversionRefusalsFromOtherPreparationFailures() async {
+        let cases: [(StreamingQualityError, Bool)] = [
+            (.unavailable, true), (.unsupported, true), (.noCompatibleStream, true),
+            (.codecUnavailable(.hevc), true), (.plexDecision(1000), true),
+            (.serverRefusal("Conversion refused.", reason: .transcodingDisabled), true),
+            (.serverRefusal("Conversion refused.", reason: .conversionToolUnavailable), true),
+            (.serverRefusal("Conversion refused.", reason: .hdrTranscodeUnsupported), true),
+            (.authenticationRequired, false), (.permissionDenied, false), (.sourceUnavailable, false),
+            (.noStreams, false), (.malformedResponse, false), (.negotiationFailed, false),
+            (.serverHTTP(401), false), (.serverHTTP(500), false),
+            (.playback(.init(kind: .network)), false),
+            (.serverRefusal("Source refused.", reason: .sourceMismatch), false)
+        ]
+        for (error, expected) in cases {
+            let provider = QualityPlaybackProvider()
+            await provider.setPreparationFailure(error)
+            let model = PlayerViewModel(
+                provider: provider, itemID: "movie",
+                streamingOptions: .init(quality: .original, forceTranscoding: true),
+                engineFactory: .init(makeNative: { _ in QualityEngine() })
+            )
+            await model.load()
+            XCTAssertEqual(model.phase, .failed(.invalidResponse))
+            XCTAssertEqual(model.streamingQualityError, error)
+            XCTAssertEqual(model.showsForcedTranscodingFailureHint, expected, "\(error)")
+            XCTAssertEqual(model.streamingOptions?.forceTranscoding, true)
+            await model.stop()
+        }
+    }
+
+    func testForceTranscodingHintFollowsTheCurrentVideoSelection() async {
+        let provider = QualityPlaybackProvider()
+        let engine = QualityEngine()
+        let model = PlayerViewModel(
+            provider: provider, itemID: "movie", streamingOptions: .init(quality: .original),
+            engineFactory: .init(makeNative: { _ in engine })
+        )
+        await model.load()
+        model.changeStreamingOptions(.init(quality: .original, forceTranscoding: true))
+        await wait { model.phase == .ready && engine.positions.count == 2 }
+        model.handoffSetPhase(.failed(.invalidResponse))
+        XCTAssertTrue(model.showsForcedTranscodingFailureHint)
+        model.changeStreamingOptions(.init(quality: .original))
+        XCTAssertFalse(model.showsForcedTranscodingFailureHint)
+        await wait { model.phase == .ready && engine.positions.count == 3 }
+        model.handoffSetPhase(.failed(.invalidResponse))
+        XCTAssertFalse(model.showsForcedTranscodingFailureHint)
+        await model.stop()
+    }
+
+    func testForceTranscodingContinuationDoesNotTurnAnAutomaticFallbackIntoASetting() async {
+        for selectedOptions: StreamingPlaybackOptions? in [nil, .init(quality: .original)] {
+            let model = PlayerViewModel(
+                provider: QualityPlaybackProvider(), itemID: "movie",
+                continuation: .init(
+                    position: 30, streamingOptions: .init(quality: .original, forceTranscoding: true),
+                    intendsPlayback: true, speed: 1, tracks: .init()
+                ),
+                streamingOptions: selectedOptions,
+                engineFactory: .init(makeNative: { _ in QualityEngine() })
+            )
+            await model.load()
+            XCTAssertTrue(model.streamingIsTranscoding)
+            model.handoffSetPhase(.failed(.invalidResponse))
+            XCTAssertEqual(model.showsForcedTranscodingFailureHint, selectedOptions != nil)
+            await model.stop()
+        }
+    }
+
     func testFailureSnapshotPinsTheOldItemAndAttemptAcrossImmediateRetry() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let journal = PlaybackDiagnosticJournal(url: root.appendingPathComponent("playback.json"))
@@ -21,11 +119,13 @@ final class StreamingPlaybackTests: XCTestCase {
             engineFactory: .init(makeNative: { _ in engine }), diagnosticJournal: journal
         )
         await model.load()
+        engine.liveTelemetry = .init(bufferedSecondsAhead: 0.25, audioPipelineDescription: "private-pipeline")
         engine.nowPlayingPlayer = AVPlayer(playerItem: DiagnosticFailureItem(url: URL(fileURLWithPath: "/fixture")))
         engine.streamingFailure = .init(kind: .unknown, domain: .coreMedia, code: -12889)
         model.handoffSetPhase(.failed(.invalidResponse))
         XCTAssertNil(engine.nowPlayingPlayer, "The engine has already torn down its failing item.")
         engine.streamingFailure = nil
+        engine.liveTelemetry = .init(bufferedSecondsAhead: 30)
         model.retryPlayback()
         await wait { model.phase == .ready && engine.positions.count == 2 }
         await model.stop()
@@ -51,6 +151,8 @@ final class StreamingPlaybackTests: XCTestCase {
         XCTAssertEqual(captured.facts.quality, .sd480)
         XCTAssertEqual(captured.facts.codecPreference, .preferHEVC)
         XCTAssertEqual(captured.attempt, failure.attempt)
+        XCTAssertEqual(failure.pipeline?.bufferedSeconds, 0.25)
+        XCTAssertEqual(captured.pipeline, failure.pipeline, "Late evidence must retain the failing engine's telemetry.")
         XCTAssertNotEqual(captured.attempt, entries.last { $0.event == .loaded }?.attempt)
         let report = await journal.report()
         XCTAssertFalse(report.contains("private"))
@@ -490,6 +592,9 @@ final class StreamingPlaybackTests: XCTestCase {
                 XCTAssertEqual(calls.last?.source, "version")
                 XCTAssertEqual(calls.last?.options.quality, options?.quality ?? .original)
                 if options == nil { XCTAssertEqual(calls.last?.options.forceTranscoding, true) }
+                model.handoffSetPhase(.failed(.invalidResponse))
+                XCTAssertFalse(model.showsForcedTranscodingFailureHint,
+                               "Keeping a legacy fallback transcoding is not enabling the user's setting.")
                 await model.stop()
             }
         }
@@ -1024,6 +1129,161 @@ final class StreamingPlaybackTests: XCTestCase {
         let calls = await provider.calls
         XCTAssertTrue(calls.isEmpty)
         XCTAssertEqual(engine.positions.count, 1)
+    }
+
+    func testMediaServicesResetKeepsRenditionTracksAndRewoundPositionOnAFreshEngine() async throws {
+        let provider = QualityPlaybackProvider()
+        let first = QualityEngine()
+        let replacement = QualityEngine()
+        var creations = 0
+        var options = StreamingPlaybackOptions(quality: .hd720)
+        options.audioTrack = .init(id: 4, kind: .audio, displayTitle: "Japanese", language: "jpn")
+        let model = PlayerViewModel(
+            provider: provider, itemID: "movie", mediaSourceID: "version",
+            playbackSettings: .init(resumeRewindInterval: .five),
+            streamingOptions: options,
+            engineFactory: .init(makeNative: { _ in
+                creations += 1
+                return creations == 1 ? first : replacement
+            })
+        )
+        await model.load()
+        model.selectSubtitleOption(id: 6)
+        model.setPaused(true)
+        model.setPlaybackSpeed(1.5)
+        first.currentTime = 37
+        first.furthestObservedPosition = 400
+        first.streamingFailure = .init(kind: .mediaServicesReset, domain: .avFoundation, code: -11819)
+        let staleCallback = try XCTUnwrap(first.onFailure)
+        staleCallback(.invalidResponse)
+        staleCallback(.invalidResponse)
+        await wait { replacement.positions.count == 1 && model.phase == .ready }
+        XCTAssertEqual(creations, 2)
+        XCTAssertEqual(replacement.positions, [37], "A reset must not jump to the pre-rewind high water mark.")
+        XCTAssertEqual(replacement.loadedRequests.first?.streamURL, first.loadedRequests.first?.streamURL)
+        XCTAssertEqual(replacement.loadedRequests.first?.playSessionID, first.loadedRequests.first?.playSessionID)
+        XCTAssertEqual(replacement.loadedRequests.first?.streamingSessionID, "quality-1")
+        XCTAssertEqual(replacement.loadedQualities, [.hd720])
+        XCTAssertEqual(replacement.currentAudioTrackID, 4)
+        XCTAssertEqual(replacement.selectedSubtitleID, 6)
+        XCTAssertEqual(replacement.playbackSpeed, 1.5)
+        XCTAssertTrue(replacement.isPaused)
+        XCTAssertNil(model.streamingQualityError)
+        staleCallback(.invalidResponse)
+        await Task.yield()
+        XCTAssertEqual(creations, 2)
+        let calls = await provider.calls
+        let released = await provider.released
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls.first?.source, "version")
+        XCTAssertTrue(released.isEmpty)
+        let audioFailure = NativePlaybackFailure.audioSessionFailure(
+            NSError(domain: NSOSStatusErrorDomain, code: 561210739)
+        )
+        replacement.streamingFailure = audioFailure
+        replacement.onFailure?(.invalidResponse)
+        await wait { if case .failed = model.phase { return true }; return false }
+        XCTAssertEqual(model.streamingQualityError, .playback(audioFailure))
+        XCTAssertEqual(creations, 2, "Audio-session failure cannot launch codec/transcode retries.")
+        await model.stop()
+    }
+
+    func testMediaServicesResetUsesPendingSeekAndDoesNotLoop() async {
+        let provider = QualityPlaybackProvider()
+        let first = QualityEngine()
+        let replacement = QualityEngine()
+        var creations = 0
+        let model = PlayerViewModel(
+            provider: provider, itemID: "movie",
+            engineFactory: .init(makeNative: { _ in
+                creations += 1
+                return creations == 1 ? first : replacement
+            })
+        )
+        await model.load()
+        first.currentTime = 250
+        model.controls.pendingSeekTarget = 0.5
+        first.streamingFailure = .init(kind: .mediaServicesReset, domain: .avFoundation, code: -11819)
+        first.onFailure?(.invalidResponse)
+        await wait { replacement.positions.count == 1 && model.phase == .ready }
+        XCTAssertEqual(replacement.positions, [0.5])
+        replacement.streamingFailure = first.streamingFailure
+        replacement.onFailure?(.invalidResponse)
+        await wait { if case .failed = model.phase { return true }; return false }
+        XCTAssertEqual(creations, 2)
+        let calls = await provider.calls
+        XCTAssertTrue(calls.isEmpty)
+        await model.stop()
+    }
+
+    func testStopDuringMediaServicesDrainCannotRecreatePlayback() async {
+        let (model, first, provider) = make()
+        await model.load()
+        let gate = QualityDecisionGate()
+        first.drainGate = gate
+        first.streamingFailure = .init(kind: .mediaServicesReset, domain: .avFoundation, code: -11819)
+        first.onFailure?(.invalidResponse)
+        await gate.waitUntilEntered()
+        await model.stop()
+        await gate.release()
+        await Task.yield()
+        XCTAssertEqual(first.positions.count, 1)
+        let calls = await provider.calls
+        XCTAssertEqual(calls.count, 1)
+    }
+
+    func testMediaServicesRecoveryCannotCascadeBeforePresentingVideo() async {
+        for presented in [false, true] {
+            let provider = QualityPlaybackProvider()
+            let first = QualityEngine()
+            let replacement = QualityEngine()
+            var creations = 0
+            let model = PlayerViewModel(
+                provider: provider, itemID: "movie", streamingOptions: .init(quality: .hd720),
+                engineFactory: .init(makeNative: { _ in
+                    creations += 1
+                    return creations == 1 ? first : replacement
+                })
+            )
+            await model.load()
+            first.streamingFailure = .init(kind: .mediaServicesReset, domain: .avFoundation, code: -11819)
+            first.onFailure?(.invalidResponse)
+            await wait { replacement.positions.count == 1 && model.phase == .ready }
+            if presented {
+                replacement.hasPresentedVideoFrame = true
+                replacement.onProgress?()
+                replacement.hasPresentedVideoFrame = false
+            }
+            replacement.streamingFailure = .init(kind: .unknown, domain: .avFoundation, code: -11800)
+            replacement.onFailure?(.invalidResponse)
+            if presented {
+                await wait { replacement.positions.count == 2 && model.phase == .ready }
+            } else {
+                await wait { if case .failed = model.phase { return true }; return false }
+            }
+            let calls = await provider.calls
+            XCTAssertEqual(calls.count, presented ? 2 : 1)
+            await model.stop()
+        }
+    }
+
+    func testQualityChangeSupersedesMediaServicesDrain() async {
+        let (model, first, provider) = make()
+        await model.load()
+        let gate = QualityDecisionGate()
+        first.drainGate = gate
+        first.streamingFailure = .init(kind: .mediaServicesReset, domain: .avFoundation, code: -11819)
+        first.onFailure?(.invalidResponse)
+        await gate.waitUntilEntered()
+        first.streamingFailure = nil
+        model.changeStreamingOptions(.init(quality: .sd480))
+        await wait { first.positions.count == 2 && model.phase == .ready }
+        await gate.release()
+        await Task.yield()
+        XCTAssertEqual(first.loadedQualities, [.hd720, .sd480])
+        let calls = await provider.calls
+        XCTAssertEqual(calls.count, 2)
+        await model.stop()
     }
 
     func testNetworkStreamFailureSkipsCodecRetryAndKeepsItsEvidence() async {
@@ -1576,6 +1836,8 @@ private actor QualityPlaybackProvider: StreamingQualityProviding, StreamingSessi
     private var startReportGate: QualityDecisionGate?
     private var stopReportGate: QualityDecisionGate?
     private var refusesQuality = false
+    private var preparationFailure: StreamingQualityError?
+    private var deliversOriginal = false
     private var hevcFailure: (any Error & Sendable)?
     private var negotiatedCodec: DirectPlayVideoCodec?
     private var sourceRange: String?
@@ -1600,6 +1862,8 @@ private actor QualityPlaybackProvider: StreamingQualityProviding, StreamingSessi
         }
     }
     func setRefusesQuality() { refusesQuality = true }
+    func setPreparationFailure(_ error: StreamingQualityError) { preparationFailure = error }
+    func setDeliversOriginal() { deliversOriginal = true }
     func setHEVCFailure(_ error: any Error & Sendable) { hevcFailure = error }
     func setNegotiatedCodec(_ codec: DirectPlayVideoCodec) { negotiatedCodec = codec }
     func setSourceRange(_ range: String) { sourceRange = range }
@@ -1622,10 +1886,12 @@ private actor QualityPlaybackProvider: StreamingQualityProviding, StreamingSessi
         calls.append(.init(item: itemID, source: mediaSourceID, options: streaming, forceTranscode: forceTranscode))
         let sequence = calls.count
         if let gate { self.gate = nil; await gate.suspend() }
+        if let preparationFailure { throw preparationFailure }
         if refusesQuality { throw StreamingQualityError.unavailable }
         if streaming.codec == .preferHEVC, let hevcFailure { throw hevcFailure }
         var request = baseRequest()
-        request.isTranscoding = streaming.requiresConversionPolicy || compatibilityRendition || forceTranscode
+        request.isTranscoding = !deliversOriginal
+            && (streaming.requiresConversionPolicy || compatibilityRendition || forceTranscode)
         request.deliveryMode = request.isTranscoding ? .transcode : .directPlay
         request.streamingOptions = streaming
         request.playSessionID = "report-\(sequence)"
@@ -1695,6 +1961,7 @@ private final class QualityEngine: VideoEngine {
     var loadGate: QualityDecisionGate?
     var drainGate: QualityDecisionGate?
     var streamingFailure: StreamingPlaybackFailure?
+    var liveTelemetry: EngineLiveTelemetry?
     var streamingOutputDynamicRange: SourceDynamicRange?
     var streamingOutputVideoCodec: DirectPlayVideoCodec?
     let displayName = "Quality fixture"
@@ -1713,8 +1980,11 @@ private final class QualityEngine: VideoEngine {
     var selectedSubtitleID: Int?
     var onPause: (@MainActor () -> Void)?
     var isPlaybackPositionReady: Bool { status == .ready }
+    var hasPresentedVideoFrame = false
     var positions: [TimeInterval] = []
     var loadedQualities: [StreamingQuality] = []
+    var loadedRequests: [PlaybackRequest] = []
+    var playbackSpeed: Double = 1
     var onProgress: (@MainActor () -> Void)?
     var onFailure: (@MainActor (AppError) -> Void)?
     var onDiagnosticPhaseChanged: (@MainActor (PlaybackDiagnosticJournal.Phase) -> Void)?
@@ -1729,6 +1999,7 @@ private final class QualityEngine: VideoEngine {
     func load(request: PlaybackRequest, startPosition: TimeInterval) async {
         if let loadGate { self.loadGate = nil; await loadGate.suspend() }
         positions.append(startPosition)
+        loadedRequests.append(request)
         if let quality = request.streamingOptions?.quality { loadedQualities.append(quality) }
         currentTime = startPosition
         audioTracks = request.audioTracks
@@ -1742,6 +2013,7 @@ private final class QualityEngine: VideoEngine {
     func play() { isPaused = false }
     func pause() { isPaused = true; onPause?() }
     func seek(to seconds: TimeInterval) async { currentTime = seconds }
+    func setPlaybackSpeed(_ rate: Double) { playbackSpeed = rate }
     func stop() {
         status = .idle
         currentTime = 0

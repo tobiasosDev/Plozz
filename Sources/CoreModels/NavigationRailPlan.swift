@@ -8,6 +8,7 @@ public enum NavigationRailDestination: Hashable, Sendable {
     case watchlist
     /// Personal film suggestions.
     case tonight
+    case discover
     case liveTV
     case music
     case settings
@@ -23,6 +24,7 @@ public enum NavigationRailDestination: Hashable, Sendable {
         case .search: return "search"
         case .watchlist: return "watchlist"
         case .tonight: return "tonight"
+        case .discover: return "discover"
         case .liveTV: return "liveTV"
         case .music: return "music"
         case .settings: return "settings"
@@ -37,6 +39,7 @@ public enum NavigationRailDestination: Hashable, Sendable {
         case "search": self = .search
         case "watchlist": self = .watchlist
         case "tonight": self = .tonight
+        case "discover": self = .discover
         case "liveTV": self = .liveTV
         case "music": self = .music
         case "settings": self = .settings
@@ -93,7 +96,10 @@ public enum NavigationDestinationDefaults {
     }
 
     public static func compact(hasMusic: Bool) -> [String] {
-        var keys = [NavigationLibraryLayout.homeKey, NavigationLibraryLayout.tonightKey, NavigationLibraryLayout.watchlistKey]
+        var keys = [
+            NavigationLibraryLayout.homeKey, NavigationLibraryLayout.tonightKey,
+            NavigationLibraryLayout.discoverKey, NavigationLibraryLayout.watchlistKey
+        ]
         keys.append(NavigationLibraryLayout.liveTVKey)
         keys.append(NavigationLibraryLayout.searchKey)
         if hasMusic { keys.append(NavigationLibraryLayout.musicKey) }
@@ -117,28 +123,42 @@ public enum NavigationDestinationDefaults {
         return keys
     }
 
+    public static let iOSDefaultVisibleKeys = [
+        NavigationLibraryLayout.homeKey,
+        NavigationLibraryLayout.downloadsKey,
+        NavigationLibraryLayout.searchKey,
+    ]
+
+    /// The editor's catalogue, not the default enabled tabs.
     public static var iOS: [String] {
-        var keys = [NavigationLibraryLayout.homeKey, NavigationLibraryLayout.watchlistKey]
-        keys.append(NavigationLibraryLayout.liveTVKey)
-        return keys + [
-            NavigationLibraryLayout.downloadsKey,
+        iOSDefaultVisibleKeys + [
+            NavigationLibraryLayout.discoverKey,
+            NavigationLibraryLayout.watchlistKey,
+            NavigationLibraryLayout.liveTVKey,
             NavigationLibraryLayout.settingsKey,
-            NavigationLibraryLayout.searchKey,
         ]
     }
 
     public static func iOS(visibleLibraries: [AggregatedLibrary]) -> [String] {
         var keys = iOS
+        let libraries = NavigationRailPlan.browsableLibraries(visibleLibraries)
         keys.insert(
-            contentsOf: NavigationRailPlan.browsableLibraries(visibleLibraries).map(\.key),
-            at: keys.count - 2
+            contentsOf: (libraries.count > 1 ? [NavigationLibraryLayout.allLibrariesKey] : [])
+                + libraries.map(\.key),
+            at: keys.count - 1
         )
         return keys
     }
 
-    /// The profile button opens Settings; its optional tab must not force a
-    /// sixth default destination into More.
-    public static let iOSAutomaticallyHiddenKeys: Set<String> = [NavigationLibraryLayout.settingsKey]
+    public static var iOSAutomaticallyHiddenKeys: Set<String> {
+        iOSAutomaticallyHiddenKeys(available: iOS)
+    }
+
+    /// New libraries stay in the editor until explicitly shown. This is a
+    /// presentation default, not a persisted hide or a content restriction.
+    public static func iOSAutomaticallyHiddenKeys(available: [String]) -> Set<String> {
+        Set(available).subtracting(iOSDefaultVisibleKeys)
+    }
 }
 
 public enum NavigationRailPlan {
@@ -258,6 +278,7 @@ public enum NavigationRailPlan {
         case NavigationLibraryLayout.searchKey: return .search
         case NavigationLibraryLayout.watchlistKey: return .watchlist
         case NavigationLibraryLayout.tonightKey: return .tonight
+        case NavigationLibraryLayout.discoverKey: return .discover
         case NavigationLibraryLayout.liveTVKey: return .liveTV
         case NavigationLibraryLayout.musicKey: return .music
         case NavigationLibraryLayout.settingsKey: return .settings
@@ -273,6 +294,7 @@ public enum NavigationRailPlan {
         case .search: return NavigationLibraryLayout.searchKey
         case .watchlist: return NavigationLibraryLayout.watchlistKey
         case .tonight: return NavigationLibraryLayout.tonightKey
+        case .discover: return NavigationLibraryLayout.discoverKey
         case .liveTV: return NavigationLibraryLayout.liveTVKey
         case .music: return NavigationLibraryLayout.musicKey
         case .settings: return NavigationLibraryLayout.settingsKey

@@ -67,6 +67,7 @@ struct PlexMediaContainer: Decodable {
 /// Only the fields needed to build a `LibrarySection` and to identify/deduplicate
 /// a hub against the uniform base rows are modelled; unknown fields are ignored.
 struct PlexHub: Decodable {
+    let key: String?
     /// Stable, machine identifier for the hub, e.g. `"movie.recentlyadded.1"`,
     /// `"movie.genre.<id>"`, `"movie.similar.<id>"`, `"tv.startWatching"`. Used
     /// both as the `LibrarySection.id` and to filter out hubs that duplicate the
@@ -226,9 +227,8 @@ struct PlexMetadata: Decodable {
     let studio: String?
     let Media: [PlexMedia]?
     /// Image variants Plex records for the item (`type` one of `coverPoster`,
-    /// `background`, `clearLogo`, `snapshot`, …). The full metadata fetch returns
-    /// this array; we read the `clearLogo` entry for the hero/detail title logo,
-    /// which Plex does NOT expose via the top-level `thumb`/`art` attributes.
+    /// `background`, `backgroundSquare`, `clearLogo`, `snapshot`, …).
+    /// Square art and logos are separate from the top-level `thumb`/`art`.
     let Image: [PlexImage]?
     /// Plex Pass intro/credits markers, present only when the metadata request
     /// passes `includeMarkers=1`. Offsets are in milliseconds.

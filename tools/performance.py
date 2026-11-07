@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 import uuid
+from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,12 +34,88 @@ HOME_SHELL_ARGUMENTS = {
     "none": [], "sidebar": ["--native-sidebar-home"], "top-bar": ["--top-bar-home"], "rail": ["--pinned-home"],
 }
 METRICS = ("wallMilliseconds", "cpuMilliseconds", "residentBytes", "residentDeltaBytes")
+MEMORY_METRICS = (
+    "residentBytes", "physicalFootprintBytes", "internalBytes", "externalBytes",
+    "compressedBytes", "reusableBytes", "mallocInUseBytes", "mallocAllocatedBytes",
+    "mallocBlocksInUse",
+)
 HOME_HOST_FITTING_COUNTERS = [
     "motionSizeThatFitsCalls", "rowHostFitCalls", "columnHostFitCalls", "maskSizeThatFitsCalls",
     "rowHostFittingNanoseconds", "columnHostFittingNanoseconds",
     "hostFittingMaxNanoseconds", "hostFittingReentrantCalls",
 ]
 SCENARIOS = {
+    **{
+        f"song-card-{state}": {
+            "suite": "ui",
+            "test": f"PlayerSongLayoutPreviewTests/testPerformanceSongCard{state.title()}",
+            "file": "Tests/PlaybackPresentationSupport/PlayerSongLayoutPreviewTests.swift",
+            "description": "Complete player controls over advancing native video, with seeded repeated song reports and decoded local artwork; no fingerprint matching.",
+            "counters": ["playbackMilliseconds", "acceptedReports", "songVisible"],
+        }
+        for state in ("hidden", "visible")
+    },
+    **{
+        f"song-recognition-{state}": {
+            "suite": "ui",
+            "explicitOnly": state.startswith("soak-"),
+            "isolatedProcess": state.startswith("soak-"),
+            "test": f"SongRecognitionPerformanceTests/testPerformanceRecognition{state.title().replace('-', '')}",
+            "file": "Tests/PerformancePresentationSupport/SongRecognitionPerformanceTests.swift",
+            "description": (
+                "Repeat six 25-second playback/pause/resume cycles with real local recognition; verify paused feed stops and stopped Shazam sessions are released."
+                if state == "lifecycle" else
+                "Ten-minute off/tap/full lifecycle control in a fresh host process, with post-stop memory and weak ownership checks."
+                if state.startswith("soak-") else
+                "Play the same 1080p30 synthetic video with recognition off, unpaced/paced tap controls, or source-paced local Shazam matching; verify continuous feed and displayable matches."
+            ),
+            "counters": ["audioFrames", "matches", "confirmedSongs", "maxSourceGapMilliseconds",
+                         "maxFeedLeadMilliseconds", "liveSessions", "displayCallbacks",
+                         "maxDisplayGapMilliseconds", "hasDropTelemetry", "droppedFrames",
+                         "windowMilliseconds", "playbackMilliseconds"],
+        }
+        for state in ("enabled", "disabled", "tap-only", "tap-paced", "lifecycle",
+                      "soak-enabled", "soak-disabled", "soak-tap-only")
+    },
+    "home-jellyfin-live": {
+        "suite": "network", "target": "FeatureHomeCoreTests", "explicitOnly": True,
+        "test": "JellyfinHomePerformanceTests/testPerformanceLiveHome",
+        "file": "Tests/FeatureHomeCoreTests/JellyfinHomePerformanceTests.swift",
+        "description": "Explicitly authorized live Jellyfin: cold layout discovery and warm Home refresh; count real requests and content-ready time, not rendered frames.",
+        "counters": ["coldRequests", "warmRequests", "coldBytes", "warmBytes",
+                     "coldViewsRequests", "warmViewsRequests", "coldDuplicateRequests", "warmDuplicateRequests",
+                     "coldFirstRowMicroseconds", "warmFirstRowMicroseconds",
+                     "coldAllRowsMicroseconds", "warmAllRowsMicroseconds", "libraries", "rows", "items"],
+    },
+    **{
+        f"active-picture-{players}-{state}": {
+            "suite": "ui",
+            "test": f"VideoZoomPresentationTests/testPerformance{'FourPictures' if players == 4 else 'Picture'}{state.title()}",
+            "file": "Tests/SubtitlePresentationSupport/VideoZoomPresentationTests.swift",
+            "description": f"Play {players} visible 1080p30 streams with active-picture analysis {state}; require advancing playback, bounded fresh samples and released output taps.",
+            "counters": ["players", "samples", "windowMilliseconds"],
+        }
+        for players in (1, 4) for state in ("enabled", "disabled")
+    },
+    "seek-plex-bif": {
+        "suite": "network", "target": "FeaturePlaybackTests",
+        "test": "ScrubPreviewLoaderTests/testPerformancePlexBIFScan",
+        "file": "Tests/FeaturePlaybackTests/ScrubPreviewLoaderTests.swift",
+        "description": "Cold then warm Plex BIF scanning at all eight speeds in both directions; verify JPEG pixel identity and one real loopback download with 100-ms latency.",
+        "counters": ["inputSamples", "stages", "motionFrames", "httpRequests", "bifBytes", "firstFrameMicroseconds"],
+    },
+    **{
+        f"seek-generated-{delay}ms": {
+            "suite": "core", "target": "FeaturePlaybackTests",
+            "test": f"ScrubPreviewPerformanceTests/{method}",
+            "file": "Tests/FeaturePlaybackTests/ScrubPreviewPerformanceTests.swift",
+            "description": f"All eight scan speeds in both directions, 384 paced inputs, {delay}-ms synthetic still extraction; require the correct settled frames and measure motion starvation.",
+            "counters": ["stages", "inputSamples", "motionFrames", "starvedStages", "settledStages",
+                         "decodeStarts", "decodeCompletions", "decodeCancellations", "maxInFlight",
+                         "blankPublications", "maxPublicationGapMicroseconds", "maxSettleMicroseconds"],
+        }
+        for delay, method in [(80, "testPerformanceGeneratedScan"), (180, "testPerformanceSlowGeneratedScan")]
+    },
     "server-ratings-critical-path": {
         "suite": "network", "target": "ProviderJellyfinTests",
         "test": "ServerRatingsLatencyTests/testPerformanceRequiredItemAndPlayback",
@@ -78,9 +155,10 @@ SCENARIOS = {
         "suite": "network", "target": "ProviderIPTVTests",
         "test": "IPTVPerformanceProbeTests/testPerformanceLargeGuideBatches",
         "file": "Tests/ProviderIPTVTests/IPTVPerformanceProbeTests.swift",
-        "description": "Two 2,000-channel batches from one 6,000-channel, 48,000-programme XMLTV document above the small-body cache limit.",
+        "description": "Cold indexed import and warm query: two 2,000-channel batches from one 6,000-channel, 48,000-programme XMLTV document.",
         "counters": ["guideBytes", "httpRequests", "downloadedBytes", "parseInvocations",
-                     "retainedRows", "requestedChannels"],
+                     "retainedRows", "requestedChannels", "coldBatchNanoseconds", "warmBatchNanoseconds",
+                     "indexedChannels"],
     },
     "live-tv-schedule-sync": {
         "suite": "core", "target": "FeatureLiveTVCoreTests",
@@ -216,6 +294,87 @@ SCENARIOS = {
         "description": "The same notifications with bounded recording and completed encoding/persistence.",
         "counters": ["notifications", "retained", "discarded", "persistedBytes", "enqueueMicroseconds"],
     },
+    "player-card-first-visits": {
+        "suite": "ui", "platforms": ["tvOS"],
+        "test": "PlayerEpisodeArtworkHostedTests/testPerformancePlayerCardFirstVisits",
+        "file": "Tests/FocusIntegrationTests/PlayerEpisodeArtworkHostedTests.swift",
+        "description": "Fresh controls hierarchy per sample; first Info/Chapters/Cast visits with native focus and populated card checks, no video decoding.",
+        "counters": ["freshHierarchies", "firstVisits", "infoMaxMainActorGapMicroseconds",
+                     "chaptersFocusUpdateMicroseconds", "chaptersMaxMainActorGapMicroseconds",
+                     "castFocusUpdateMicroseconds", "castMaxMainActorGapMicroseconds"],
+        "timing": ["cpuMilliseconds"],
+    },
+    **{
+        f"player-continue-watching-{mode}": {
+            "suite": "ui", "platforms": ["tvOS"],
+            "test": f"PlayerEpisodeArtworkHostedTests/testPerformanceContinueWatching{method}",
+            "file": "Tests/FocusIntegrationTests/PlayerEpisodeArtworkHostedTests.swift",
+            "description": "Fresh production controls, 180 Home items across twelve accounts, transport reveal and native tab round trips; no decoding or remote artwork.",
+            "counters": ["items", "tabVisits", "providerRequests", "snapshotReads", "revealSnapshotReads",
+                         "revealMicroseconds", "revealMaxMainActorGapMicroseconds",
+                         "focusUpdateMicroseconds", "navigationMaxMainActorGapMicroseconds"],
+            "timing": ["cpuMilliseconds"],
+        }
+        for mode, method in (("controls", "Controls"), ("disabled", "Disabled"))
+    },
+    "player-controls-cold-reveal": {
+        "suite": "ui", "platforms": ["tvOS"],
+        "test": "PlayerControlsRevealPerformanceTests/testPerformanceColdControlsReveal",
+        "file": "Tests/FocusIntegrationTests/PlayerControlsRevealPerformanceTests.swift",
+        "description": "Fresh production controls hierarchy per sample, with three reveals and first/last main-actor gaps; warm process, no decoding.",
+        "counters": ["freshHierarchies", "reveals", "firstRevealMaxMainActorGapMicroseconds",
+                     "lastRevealMaxMainActorGapMicroseconds", "cardOpens", "cardOpenMaxMainActorGapMicroseconds"],
+        "timing": ["cpuMilliseconds"],
+    },
+    "player-controls-first-card": {
+        "suite": "ui", "platforms": ["tvOS"],
+        "test": "PlayerControlsRevealPerformanceTests/testPerformanceFirstInfoCard",
+        "file": "Tests/FocusIntegrationTests/PlayerControlsRevealPerformanceTests.swift",
+        "description": "Fresh controls hierarchy, three reveals and first Info card opening; checks deferred-work cost and focus readiness.",
+        "counters": ["freshHierarchies", "reveals", "firstRevealMaxMainActorGapMicroseconds",
+                     "lastRevealMaxMainActorGapMicroseconds", "cardOpens", "cardOpenMaxMainActorGapMicroseconds"],
+        "timing": ["cpuMilliseconds"],
+    },
+    "player-controls-reveal": {
+        "suite": "ui", "platforms": ["tvOS"],
+        "test": "PlayerControlsRevealPerformanceTests/testPerformanceControlsReveal",
+        "file": "Tests/FocusIntegrationTests/PlayerControlsRevealPerformanceTests.swift",
+        "description": "Four reveals of production transport controls with immediate preference reads; no video decoding.",
+        "counters": ["reveals", "preferenceReads", "mainThreadReads", "maxMainActorGapMicroseconds"],
+        "timing": ["cpuMilliseconds"],
+    },
+    "player-controls-reveal-contended": {
+        "suite": "ui", "platforms": ["tvOS"],
+        "test": "PlayerControlsRevealPerformanceTests/testPerformanceControlsRevealWithContendedPreferences",
+        "file": "Tests/FocusIntegrationTests/PlayerControlsRevealPerformanceTests.swift",
+        "description": "The same controls with a controlled 180-ms synchronous preference read; heartbeat gaps are not rendered FPS or remux decoding.",
+        "counters": ["reveals", "preferenceReads", "mainThreadReads", "maxMainActorGapMicroseconds"],
+        "timing": ["cpuMilliseconds"],
+    },
+    "player-controls-hidden-clock": {
+        "suite": "ui", "platforms": ["tvOS"],
+        "test": "PlayerControlsClockPerformanceTests/testPerformanceHiddenClock",
+        "file": "Tests/FocusIntegrationTests/PlayerControlsClockPerformanceTests.swift",
+        "description": "Mounted, hidden TV transport with 32 playback-clock updates at the production 250-ms cadence; no decoding.",
+        "counters": ["ticks", "clockUpdates", "controlsVisible", "observationMilliseconds"],
+        "timing": ["cpuMilliseconds"],
+    },
+    "player-controls-hidden-static": {
+        "suite": "ui", "platforms": ["tvOS"],
+        "test": "PlayerControlsClockPerformanceTests/testPerformanceHiddenStatic",
+        "file": "Tests/FocusIntegrationTests/PlayerControlsClockPerformanceTests.swift",
+        "description": "The same mounted, hidden transport and eight-second observation without clock mutations; an idle control.",
+        "counters": ["ticks", "clockUpdates", "controlsVisible", "observationMilliseconds"],
+        "timing": ["cpuMilliseconds"],
+    },
+    "player-controls-visible-clock": {
+        "suite": "ui", "platforms": ["tvOS"],
+        "test": "PlayerControlsClockPerformanceTests/testPerformanceVisibleClock",
+        "file": "Tests/FocusIntegrationTests/PlayerControlsClockPerformanceTests.swift",
+        "description": "The same 32 clock updates with visible TV transport; measures app-process CPU, not GPU cost or rendered FPS.",
+        "counters": ["ticks", "clockUpdates", "controlsVisible", "observationMilliseconds"],
+        "timing": ["cpuMilliseconds"],
+    },
     "skeletons-idle": {
         "suite": "ui", "test": "ShimmerPerformanceTests/testPerformanceLoadingCards",
         "file": "Tests/PerformancePresentationSupport/ShimmerPerformanceTests.swift",
@@ -244,6 +403,13 @@ SCENARIOS = {
         "suite": "ui", "test": "CardPerformanceTests/testPerformanceLifecycle",
         "file": "Tests/PerformancePresentationSupport/CardPerformanceTests.swift",
         "description": "Repeated mount/unmount; weak host and view checks must release.",
+        "counters": ["cycles", "survivingHosts"],
+    },
+    "cards-lifecycle-soak": {
+        "suite": "ui", "explicitOnly": True, "isolatedProcess": True,
+        "test": "CardPerformanceTests/testPerformanceLifecycleSoak",
+        "file": "Tests/PerformancePresentationSupport/CardPerformanceTests.swift",
+        "description": "180 production-row mount/unmount cycles in a fresh test process, including 30 discarded warmup cycles; weak hosts and views must release.",
         "counters": ["cycles", "survivingHosts"],
     },
     "home-artwork-layout": {
@@ -324,6 +490,13 @@ SCENARIOS = {
         "description": "Update a production mobile Continue Watching rail 24 times with 180 episodes across twelve synthetic source identities and cached artwork.",
         "counters": ["rootUpdates", "items", "accounts", "seriesSourceBuilds"],
     },
+    "mobile-home-loading-scroll": {
+        "suite": "ui", "platforms": ["iOS"],
+        "test": "HomeLoadingLayoutTests/testPerformanceLoadingWhileScrolling",
+        "file": "Tests/iOSPresentationTests/HomeLoadingLayoutTests.swift",
+        "description": "Replace eight production Home skeleton rails during animated vertical scrolling; verify completed loading, scroll targets, and stable page height.",
+        "counters": ["loadedRows", "scrollTargets", "itemsPerRow", "maximumPageHeightChangePoints"],
+    },
     "mobile-preference-sync": {
         "suite": "ui",
         "platforms": ["iOS"],
@@ -332,12 +505,26 @@ SCENARIOS = {
         "description": "Apply 24 active/inactive preference batches through the mobile app model; count synchronous account, index and download invalidations.",
         "counters": ["batches", "appliedPreferences", "accountInvalidations", "indexResets", "downloadTransitions"],
     },
+    "mobile-home-lifecycle": {
+        "suite": "ui", "platforms": ["iOS"],
+        "test": "HomeModelLifetimeTests/testPerformanceRetiredHomeModels",
+        "file": "Tests/iOSPresentationTests/HomeModelLifetimeTests.swift",
+        "description": "Perform twenty profile switches per window; require retired Home, settings, and download models to release, then allow one second for queued work. Empty fixture accounts, not populated Home navigation.",
+        "counters": ["replacements", "survivingModels"],
+    },
     "mobile-profile-selection": {
         "suite": "ui", "platforms": ["iOS"],
         "test": "ProfileSelectionPerformanceTests/testPerformanceProfileSelection",
         "file": "Tests/iOSPresentationTests/ProfileSelectionPerformanceTests.swift",
         "description": "Activate sixteen profiles through the mobile app model and verify current Plex PIN gating; measure synchronous selection separately from 5-ms fixture metadata.",
         "counters": ["selections", "selectionMicroseconds", "maxSelectionMicroseconds"],
+    },
+    "mobile-profile-picker-entrance": {
+        "suite": "ui", "platforms": ["iOS"],
+        "test": "ProfilePickerPresentationTests/testPerformanceProfilePickerEntrance",
+        "file": "Tests/iOSPresentationTests/ProfilePickerPresentationTests.swift",
+        "description": "Mount the production sixteen-profile iPad picker and verify heading-first staging, a visible stagger, and settling within 1.5 seconds; measure fresh presentation, not process launch or hardware frame pacing.",
+        "counters": ["profiles", "completedEntrances"],
     },
     "mobile-profile-pin-handoff": {
         "suite": "ui", "platforms": ["iOS"],
@@ -415,6 +602,8 @@ def select(suite, names, platform=None):
             raise Failure("Choose --suite or --scenario, not both.")
         if len(names) != len(set(names)) or not set(names) <= SCENARIOS.keys():
             raise Failure("Unknown or duplicate scenario. Run 'list' for supported names.")
+        if len(names) != 1 and any(SCENARIOS[name].get("isolatedProcess") for name in names):
+            raise Failure("Isolated-process scenarios require one --scenario per run.")
         unsupported = [name for name in names
                        if platform and platform not in SCENARIOS[name].get("platforms", ("tvOS", "iOS"))]
         if unsupported:
@@ -422,6 +611,7 @@ def select(suite, names, platform=None):
         return sorted(names)
     return [name for name, spec in SCENARIOS.items()
             if (suite == "all" or spec["suite"] == (suite or "core"))
+            and not spec.get("explicitOnly", False)
             and (not platform or platform in spec.get("platforms", ("tvOS", "iOS")))]
 
 
@@ -447,6 +637,12 @@ def validate_report(report, spec):
             if key != "residentDeltaBytes" and value < 0:
                 raise Failure(f"Negative measurement: {key}.")
         counters = sample.get("counters")
+        if "memory" in sample:
+            memory = sample["memory"]
+            if not isinstance(memory, dict) or set(memory) != set(MEMORY_METRICS):
+                raise Failure("Incomplete process-memory snapshot.")
+            if any(type(value) is not int or value < 0 for value in memory.values()):
+                raise Failure("Process-memory snapshots must contain non-negative integers.")
         if not isinstance(counters, dict) or set(counters) != set(spec["counters"]):
             raise Failure("Missing or unexpected workload counters.")
         if any(type(value) is not int or value < 0 for value in counters.values()):
@@ -498,6 +694,13 @@ def configure_scheme(tree):
         action.remove(old)
     variables = ET.SubElement(action, "EnvironmentVariables")
     ET.SubElement(variables, "EnvironmentVariable", key="PLOZZ_PERFORMANCE", value="1", isEnabled="YES")
+    if broker := os.environ.get("PLOZZ_JELLYFIN_HOME_BROKER"):
+        parsed = urlparse(broker)
+        if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port
+                or parsed.username or parsed.password or parsed.query or parsed.fragment):
+            raise Failure("Live Home broker must be an explicit loopback HTTP URL without credentials or a query.")
+        ET.SubElement(variables, "EnvironmentVariable", key="PLOZZ_JELLYFIN_HOME_BROKER",
+                      value=broker, isEnabled="YES")
     return tree
 
 
@@ -779,8 +982,15 @@ class Lane:
         derived = self.root / ".build/performance-derived-data/tvOS/ui"
         bundle_id = "com.thatcube.Plozz.FocusHost"
         workload = getattr(self.args, "workload", "home-navigation")
+        if workload == "jellyfin-home":
+            if not self.env.get("PLOZZ_JELLYFIN_HOME_BROKER"):
+                raise Failure("Live Home UI profiling requires an authorized loopback broker.")
+            ET.SubElement(tree.getroot().find("TestAction/EnvironmentVariables"), "EnvironmentVariable",
+                          key="PLOZZ_LIVE_HOME_RUN_ID", value=self.output.name, isEnabled="YES")
         test = (
-            "LargeNativeNavigationRemoteTests/testProfileRapidHorizontalNavigation"
+            "LiveJellyfinHomeRemoteTests/testProfileRealHome"
+            if workload == "jellyfin-home"
+            else "LargeNativeNavigationRemoteTests/testProfileRapidHorizontalNavigation"
             if workload == "horizontal-navigation"
             else "LargeNativeNavigationRemoteTests/testProfileRapidVerticalNavigation"
             if workload == "vertical-navigation"
@@ -825,7 +1035,11 @@ class Lane:
             arguments = ["--production-home-fixture", "--home-performance-fixture", "--distinct-home-artwork",
                          "--home-artwork-cache-namespace=" + self.output.name,
                          *HOME_SHELL_ARGUMENTS[getattr(self.args, "home_shell", "none")]]
-            if workload == "detail-return":
+            if workload == "jellyfin-home":
+                arguments = ["--live-jellyfin-home"]
+                self.env["SIMCTL_CHILD_PLOZZ_JELLYFIN_HOME_BROKER"] = self.env["PLOZZ_JELLYFIN_HOME_BROKER"]
+                self.env["SIMCTL_CHILD_PLOZZ_LIVE_HOME_RUN_ID"] = self.output.name
+            elif workload == "detail-return":
                 arguments = [
                     "--production-home-fixture", "--top-bar-home", "--return-focus-trace",
                     "--immersive-home", "--progressive-library-rows", "--populated-home-return",
@@ -890,6 +1104,17 @@ class Lane:
             _, data_container = self.command("fixture-data-container", [
                 "xcrun", "simctl", "get_app_container", self.args.sim_id, bundle_id, "data",
             ])
+            live_metrics = {}
+            if workload == "jellyfin-home":
+                live_metrics = json.loads((Path(data_container.strip()) / "Library/Caches/live-home-ui.json").read_text())
+                for key in ("firstDataMicroseconds", "items", "mountedArtworkImages", "decodedServerArtwork", "navigationCallbacks"):
+                    if live_metrics.get(key, 0) <= 0:
+                        raise Failure("Live Home UI did not complete its real-data/artwork workload: " + key)
+                if live_metrics.get("navigationFocusChanges", 0) < 12:
+                    raise Failure("Live Home UI did not complete enough native focus transitions.")
+                if any(live_metrics.get(key, -1) != 0 for key in ("discoveryFailures", "layoutFailures", "rowFailures")):
+                    raise Failure("Live Home UI encountered a provider failure.")
+                write_json(folder / "live-home-ui.json", live_metrics)
             journal = Path(data_container.strip()) / "Library/Caches/Plozz/playback-trace.log"
             if workload == "detail-return" and not journal.is_file():
                 raise Failure("Detail-return profiling is missing its native focus journal.")
@@ -899,6 +1124,7 @@ class Lane:
                 return {
                     "pid": pid, "bundleID": bundle_id, "arguments": arguments, "template": self.args.template,
                     "workload": workload, "homeShell": getattr(self.args, "home_shell", "none"),
+                    "liveMetrics": live_metrics,
                     "stacks": stack_sample_summary(sample_path, pid), "sample": str(sample_path),
                     "note": "Sampled simulator navigation, not device frame pacing or a full multi-provider app session.",
                 }
@@ -917,6 +1143,7 @@ class Lane:
             return {
                 "pid": pid, "bundleID": bundle_id, "arguments": arguments, "template": self.args.template,
                 "workload": workload, "homeShell": getattr(self.args, "home_shell", "none"),
+                "liveMetrics": live_metrics,
                 "cpu": trace_tools.sample_summary(samples, pid), "trace": str(trace),
                 "note": "Instrumented simulator navigation, not device frame pacing or a full multi-provider app session.",
             }
@@ -1034,7 +1261,7 @@ def main(argv=None):
     profile.add_argument("--sim-id", required=True)
     profile.add_argument("--timeout", type=int, default=2400)
     profile.add_argument("--template", choices=("Time Profiler", "SwiftUI", "Process Sample"), default="Process Sample")
-    profile.add_argument("--workload", choices=("home-navigation", "hero-paging", "detail-return", "horizontal-navigation", "vertical-navigation"), default="home-navigation")
+    profile.add_argument("--workload", choices=("home-navigation", "hero-paging", "detail-return", "horizontal-navigation", "vertical-navigation", "jellyfin-home"), default="home-navigation")
     profile.add_argument("--home-shell", choices=tuple(HOME_SHELL_ARGUMENTS), default="none",
                          help="Navigation chrome around the home-navigation fixture; other workloads choose their own.")
     comparison = commands.add_parser("compare", help="Compare saved runs; never updates a baseline.")

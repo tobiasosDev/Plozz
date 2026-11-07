@@ -15,6 +15,7 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
     public let accountID: String
     public let credentialRevision: CredentialRevision
     let client: JellyfinClient
+    let libraryRequests = JellyfinDiscoveryRequests<[MediaLibrary]>()
     let collectionLibraryCache = MediaBrowserCollectionLibraryCache()
     let videoPlaylistCache = VideoPlaylistSnapshotCache()
     let liveTVLeases = JellyfinLiveTVLeaseStore()
@@ -86,6 +87,12 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
     }
 
     public func libraries() async throws -> [MediaLibrary] {
+        try await libraryRequests.run(key: session.userID) {
+            try await loadLibraries()
+        }
+    }
+
+    private func loadLibraries() async throws -> [MediaLibrary] {
         var libraries = try await client.userViews(userID: session.userID).map { dto in
             MediaLibrary(
                 id: dto.Id,
@@ -165,7 +172,8 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
                 title: title,
                 localizedTitle: localizedTitle,
                 items: Array(items.prefix(limit)),
-                isHomeDefault: forHome ? false : nil
+                isHomeDefault: forHome ? false : nil,
+                browseID: "\(recommendation.RecommendationType):\(recommendation.CategoryId ?? subject ?? "")"
             )
         }
     }
@@ -744,7 +752,7 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
         // remote trailers are links that open in YouTube. Both are best-effort
         // so one failing doesn't hide the
         // other.
-        let local = ((try? await localTask) ?? []).map(map(item:))
+        let local = ((try? await localTask) ?? []).map { map(item: $0).markingAsTrailer() }
         let remote = ((try? await remoteTask) ?? []).compactMap { link -> MediaItem? in
             guard let url = link.Url else { return nil }
             return MediaItem.youTubeTrailer(fromURL: url, title: link.Name ?? "Trailer")
@@ -991,7 +999,8 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
                 limit: page.limit,
                 sort: page.sort,
                 fields: Self.listFields(for: page.detail),
-                filters: page.filters
+                filters: page.filters,
+                useServerCollections: page.usesServerCollections(for: kind)
             )
             let items = response.Items.map(map(item:))
             PlozzLog.networking.info(
@@ -1523,6 +1532,10 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
                 }
             }
             try Task.checkCancellation()
+        }
+
+        if kind == .emby, streaming?.quality.maximumBitrate == nil {
+            try source.boundEmbyOriginalTranscodingBitrate()
         }
 
         if !didRemux {
@@ -2384,7 +2397,9 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
             id: dto.Id,
             title: dto.Name ?? "Untitled",
             originalTitle: dto.OriginalTitle,
+            seriesStatus: kind == .series ? dto.Status.flatMap(MediaSeriesStatus.init(providerValue:)) : nil,
             kind: kind,
+            isTrailer: dto.Type == "Trailer" || MediaExtraKind(rawProviderValue: dto.ExtraType) == .trailer,
             overview: dto.Overview,
             parentTitle: dto.SeriesName ?? dto.SeasonName,
             // A season's own ordinal is its `IndexNumber`; for an episode that field
@@ -2659,6 +2674,13 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
         for dto: BaseItemDto,
         client: JellyfinClient
     ) -> [ArtworkSelection] {
+        let landscape: [ArtworkSelection]
+        if dto.Type == "Movie" || dto.Type == "Series",
+           let thumb = imageURL(for: dto, kind: .thumb, maxWidth: 3840, client: client) {
+            landscape = [.init(placement: .landscapeCard, references: [.remote(thumb)])]
+        } else {
+            landscape = []
+        }
         var candidates: [HeroArtworkCandidate] = []
         for (index, tag) in (dto.BackdropImageTags ?? []).enumerated() {
             guard let url = client.imageURL(
@@ -2693,13 +2715,13 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
                 "jellyfin pool=\(candidates.count) backdropTags=\((dto.BackdropImageTags ?? []).count) "
                 + "thumb=\(dto.ImageTags?["Thumb"] != nil) title=\(dto.Name ?? "?") — NO SELECTION"
             }
-            return []
+            return landscape
         }
         HeroArtDiagnostics.emitOnce(stage: "jf-pool", key: dto.Id) {
             "jellyfin pool=\(candidates.count) backdropTags=\((dto.BackdropImageTags ?? []).count) "
             + "thumb=\(dto.ImageTags?["Thumb"] != nil) title=\(dto.Name ?? "?")"
         }
-        return HeroArtworkPlanner.selections(for: candidates)
+        return HeroArtworkPlanner.selections(for: candidates) + landscape
     }
 
     /// Builds an *item-owned* image URL only when the DTO actually advertises
@@ -2770,12 +2792,16 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
 
     func map(stream dto: MediaStreamDto) -> MediaTrack {
         let isSubtitle = dto.`Type` == "Subtitle"
+        let title = dto.DisplayTitle ?? dto.Language ?? dto.Codec ?? "Track \(dto.Index)"
         return MediaTrack(
             id: dto.Index,
             kind: isSubtitle ? .subtitle : .audio,
-            displayTitle: dto.DisplayTitle ?? dto.Language ?? dto.Codec ?? "Track \(dto.Index)",
+            displayTitle: TrackLabeling.trackDisplayTitle(title, sourceTitles: [dto.Title]),
             language: dto.Language,
             codec: dto.Codec,
+            profile: isSubtitle ? nil : MediaSourceMetadata.audioProfile(
+                dto.Profile, displayTitles: [dto.DisplayTitle, dto.Title]
+            ),
             isDefault: dto.IsDefault ?? false,
             isForced: dto.IsForced ?? false,
             channels: isSubtitle ? nil : dto.Channels,
@@ -2808,7 +2834,9 @@ public struct JellyfinProvider: MediaProvider, ServerRatingsProviding, SeriesRes
         return MediaTrack(
             id: dto.Index,
             kind: .subtitle,
-            displayTitle: dto.DisplayTitle ?? dto.Language ?? dto.Codec ?? "Track \(dto.Index)",
+            displayTitle: TrackLabeling.trackDisplayTitle(
+                dto.DisplayTitle ?? dto.Language ?? dto.Codec ?? "Track \(dto.Index)", sourceTitles: [dto.Title]
+            ),
             language: dto.Language,
             codec: dto.Codec,
             isDefault: dto.IsDefault ?? false,

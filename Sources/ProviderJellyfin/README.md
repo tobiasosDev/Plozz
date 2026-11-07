@@ -17,6 +17,8 @@ supported capability remains at parity.
   result by source revision, and updates badges without delaying detail or Play.
 - `JellyfinDTOs` — server JSON shapes, mapped into `CoreModels` value types
   at the seam (no DTO ever leaks above this module).
+  Explicit series `Status` maps to production status on both Jellyfin and Emby;
+  missing/unknown values stay absent. `ChildCount` is never a catalog total.
 - `JellyfinDeviceProfile` + `JellyfinCapabilityProfile` — the
   direct-play / transcode capability matrix sent on `/PlaybackInfo`,
   parameterised by whether the on-device decode engine (Plozzigen) is linked
@@ -25,15 +27,25 @@ supported capability remains at parity.
   Aether-enabled profiles use `PlozzigenMediaFormats` for linked container,
   video and audio families rather than native hardware-only restrictions.
   Native-only profiles and server conversion limits remain independent.
-  On-demand Original quality sends explicit null bitrate limits in the device
-  profile; omitting those keys would restore Jellyfin's 8 Mbps defaults.
-  User-selected lower qualities retain their exact limits. Server/user policy,
-  codec compatibility, Live TV and music negotiation remain independent.
+  On-demand Original quality sends explicit null bitrate limits to Jellyfin;
+  omitting those profile keys would restore its 8 Mbps defaults. Emby requires
+  numeric limits: Original sends its signed-64-bit protocol ceiling in both the
+  request and device profile. Null/omitted limits cause unnecessary conversion
+  on Emby 4.10.2.0, even for compatible low-bitrate originals. This does not restore
+  the old 120 Mbps client cap. User-selected lower qualities retain their exact
+  limits. Server/user policy, codec compatibility, Live TV and music negotiation
+  remain independent.
+  If Emby copies the unlimited ceiling into a required conversion's video target,
+  bound that saturated target to the original video bitrate (or container bitrate
+  when the video rate is unavailable). Preserve smaller server targets and all
+  other rendition restrictions. Missing source bitrate fails explicitly rather
+  than starting an effectively unbounded encode. Direct files are not capped.
   Optional playback diagnostics retain bounded server-decision facts: source
-  bitrate, client limit, direct-play/stream/transcode flags, subtitle burn-in,
-  and allowlisted reasons from the response or its transcode URL. Addresses,
-  tokens, paths, and unknown reason text are never included. These facts explain
-  why conversion was selected; they do not prove why the resulting stream failed.
+  bitrate, selected quality limit (nil for Original), direct-play/stream/transcode
+  flags, subtitle burn-in, and allowlisted reasons from the response or its
+  transcode URL. Addresses, tokens, paths, and unknown reason text are never
+  included. These facts explain why conversion was selected; they do not prove
+  why the resulting stream failed.
 - `JellyfinMusicProvider` — music-library queries (artists, albums, tracks)
   surfaced through the shared provider abstraction.
 
@@ -53,6 +65,26 @@ supported capability remains at parity.
   implementation; provider-specific branches are limited to API differences.
 - **Co-equal with `ProviderPlex`.** Any new `MediaProvider` capability must be
   implemented here whenever it's implemented for Plex (and vice versa).
+
+## Home browsing
+
+Movie and series `Thumb` images populate the shared `landscapeCard` artwork
+placement, independently of Home/detail backdrop ordering. The same mapping
+applies to Emby. Only advertised images are used; episode thumbnails keep their
+existing placement. Shared row presentation decides whether to use that key art
+or a clean backdrop with a logo; it does not branch on the server brand.
+
+Simultaneous library discovery from navigation and Home shares in-flight Views
+and collection-availability work. Sharing is confined to the authenticated
+client/provider and requested server user; replacing credentials creates a new
+scope. Cancelling one reader does not interrupt other readers, but the last
+reader cancels the underlying work. Completed responses and failures are not
+retained: a subsequent refresh still asks the server. This is request
+coalescing, not the optional persistent metadata/artwork cache.
+
+Home browse feeds and collection membership request `DateCreated` so client-side
+Date added sorting uses library dates on both Jellyfin and Emby, without changing
+the server-authored feed membership or default order.
 
 ## Format badges
 
@@ -133,6 +165,13 @@ The video Home importer filters unsupported returned item types locally, includi
 when an unknown section has no collection or item-type metadata. Audio/reading-only
 results therefore produce no Home row, even with a retained custom arrangement.
 This applies on both platforms and does not change tvOS's separate Music area.
+
+Emby 4.10.2 can omit `ItemTypes` and `Query.IsResumable` for its built-in Home
+sections. The verified `SectionType` values `userviews`, `resume`, and
+`resumeaudio` identify libraries, Continue Watching, and audio respectively.
+Library and history sections use Plozz's existing shared rows; audio sections
+are omitted from video Home even when the account has no music library.
+Server-authored names are never used to infer section behavior.
 
 Provider-style Home separates `/Items/Resume` from each TV library's
 `/Shows/NextUp`, and starts with per-library Latest rather than five movie
@@ -366,7 +405,7 @@ native-only remux path, and required conversions.
 This ownership was cross-checked against
 [Sodalite's stream selection](https://github.com/superuser404notfound/Sodalite/blob/31799bde53e2d93384216b3f9b2523600896ef2b/Sodalite/Player/PlaybackStreamSelection.swift),
 [Swiftfin's playback builder](https://github.com/jellyfin/Swiftfin/blob/b0cb3127b1cef57b6508581be1cfe9addd5539a2/Shared/Objects/MediaPlayerManager/MediaPlayerItem/MediaPlayerItem%2BBuild.swift),
-and the [linked engine's pipeline contract](https://github.com/brandomoore/AetherEngine/blob/c1ce4cf48bad416e6be5230032a2b7f332e833d8/docs/architecture.md).
+and the [linked engine's pipeline contract](https://github.com/brandomoore/AetherEngine/blob/8c7f919a4cff9f0d27d27f464657578ec08fc221/docs/architecture.md).
 These are protocol/design references, not copied implementations. Client
 differences do not establish the cause of an individual playback failure.
 
@@ -405,6 +444,19 @@ defines `VideoRange`; Jellyfin's
 [`StreamInfo`](https://github.com/jellyfin/jellyfin/blob/v10.11.0/MediaBrowser.Model/Dlna/StreamInfo.cs)
 reads the codec-specific `rangetype` option.
 
+Real-media verification must inspect the encoded samples, not just these request
+parameters or the master playlist. Emby 4.10.2.0 was observed returning eight-bit
+H.264 and HEVC with PQ/BT.2020 signaling even when SDR was explicitly requested.
+An HEVC Main 10 request likewise does not prove ten-bit output. The test user's
+own session exposes the actual encoder in `TranscodingInfo`; that is stronger
+evidence than assuming hardware acceleration from a client preference. Server
+tone-mapping and encoder settings remain server-owned.
+
+The opt-in iOS `ServerLiveTranscodingTests` exercises real provider negotiation,
+decoded output, sustained native playback, and the presenting layer. See
+[live Emby checks](../../docs/testing-policy.md#live-emby-transcoding) for scope
+and simulator limitations.
+
 ## Watch-state writes
 
 Manual marking and playback completion both use the shared watch outbox.
@@ -424,6 +476,21 @@ checks persisted server state after marking, completion, rewatching, dismissal,
 reload, and failed-read recovery, not just successful HTTP responses.
 
 ## Collections
+
+Unfiltered, name-sorted movie Browse leaves native collection grouping
+unspecified, allowing the server's saved policy to govern the paged result.
+Jellyfin's released `Folder.CollapseBoxSetItems` uses
+`EnableGroupingMoviesIntoCollections` when `CollapseBoxSetItems` is absent.
+For Emby, the corresponding query override is `GroupItemsIntoCollections`;
+Plozz leaves it absent rather than inventing a preference or forcing it true.
+Other sorts, filters and compact inventories explicitly disable grouping with
+the provider's parameter. No administrator configuration read is needed.
+Mixed BoxSet/movie results retain server IDs, order, counts and member routes.
+Grouped A-Z navigation resolves against those actual pages on demand: released
+servers can apply name predicates to members before replacing them with a
+differently named BoxSet, making predicate counts invalid grid offsets.
+No library enumeration happens merely to display the alphabet rail, although
+a late-letter jump can read multiple cancellable pages.
 
 Jellyfin and Emby retain native `boxsets` libraries and `BoxSet` items. Both also
 advertise `.libraryCollections` for the shared Collections option inside a

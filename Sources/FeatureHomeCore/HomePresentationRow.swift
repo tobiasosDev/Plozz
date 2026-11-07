@@ -12,6 +12,25 @@ public struct HomePresentationRow: Identifiable, Equatable, Sendable {
     public let source: Source
     public var id: HomeRowID { choice.id }
 
+    public var canBrowse: Bool {
+        supportsBrowsing()
+    }
+
+    /// A loaded-count threshold changes the browse action, not the rail's items or paging.
+    public func supportsBrowsing(loadedItemThreshold: Int? = nil) -> Bool {
+        switch source {
+        case let .home(row):
+            return (loadedItemThreshold.map { row.items.count > $0 } ?? row.hasMore) && !row.items.isEmpty
+                && row.loadingPlaceholderCount == 0 && row.failure == nil
+        case let .library(row):
+            return (loadedItemThreshold.map { row.section.items.count > $0 } ?? row.section.hasMore)
+                && !row.section.items.isEmpty && !row.isLoading
+                && row.failure == nil && row.issue == nil
+        case .liveTV:
+            return false
+        }
+    }
+
     public static func hasLiveTVRows(
         _ liveTV: HomeLiveTVSnapshot, visibility: HomeLibraryVisibility
     ) -> Bool {
@@ -31,10 +50,24 @@ public struct HomePresentationRow: Identifiable, Equatable, Sendable {
     public static func resolve(
         rows: [HomeRow], content: HomeViewModel.Content, visibility: HomeLibraryVisibility,
         liveTV: HomeLiveTVSnapshot = .empty,
-        presentation: LibraryPresentationSettings = .default
+        presentation: LibraryPresentationSettings = .default,
+        showsEmptySectionMessages: Bool = true
     ) -> [Self] {
         let shared = HomeRowChoice.shared
         func entry(_ row: HomeRow) -> Self? {
+            var row = row
+            if row.kind == .recentlyAdded, row.loadingPlaceholderCount == 0 {
+                let candidates = (content.recentlyAddedCandidates ?? row.items).filter {
+                    $0.isVisibleOnHome(isLibraryVisible: visibility.isEnabled)
+                        && (!visibility.hideWatchedRecentlyAdded || !HomeRecentlyAddedPolicy.isWatched($0))
+                }
+                let preview = HomeRowPreview(
+                    candidates, limit: HomeRecentlyAddedPolicy.rowLimit
+                )
+                row.items = preview.items
+                row.hasMore = preview.hasMore
+                guard !row.isEmptyOnHome else { return nil }
+            }
             let id: HomeRowID
             if row.kind == .libraries {
                 id = .libraries
@@ -47,16 +80,28 @@ public struct HomePresentationRow: Identifiable, Equatable, Sendable {
             return Self(choice: choice, source: .home(row))
         }
         var available = rows.filter { $0.kind != .libraries }.compactMap(entry)
-        if !liveTV.recentChannels.isEmpty, !rows.contains(where: { $0.kind == .continueWatching }),
-           let recent = entry(HomeRow(kind: .continueWatching)) {
-            available.insert(recent, at: 0)
-        }
         if !liveTV.channels.isEmpty, let choice = shared.first(where: { $0.id == .liveTV }) {
             available.append(Self(choice: choice, source: .liveTV(liveTV.channels)))
         }
         if visibility.usesIndividualHomeRows {
             for group in content.librarySections where visibility.isEnabled(group.library.key) {
-                for row in group.rows {
+                for var row in group.rows {
+                    if row.id == LibraryHomeRowKind.recentlyAdded.rawValue {
+                        var section = row.section
+                        if visibility.hideWatchedRecentlyAdded {
+                            section.hasMore = HomeRowPreview(
+                                section.items.filter { !HomeRecentlyAddedPolicy.isWatched($0) },
+                                limit: HomeRecentlyAddedPolicy.rowLimit
+                            ).hasMore
+                        }
+                        section.items = HomeRecentlyAddedPolicy.items(
+                            section.items, hideWatched: visibility.hideWatchedRecentlyAdded
+                        )
+                        row = .init(
+                            section: section, isLoading: row.isLoading, failure: row.failure,
+                            browseItem: row.browseItem, issue: row.issue, collectionCardStyle: row.collectionCardStyle
+                        )
+                    }
                     guard !row.section.items.isEmpty || row.isLoading || row.failure != nil else { continue }
                     if row.id == "pending-hubs" {
                         let known = (visibility.rowCustomization?.order ?? []).filter {
@@ -86,6 +131,17 @@ public struct HomePresentationRow: Identifiable, Equatable, Sendable {
                    !visibility.isEnabled("\(row.definition.accountID):\(libraryID)") { continue }
                 if !row.definition.section.isAccountWideHistory {
                     row.items = row.items.filter { $0.isVisibleOnHome(isLibraryVisible: visibility.isEnabled) }
+                }
+                if row.definition.section.kind == .recentlyAdded {
+                    if visibility.hideWatchedRecentlyAdded {
+                        row.hasMore = HomeRowPreview(
+                            row.items.filter { !HomeRecentlyAddedPolicy.isWatched($0) },
+                            limit: HomeRecentlyAddedPolicy.rowLimit
+                        ).hasMore
+                    }
+                    row.items = HomeRecentlyAddedPolicy.items(
+                        row.items, hideWatched: visibility.hideWatchedRecentlyAdded
+                    )
                 }
                 guard !row.items.isEmpty || row.isLoading || row.failure != nil else { continue }
                 available.append(Self(
@@ -118,8 +174,7 @@ public struct HomePresentationRow: Identifiable, Equatable, Sendable {
             if let existing = available.first(where: { $0.id == issue.id }) {
                 switch existing.source {
                 case let .home(row):
-                    if !row.items.isEmpty || !row.libraries.isEmpty { continue }
-                    if row.kind == .continueWatching, !liveTV.recentChannels.isEmpty { continue }
+                    if !row.items.isEmpty || !row.libraries.isEmpty || row.loadingPlaceholderCount > 0 { continue }
                 case let .library(row):
                     if !row.section.items.isEmpty || row.isLoading { continue }
                     browseItem = row.browseItem
@@ -127,6 +182,10 @@ public struct HomePresentationRow: Identifiable, Equatable, Sendable {
                 }
             }
             available.removeAll { $0.id == issue.id }
+            if issue.reason == .empty,
+               !showsEmptySectionMessages || visibility.dismissedEmptyHomeRows.contains(issue.id) {
+                continue
+            }
             available.append(Self(choice: issue.choice, source: .library(.init(
                 section: LibrarySection(
                     id: issue.id.presentationID, title: issue.choice.title,

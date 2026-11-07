@@ -1,6 +1,7 @@
 import XCTest
 import CoreModels
 import CoreNetworking
+import CoreUI
 import MetadataKit
 import RatingsService
 import Observation
@@ -12,6 +13,14 @@ private final class ServerRatingsFakeProvider: FakeMediaProvider, ServerRatingsP
 
     func serverRatings(for item: MediaItem) async throws -> [ExternalRating]? {
         try await serverRatingsHandler?(item)
+    }
+}
+
+private final class SeriesResumeFakeProvider: FakeMediaProvider, SeriesResumeProviding, @unchecked Sendable {
+    var resumeHandler: (@Sendable (String) async throws -> MediaItem?)?
+
+    func resumeEpisode(inSeries seriesID: String) async throws -> MediaItem? {
+        try await resumeHandler?(seriesID)
     }
 }
 
@@ -474,11 +483,14 @@ final class ItemDetailViewModelTests: XCTestCase {
             )
             let load = Task { await vm.load() }
             if holdResume {
-                await waitUntil { provider.childrenCallCount[show.id] == 1 }
+                await waitUntil { vm.state.value?.childrenLoaded == true }
                 XCTAssertTrue(vm.isResolvingServerResume)
-                XCTAssertEqual(vm.state.value?.childrenLoaded, false)
-                XCTAssertEqual(vm.state.value?.children.map(\.id), [])
+                XCTAssertEqual(vm.state.value?.children.map(\.id), ["s4"])
                 XCTAssertNil(vm.serverResumeEpisode)
+                XCTAssertTrue(SeriesEpisodeEntry.waitsForResume(
+                    isResolving: vm.isResolvingServerResume,
+                    hasResumeSeed: false, hasExplicitSelection: false
+                ))
             } else {
                 await waitUntil { vm.serverResumeEpisode != nil }
                 XCTAssertEqual(vm.serverResumeEpisode?.id, resume.id)
@@ -498,6 +510,144 @@ final class ItemDetailViewModelTests: XCTestCase {
             XCTAssertEqual(vm.state.value?.children.map(\.id), ["s4"])
             vm.suspendEnrichment()
         }
+    }
+
+    func testGoToShowPublishesSeasonsWhileResumeLookupIsStillPending() async throws {
+        for kind in [ProviderKind.plex, .jellyfin, .emby] {
+            let show = MediaItem(id: "show", title: "Show", kind: .series, sourceAccountID: "account")
+            let seasons = [1, 4].map { (number: Int) in
+                MediaItem(id: "s\(number)", title: "Season \(number)", kind: .season, seasonNumber: number)
+            }
+            let episode = MediaItem(
+                id: "s4e2", title: "Episode", kind: .episode, parentTitle: show.title,
+                seasonNumber: 4, episodeNumber: 2, seriesID: show.id, seasonID: "s4",
+                sourceAccountID: "account"
+            )
+            let target = try XCTUnwrap(episode.navigationTarget(for: .goToSeason))
+            let provider: FakeMediaProvider = kind == .plex
+                ? FakeMediaProvider(allItems: [show], kind: kind)
+                : SeriesResumeFakeProvider(allItems: [show], kind: kind)
+            provider.childrenByParent = [show.id: seasons, "s4": [episode]]
+            let resumeStarted = expectation(description: "\(kind) resume lookup started")
+            let releaseResume = AsyncGate()
+            let resume = MediaItem(
+                id: "s1e1", title: "Resume", kind: .episode,
+                seriesID: show.id, seasonID: "s1", resumePosition: 100
+            )
+            if let scoped = provider as? SeriesResumeFakeProvider {
+                scoped.resumeHandler = { seriesID in
+                    XCTAssertEqual(seriesID, show.id)
+                    resumeStarted.fulfill()
+                    await releaseResume.wait()
+                    return resume
+                }
+            } else {
+                provider.continueWatchingItems = [resume]
+                provider.continueWatchingGate = {
+                    resumeStarted.fulfill()
+                    await releaseResume.wait()
+                }
+            }
+            let vm = ItemDetailViewModel(
+                provider: provider, itemID: target.id, initialItem: target, sourceAccountID: "account",
+                onlineTrailerResolver: { _ in [] }, playableVideoIDResolver: { _ in nil },
+                trailerCache: TrailerResolutionCache()
+            )
+            let load = Task { await vm.load() }
+            await fulfillment(of: [resumeStarted], timeout: 1)
+            await waitUntil { vm.state.value?.childrenLoaded == true }
+            XCTAssertEqual(vm.state.value?.children.map(\.id), ["s1", "s4"])
+            XCTAssertTrue(vm.isResolvingServerResume)
+            let selected = SeriesResume.openingSeasonID(
+                seasons: vm.state.value?.children ?? [], episodes: [],
+                selectedSeasonID: nil, preserveSelection: false,
+                initialSeasonID: target.seasonID, initialEpisode: nil, resumeEpisode: vm.serverResumeEpisode
+            )
+            XCTAssertEqual(selected, "s4")
+            if let selected {
+                await vm.loadEpisodes(for: selected)
+                XCTAssertEqual(vm.episodes(for: selected)?.map(\.id), [episode.id])
+                XCTAssertFalse(SeriesEpisodeEntry.waitsForResume(
+                    isResolving: vm.isResolvingServerResume,
+                    hasResumeSeed: vm.serverResumeEpisode != nil, hasExplicitSelection: true
+                ))
+            }
+            releaseResume.open()
+            await load.value
+            XCTAssertEqual(vm.serverResumeEpisode?.id, resume.id)
+            XCTAssertEqual(SeriesResume.openingSeasonID(
+                seasons: vm.state.value?.children ?? [], episodes: [],
+                selectedSeasonID: selected, preserveSelection: false,
+                initialSeasonID: target.seasonID, initialEpisode: nil, resumeEpisode: vm.serverResumeEpisode
+            ), "s4", "Late resume must not override Go to Show's explicit season")
+            XCTAssertEqual(vm.episodes(for: "s4")?.map(\.id), [episode.id])
+            vm.suspendEnrichment()
+        }
+    }
+
+    func testGoToShowFetchFailureExitsLoadingAndCanBeRetried() async throws {
+        let episode = MediaItem(
+            id: "episode", title: "Episode", kind: .episode,
+            seriesID: "show", seasonID: "season", sourceAccountID: "account"
+        )
+        let target = try XCTUnwrap(episode.navigationTarget(for: .goToSeason))
+        let provider = FakeMediaProvider(allItems: [])
+        let vm = ItemDetailViewModel(
+            provider: provider, itemID: target.id, initialItem: target, sourceAccountID: "account",
+            onlineTrailerResolver: { _ in [] }, playableVideoIDResolver: { _ in nil },
+            trailerCache: TrailerResolutionCache()
+        )
+        await vm.load()
+        guard case .failed(.notFound) = vm.state else {
+            vm.suspendEnrichment()
+            return XCTFail("A bare show seed must not remain loading after its request failed")
+        }
+        let season = MediaItem(id: "season", title: "Season", kind: .season)
+        provider.allItems = [target]
+        provider.childrenByParent = [target.id: [season]]
+        await vm.load()
+        XCTAssertEqual(vm.state.value?.childrenLoaded, true)
+        XCTAssertEqual(vm.state.value?.children.map(\.id), [season.id])
+        vm.suspendEnrichment()
+    }
+
+    func testCancelledShowFetchKeepsTheSeedWithoutReportingFailure() async {
+        let show = MediaItem(id: "show", title: "Show", kind: .series)
+        let provider = FakeMediaProvider(allItems: [])
+        let entered = AsyncGate()
+        let release = AsyncGate()
+        provider.itemGate = [show.id: { entered.open(); await release.wait() }]
+        let vm = ItemDetailViewModel(
+            provider: provider, itemID: show.id, initialItem: show,
+            onlineTrailerResolver: { _ in [] }, playableVideoIDResolver: { _ in nil },
+            trailerCache: TrailerResolutionCache()
+        )
+        let load = Task { await vm.load() }
+        await entered.wait()
+        load.cancel()
+        release.open()
+        await load.value
+        XCTAssertEqual(vm.state.value?.item.id, show.id)
+        vm.suspendEnrichment()
+    }
+
+    func testFailedShowRefreshPreservesPreviouslyLoadedSeasons() async {
+        let show = MediaItem(id: "show", title: "Show", kind: .series)
+        let season = MediaItem(id: "s1", title: "Season 1", kind: .season)
+        let provider = FakeMediaProvider(allItems: [show])
+        provider.childrenByParent = [show.id: [season]]
+        let vm = ItemDetailViewModel(
+            provider: provider, itemID: show.id, initialItem: show,
+            onlineTrailerResolver: { _ in [] }, playableVideoIDResolver: { _ in nil },
+            trailerCache: TrailerResolutionCache()
+        )
+        await vm.load()
+        provider.allItems = []
+        await vm.load()
+        XCTAssertEqual(vm.state.value?.item.id, show.id)
+        XCTAssertEqual(vm.state.value?.childrenLoaded, true)
+        XCTAssertEqual(vm.state.value?.children.map(\.id), [season.id])
+        vm.suspendEnrichment()
     }
 
     func testDetailFactorySeedsTheCurrentEpisodeAndMovieProgressBeforeAnyLoad() throws {
@@ -2982,6 +3132,216 @@ final class ItemDetailViewModelTests: XCTestCase {
         XCTAssertEqual(vm.episodes(for: "s1"), [])
     }
 
+    func testTrailerOffSkipsAllTrailerLookupsButKeepsOtherExtrasAndMetadata() async {
+        let item = MediaItem(id: "m1", title: "Movie", kind: .movie)
+        let trailer = MediaItem(id: "t1", title: "Trailer", kind: .video).markingAsTrailer()
+        let provider = FakeMediaProvider(allItems: [item])
+        provider.trailersByItem = [item.id: [trailer]]
+        provider.extrasByItem = [item.id: [
+            MediaExtra(item: trailer, kind: .trailer),
+            MediaExtra(item: MediaItem(id: "interview", title: "Interview", kind: .video), kind: .interview)
+        ]]
+        let metadataCalled = LockedFlag()
+        let cache = TrailerResolutionCache()
+        let settings = HeroBackgroundSettingsModel(store: InMemoryHeroBackgroundSettingsStore(
+            HeroBackgroundSettings(detailMode: .themeMusic, trailerSources: .off)
+        ))
+        let vm = ItemDetailViewModel(
+            provider: provider, itemID: item.id,
+            detailMetadataResolver: { _ in metadataCalled.set(); return MetadataEnrichment() },
+            onlineTrailerResolver: { _ in XCTFail("Disabled trailers must not query metadata"); return [] },
+            playableVideoIDResolver: { _ in XCTFail("Disabled trailers must not resolve links"); return nil },
+            trailerCache: cache, trailerSettings: settings
+        )
+        await vm.load()
+        XCTAssertTrue(provider.trailerCallCount.isEmpty)
+        XCTAssertTrue(vm.trailers.isEmpty)
+        XCTAssertEqual(vm.extrasState.value?.map(\.item.id), ["interview"])
+        XCTAssertFalse(vm.canPlayTrailer(trailer))
+        XCTAssertTrue(metadataCalled.value, "Ordinary metadata enrichment remains independent.")
+        XCTAssertTrue(settings.settings.themeMusicEnabled)
+        XCTAssertNil(cache.outcome(for: item.id), "A disabled lookup is not a negative result.")
+        settings.settings.trailerSources = .serverOnly
+        await vm.refreshTrailerPolicy()
+        XCTAssertEqual(vm.trailers.map(\.id), ["t1"])
+        XCTAssertEqual(provider.trailerCallCount[item.id], 1)
+        XCTAssertEqual(vm.extrasState.value?.count, 2)
+    }
+
+    func testServerOnlyRejectsServerAndCachedYouTubeWithoutSearching() async {
+        for cached in [false, true] {
+            let provider = FakeMediaProvider(allItems: [MediaItem(id: "m1", title: "Movie", kind: .movie)])
+            let youtube = MediaItem.youTubeTrailer(videoID: "serverID", title: "Trailer")
+            provider.trailersByItem = ["m1": [youtube]]
+            let cache = TrailerResolutionCache()
+            if cached { cache.record(.working("cachedID"), for: "m1") }
+            let settings = HeroBackgroundSettingsModel(store: InMemoryHeroBackgroundSettingsStore(
+                HeroBackgroundSettings(trailerSources: .serverOnly)
+            ))
+            let vm = ItemDetailViewModel(
+                provider: provider, itemID: "m1",
+                onlineTrailerResolver: { _ in XCTFail("Server only must not search"); return [] },
+                playableVideoIDResolver: { _ in XCTFail("Server only must not resolve YouTube"); return nil },
+                trailerCache: cache, trailerSettings: settings
+            )
+            await vm.load()
+            XCTAssertTrue(vm.trailers.isEmpty)
+            XCTAssertFalse(vm.canPlayTrailer(youtube))
+            XCTAssertEqual(provider.trailerCallCount["m1"], 1)
+            XCTAssertEqual(cache.outcome(for: "m1"), cached ? .working("cachedID") : nil)
+        }
+    }
+
+    func testTrailerPolicyChangesFenceInFlightServerAndMetadataResponses() async {
+        for blockMetadata in [false, true] {
+            let started = AsyncGate()
+            let release = AsyncGate()
+            let item = MediaItem(id: "m1", title: "Movie", kind: .movie)
+            let provider = FakeMediaProvider(allItems: [item])
+            let settings = HeroBackgroundSettingsModel(store: InMemoryHeroBackgroundSettingsStore())
+            let cache = TrailerResolutionCache()
+            provider.trailersHandler = { _ in
+                if !blockMetadata {
+                    started.open()
+                    await release.wait()
+                    return [MediaItem(id: "local", title: "Trailer", kind: .video)]
+                }
+                return []
+            }
+            let vm = ItemDetailViewModel(
+                provider: provider, itemID: item.id,
+                onlineTrailerResolver: { _ in
+                    XCTAssertTrue(blockMetadata)
+                    started.open()
+                    await release.wait()
+                    return [MediaItem.youTubeTrailer(videoID: "youtubeID", title: "Trailer")]
+                },
+                playableVideoIDResolver: { $0.first }, trailerCache: cache, trailerSettings: settings
+            )
+            let loading = Task { await vm.load() }
+            await started.wait()
+            settings.settings.trailerSources = .off
+            await vm.refreshTrailerPolicy()
+            release.open()
+            await loading.value
+            XCTAssertTrue(vm.trailers.isEmpty)
+            XCTAssertNil(cache.outcome(for: item.id))
+            XCTAssertEqual(provider.trailerCallCount[item.id], 1)
+        }
+    }
+
+    func testAllowedYouTubeRemainsPreparedWithoutAutoplayAndRespondsToPolicyChanges() async {
+        let item = MediaItem(id: "m1", title: "Movie", kind: .movie)
+        let provider = FakeMediaProvider(allItems: [item])
+        let settings = HeroBackgroundSettingsModel(store: InMemoryHeroBackgroundSettingsStore(
+            HeroBackgroundSettings(homeTrailerEnabled: false, detailMode: .themeMusic)
+        ))
+        let cache = TrailerResolutionCache()
+        let vm = ItemDetailViewModel(
+            provider: provider, itemID: item.id,
+            onlineTrailerResolver: { _ in [MediaItem.youTubeTrailer(videoID: "youtubeID", title: "Trailer")] },
+            playableVideoIDResolver: { $0.first }, trailerCache: cache, trailerSettings: settings
+        )
+        await vm.load()
+        XCTAssertEqual(vm.trailers.first?.youTubeTrailerVideoID, "youtubeID")
+        let staleAction = vm.trailers[0]
+        settings.settings.trailerSources = .serverOnly
+        XCTAssertTrue(vm.trailers.isEmpty, "Published buttons disappear before a refresh task runs.")
+        XCTAssertFalse(vm.canPlayTrailer(staleAction))
+        await vm.refreshTrailerPolicy()
+        settings.settings.trailerSources = .serverAndYouTube
+        await vm.refreshTrailerPolicy()
+        XCTAssertEqual(vm.trailers.first?.youTubeTrailerVideoID, "youtubeID")
+        XCTAssertTrue(settings.settings.themeMusicEnabled)
+        XCTAssertFalse(settings.settings.homeTrailerPlaybackEnabled)
+    }
+
+    func testDiscoveryTrailerPolicyOverridesCacheWithoutDisablingOrdinaryMetadata() async {
+        for policy in [TrailerSourcePolicy.off, .serverOnly] {
+            let item = MediaItem(id: "discovery", title: "Discovery", kind: .movie)
+            let cache = TrailerResolutionCache()
+            cache.record(.working("cachedID"), for: item.id)
+            let metadataCalled = LockedFlag()
+            let settings = HeroBackgroundSettingsModel(store: InMemoryHeroBackgroundSettingsStore(
+                HeroBackgroundSettings(trailerSources: policy)
+            ))
+            let vm = ItemDetailViewModel(
+                provider: nil, itemID: item.id, initialItem: item, isDiscoveryItem: true,
+                externalMetadataResolver: { _, region in
+                    metadataCalled.set()
+                    return ExternalTitleMetadata(
+                        enrichment: MetadataEnrichment(), availability: ExternalTitleAvailability(regionCode: region)
+                    )
+                },
+                onlineTrailerResolver: { _ in XCTFail("Discovery cannot use a disallowed source"); return [] },
+                playableVideoIDResolver: { _ in XCTFail("Discovery cannot resolve YouTube"); return nil },
+                trailerCache: cache, trailerSettings: settings
+            )
+            await vm.load()
+            XCTAssertTrue(vm.trailers.isEmpty)
+            XCTAssertTrue(metadataCalled.value)
+            XCTAssertEqual(cache.outcome(for: item.id), .working("cachedID"))
+            settings.settings.trailerSources = .serverAndYouTube
+            await vm.refreshTrailerPolicy()
+            XCTAssertEqual(vm.trailers.first?.youTubeTrailerVideoID, "cachedID")
+        }
+    }
+
+    func testCancelledTrailerPreferenceRefreshCanResumeOnReturn() async {
+        let item = MediaItem(id: "movie", title: "Movie", kind: .movie)
+        let provider = FakeMediaProvider(allItems: [item])
+        let settings = HeroBackgroundSettingsModel(store: InMemoryHeroBackgroundSettingsStore(
+            HeroBackgroundSettings(trailerSources: .off)
+        ))
+        let release = AsyncGate()
+        let started = expectation(description: "Trailer lookup started")
+        provider.trailersHandler = { _ in
+            started.fulfill()
+            await release.wait()
+            return [MediaItem(id: "local", title: "Trailer", kind: .video)]
+        }
+        let vm = ItemDetailViewModel(
+            provider: provider, itemID: item.id,
+            onlineTrailerResolver: { _ in [] }, trailerCache: TrailerResolutionCache(),
+            trailerSettings: settings
+        )
+        await vm.load()
+        settings.settings.trailerSources = .serverOnly
+        let refresh = Task { await vm.refreshTrailerPolicy() }
+        await fulfillment(of: [started], timeout: 2)
+        refresh.cancel()
+        release.open()
+        await refresh.value
+        XCTAssertTrue(vm.trailers.isEmpty)
+        provider.trailersHandler = nil
+        provider.trailersByItem = [item.id: [MediaItem(id: "local", title: "Trailer", kind: .video)]]
+        await vm.refreshTrailerPolicy()
+        XCTAssertEqual(vm.trailers.first?.id, "local")
+        XCTAssertEqual(provider.trailerCallCount[item.id], 2)
+    }
+
+    func testServerOnlyPreparesCrossServerLocalTrailerWithItsPlaybackOwner() async {
+        let movie = MediaItem(id: "movie", title: "Movie", kind: .movie)
+        let provider = FakeMediaProvider(allItems: [movie])
+        provider.trailersByItem = [movie.id: [MediaItem.youTubeTrailer(videoID: "youtubeID", title: "Trailer")]]
+        let alternate = FakeMediaProvider(allItems: [movie])
+        alternate.trailersByItem = ["alternate-movie": [MediaItem(id: "local", title: "Trailer", kind: .video)]]
+        let settings = HeroBackgroundSettingsModel(store: InMemoryHeroBackgroundSettingsStore(
+            HeroBackgroundSettings(trailerSources: .serverOnly)
+        ))
+        let vm = ItemDetailViewModel(
+            provider: provider, itemID: movie.id, sourceAccountID: "primary",
+            onlineTrailerResolver: { _ in XCTFail("Server only must not search"); return [] },
+            trailerCache: TrailerResolutionCache(), trailerSettings: settings,
+            initialSources: [MediaSourceRef(accountID: "alternate", itemID: "alternate-movie", kind: .movie)],
+            alternateProviderResolver: { $0 == "alternate" ? alternate : nil }
+        )
+        await vm.load()
+        XCTAssertEqual(vm.trailers.first?.id, "local")
+        XCTAssertEqual(vm.trailers.first?.sourceAccountID, "alternate")
+        XCTAssertEqual(alternate.trailerCallCount["alternate-movie"], 1)
+    }
+
     func testLoadFetchesTrailersTaggedWithSource() async {
         let provider = FakeMediaProvider(allItems: [MediaItem(id: "m1", title: "Dune", kind: .movie)])
         provider.trailersByItem = ["m1": [MediaItem(id: "t1", title: "Trailer", kind: .video)]]
@@ -2999,6 +3359,11 @@ final class ItemDetailViewModelTests: XCTestCase {
         XCTAssertEqual(vm.trailers.map(\.id), ["t1"])
         XCTAssertEqual(vm.trailers.first?.sourceAccountID, "acct-9")
         XCTAssertFalse(vm.trailers.first?.isYouTubeTrailer ?? true)
+        vm.applyWatchedState(.init(
+            itemIDs: ["t1"], scopedItemIDs: ["acct-9:t1"], resumePosition: 15
+        ))
+        XCTAssertEqual(vm.trailers.first?.resumePosition, 15)
+        XCTAssertNil(vm.state.value?.item.resumePosition)
     }
 
     func testSeriesExtrasAggregateShowAndSeasonsWithoutCrawlingEpisodes() async {
@@ -3971,6 +4336,40 @@ final class ItemDetailViewModelTests: XCTestCase {
         XCTAssertEqual(vm.state.value?.children.map(\.id), ["b-s1"])
     }
 
+    func testLateResumeCannotOverwriteAReplacementSourceAfterSeasonsPublished() async {
+        let primary = SeriesResumeFakeProvider(allItems: [series("showA")])
+        primary.childrenByParent = ["showA": [season("a-s1", "Season A")]]
+        let release = AsyncGate()
+        primary.resumeHandler = { _ in
+            await release.wait()
+            return MediaItem(
+                id: "old-resume", title: "Old resume", kind: .episode,
+                seriesID: "showA", seasonID: "a-s1", resumePosition: 100
+            )
+        }
+        let alternate = FakeMediaProvider(allItems: [series("showB")])
+        alternate.childrenByParent = ["showB": [season("b-s1", "Season B")]]
+        let vm = ItemDetailViewModel(
+            provider: primary, itemID: "showA", sourceAccountID: "jelly",
+            onlineTrailerResolver: { _ in [] }, playableVideoIDResolver: { _ in nil },
+            initialSources: [
+                MediaSourceRef(accountID: "jelly", itemID: "showA"),
+                MediaSourceRef(accountID: "plex", itemID: "showB")
+            ],
+            alternateProviderResolver: { $0 == "plex" ? alternate : primary }
+        )
+        let load = Task { await vm.load() }
+        await waitUntil { vm.state.value?.childrenLoaded == true }
+        XCTAssertTrue(vm.isResolvingServerResume)
+        await vm.switchToSource(accountID: "plex")
+        release.open()
+        await load.value
+        XCTAssertEqual(vm.state.value?.item.id, "showB")
+        XCTAssertEqual(vm.state.value?.children.map(\.id), ["b-s1"])
+        XCTAssertNil(vm.serverResumeEpisode)
+        vm.suspendEnrichment()
+    }
+
     func testResumeDuringSourceSwitchCannotLoadAnOldSeasonFromNewProvider() async {
         let primary = FakeMediaProvider(allItems: [series("showA")])
         primary.childrenByParent = ["showA": [season("a-s1", "Season A")]]
@@ -4046,12 +4445,12 @@ final class ItemDetailViewModelTests: XCTestCase {
     }
 
 
-    /// of yields elapse), so a test can observe an optimistic state set before a
-    /// later `await` resumes.
+    /// Waits for asynchronous publication with a wall-clock deadline.
     private func waitUntil(_ condition: @MainActor () -> Bool) async {
-        for _ in 0..<10_000 {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while ContinuousClock.now < deadline {
             if condition() { return }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Condition not met before timeout")
     }

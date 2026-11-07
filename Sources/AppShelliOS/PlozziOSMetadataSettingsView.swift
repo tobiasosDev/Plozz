@@ -46,14 +46,18 @@ struct PlozziOSMetadataSettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .settingsActionRow()
                     .accessibilityIdentifier("metadata-artwork-preferences")
                 } else {
-                    NavigationLink("Artwork") {
+                    SettingsPageLink {
                         PlozziOSArtworkSettingsView(
                             appModel: appModel, cardStyle: appModel.settings.cardStyle,
                             canManageProviders: true, returnsToMetadata: true
                         )
+                    } label: {
+                        SettingsDisclosureLabel { Text("Artwork") }
                     }
+                    .settingsActionRow()
                     .accessibilityIdentifier("metadata-artwork-preferences")
                 }
             }
@@ -99,6 +103,11 @@ struct PlozziOSMetadataSettingsView: View {
                     Text(orderModeTitle(mode)).tag(mode)
                 }
             }
+            .settingsSearchAnchor(
+                "metadata-order-mode",
+                fallbackFor: providers.settings.orderMode == .custom
+                    ? [] : ["metadata-provider-priority-enabled"]
+            )
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(providers.settings.orderMode == .recommended
@@ -106,6 +115,10 @@ struct PlozziOSMetadataSettingsView: View {
                     : "Drag providers to set priority. Anything below the line is turned off.")
             }
         }
+        .settingsSearchGroup(
+            providers.settings.orderMode == .custom
+                ? ["metadata-order-mode"] : ["metadata-order-mode", "metadata-provider-priority-enabled"]
+        )
     }
 
     @ViewBuilder
@@ -138,9 +151,11 @@ struct PlozziOSMetadataSettingsView: View {
             .scrollDisabled(true)
             .environment(\.editMode, .constant(.active))
             .frame(height: rowStackHeight(items))
+            .settingsSearchAnchor("metadata-provider-priority-enabled")
         } footer: {
             Text("Drag to reorder. Sources below the Disabled line are turned off.")
         }
+        .settingsSearchGroup(["metadata-provider-priority-enabled"])
     }
 
     /// Total height for the fixed (non-scrolling) reorder list: standard rows plus
@@ -237,6 +252,7 @@ struct PlozziOSMetadataSettingsView: View {
             } label: {
                 Label(tmdbKey.isConfigured ? "Replace Key" : "Save Key", systemImage: "square.and.arrow.down")
             }
+            .settingsActionRow()
             .disabled(!tmdbKey.canSaveDraft)
 
             Button {
@@ -244,6 +260,7 @@ struct PlozziOSMetadataSettingsView: View {
             } label: {
                 Label("Verify Key", systemImage: "checkmark.shield")
             }
+            .settingsActionRow()
             .disabled((!tmdbKey.canSaveDraft && !tmdbKey.isConfigured) || tmdbKey.verifyState == .verifying)
 
             if tmdbKey.isConfigured {
@@ -252,6 +269,7 @@ struct PlozziOSMetadataSettingsView: View {
                 } label: {
                     Label("Remove Key", systemImage: "trash")
                 }
+                .settingsActionRow()
             }
         } footer: {
             Text("Optional. Use your own TMDB read token so lookups run under your account's rate limit.")
@@ -298,7 +316,7 @@ struct PlozziOSMetadataSettingsView: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .settingsActionRow()
         }
     }
 

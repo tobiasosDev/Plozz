@@ -14,11 +14,7 @@ struct ViewPreferenceChoiceGroup<Content: View>: View {
         }
         .environment(\.settingsFormRowsFlushLeading, false)
         #else
-        if rowSize == .contained {
-            Section(content: content)
-        } else {
-            SettingsSectionGroup(content: content)
-        }
+        SettingsSectionGroup(content: content)
         #endif
     }
 }
@@ -56,8 +52,7 @@ struct ViewPreferenceChoiceRow: View {
                     .opacity(isSelected ? 1 : 0)
                     .accessibilityHidden(true)
             }
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            .settingsControlTarget()
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -73,6 +68,7 @@ struct ViewCustomizationLink<Destination: View>: View {
     var body: some View {
         SettingsDetailLink(destination: destination) {
             ViewCustomizationLinkLabel(isCustomized: isCustomized, title: title)
+                .settingsControlTarget()
         }
         #if os(tvOS)
         .buttonStyle(SettingsFocusButtonStyle(size: .contained))
@@ -102,9 +98,7 @@ private struct ViewCustomizationLinkLabel: View {
                         .background(.quaternary, in: Capsule())
                 }
             }
-            #if os(tvOS)
             Image(systemName: "chevron.right").accessibilityHidden(true)
-            #endif
         }
         #if os(tvOS)
         .settingsFormRowLayout()
@@ -117,13 +111,14 @@ struct ViewCustomizationList<Content: View>: View {
     let initialRowID: String
     var focusedHelp: (String) -> ViewCustomizationHelp? = { _ in nil }
     var pinsFocusedHelp = true
+    var inlineHelpAfterSection: Int?
     var sectionSpacing: CGFloat = SettingsRowMetrics.formRowSpacing
     var hasGroupedContent = false
     @ViewBuilder var content: () -> Content
     @SettingsPageDismiss private var dismiss
     @Environment(SettingsDetailNavigation.self) private var detailNavigation: SettingsDetailNavigation?
+    @Environment(SettingsSearchRequest.self) private var searchRequest: SettingsSearchRequest?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.themePalette) private var palette
     @FocusState private var focusedRow: String?
     @State private var hasEnteredList = false
     @State private var topFadeStrength: CGFloat = 0
@@ -145,12 +140,12 @@ struct ViewCustomizationList<Content: View>: View {
                                 }
                             }
                             .accessibilityIdentifier("view-customization-back")
-                            .disabled(!hasEnteredList && initialRowID != "view-customization-back")
+                            .disabled(!hasEnteredList && searchRequest == nil && initialRowID != "view-customization-back")
                             .modifier(ViewCustomizationRowFocus(id: "view-customization-back"))
                         ))
                     VStack(alignment: .leading, spacing: SettingsFormMetrics.controlSpacing) {
                         Group(sections: content()) { sections in
-                            ForEach(sections) { section in
+                            ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
                                 VStack(alignment: .leading, spacing: sectionSpacing) {
                                     section.header
                                         .padding(.horizontal, SettingsFormMetrics.headingInset)
@@ -165,8 +160,11 @@ struct ViewCustomizationList<Content: View>: View {
                                         .settingsHelperText()
                                         .padding(.horizontal, SettingsFormMetrics.headingInset)
                                 }
+                                if !pinsFocusedHelp, inlineHelpAfterSection == index, let help {
+                                    ViewCustomizationHelpCard(help: help)
+                                }
                             }
-                            if !pinsFocusedHelp, let help {
+                            if !pinsFocusedHelp, inlineHelpAfterSection == nil, let help {
                                 ViewCustomizationHelpCard(help: help)
                             }
                         }
@@ -175,7 +173,16 @@ struct ViewCustomizationList<Content: View>: View {
                 .environment(\.viewCustomizationFocus, $focusedRow)
                 .focusScope(focusScope)
                 .defaultFocus($focusedRow, initialRowID)
-                .task(id: initialRowID) { focusedRow = initialRowID }
+                .task(id: initialRowID) {
+                    guard searchRequest == nil else { return }
+                    focusedRow = initialRowID
+                }
+                .onChange(of: searchRequest?.revealed) { _, revealed in
+                    if revealed == true {
+                        hasEnteredList = true
+                        detailNavigation?.focusArrived()
+                    }
+                }
                 .onChange(of: focusedRow) { _, row in
                     if row != nil {
                         hasEnteredList = true
@@ -212,18 +219,9 @@ struct ViewCustomizationList<Content: View>: View {
         .buttonStyle(SettingsFocusButtonStyle(size: .contained))
         .navigationTitle(Text(verbatim: ""))
         #else
-        List {
+        SettingsPageList {
             content()
-                .listRowBackground(palette.surface(.raised).fill)
-                .listRowSeparatorTint(palette.separator)
         }
-        .listStyle(.insetGrouped)
-        .toggleStyle(SettingsSwitchToggleStyle())
-        .scrollContentBackground(.hidden)
-        .background { palette.settingsBackground.ignoresSafeArea() }
-        .toolbarBackground(palette.settingsBackground, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarTitleDisplayMode(.inline)
         .navigationTitle(Text(title))
         #endif
     }
@@ -239,8 +237,8 @@ struct ViewCustomizationMenu<Selection: Hashable, Options: View>: View {
     @ViewBuilder var options: () -> Options
 
     var body: some View {
-        ViewCustomizationMenuLabel(id: id, title: title) {
-            Menu {
+        HStack {
+            SettingsControlMenu {
                 Picker(selection: $selection) {
                     options()
                 } label: {
@@ -248,16 +246,16 @@ struct ViewCustomizationMenu<Selection: Hashable, Options: View>: View {
                 }
                 .pickerStyle(.inline)
             } label: {
-                ViewCustomizationMenuValue(value: value)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+                ViewCustomizationMenuLabel(id: id, title: title) {
+                    SettingsMenuValue(Text(value))
+                }
             }
-            .buttonStyle(.borderless)
             .accessibilityLabel(Text(title))
             .accessibilityValue(Text(value))
             .accessibilityHint(Text(detail ?? "Select to change."))
             .accessibilityIdentifier(id)
         }
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -288,9 +286,6 @@ private struct ViewCustomizationMenuLabel<Control: View>: View {
         .font(.body)
         .foregroundStyle(palette.primaryText)
         .multilineTextAlignment(.leading)
-        .frame(minHeight: 44)
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .contain)
     }
 
     private var stackedLabel: some View {
@@ -301,24 +296,6 @@ private struct ViewCustomizationMenuLabel<Control: View>: View {
         }
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct ViewCustomizationMenuValue: View {
-    let value: LocalizedStringResource
-    @Environment(\.themePalette) private var palette
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(value)
-            Image(systemName: "chevron.up.chevron.down")
-                .font(.caption2.weight(.semibold))
-                .accessibilityHidden(true)
-        }
-        .font(.subheadline)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(palette.fill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 #endif

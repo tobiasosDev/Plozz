@@ -193,16 +193,10 @@ struct PlayerTimelineTimes: View {
     let model: PlayerControlsModel
     @Environment(\.locale) private var locale
     @Environment(\.timeZone) private var timeZone
-    /// The "Ends at" label's rendered width, for the collision fade. Measured
-    /// from the visible label itself; it is localized copy, so it cannot be
-    /// measured up front the way the bare times are.
-    @State private var endsAtWidth: CGFloat = 0
 
     /// One size for every timeline label, shared with their synchronous width
     /// measurement (`PlayerControls.measuredTimeWidth`).
     static let fontSize: CGFloat = 24
-    /// Space between "Ends at …" and the remaining time beside it.
-    private static let trailingGap: CGFloat = 26
 
     var body: some View {
         let clockMode = model.timelineClock.isEnabled && !model.isScrubbing
@@ -222,10 +216,43 @@ struct PlayerTimelineTimes: View {
     }
 
     private func labels(clock: PlayerClockTimes?, endsAt: LocalizedStringResource?) -> some View {
+        PlayerTimelineLabels(
+            model: model,
+            curLabel: clock?.current ?? PlayerControls.timeLabel(model.displaySeconds),
+            remLabel: clock.map { $0.endTime ?? "--:--" }
+                ?? ("\u{2212}" + PlayerControls.timeLabel(max(0, model.duration - model.displaySeconds))),
+            endsAt: endsAt,
+            showsClock: clock != nil
+        )
+        .equatable()
+    }
+}
+
+/// Text measurement follows displayed strings, while the geometry below still
+/// observes every playhead update independently.
+struct PlayerTimelineLabels: View, Equatable {
+    let model: PlayerControlsModel
+    let curLabel: String
+    let remLabel: String
+    var endsAt: LocalizedStringResource? = nil
+    let showsClock: Bool
+    /// The "Ends at" label's rendered width, for the collision fade. Measured
+    /// from the visible label itself; it is localized copy, so it cannot be
+    /// measured up front the way the bare times are.
+    @State private var endsAtWidth: CGFloat = 0
+
+    private static var fontSize: CGFloat { PlayerTimelineTimes.fontSize }
+    /// Space between "Ends at …" and the remaining time beside it.
+    private static let trailingGap: CGFloat = 26
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.curLabel == rhs.curLabel
+            && lhs.remLabel == rhs.remLabel && lhs.endsAt == rhs.endsAt
+            && lhs.showsClock == rhs.showsClock
+    }
+
+    var body: some View {
         let fadeGap: CGFloat = 16
-        let curLabel = clock?.current ?? PlayerControls.timeLabel(model.displaySeconds)
-        let remLabel = clock.map { $0.endTime ?? "--:--" }
-            ?? ("\u{2212}" + PlayerControls.timeLabel(max(0, model.duration - model.displaySeconds)))
         let curW = PlayerControls.measuredTimeWidth(curLabel, pointSize: Self.fontSize)
         let remW = PlayerControls.measuredTimeWidth(remLabel, pointSize: Self.fontSize)
         return GeometryReader { geo in
@@ -233,37 +260,44 @@ struct PlayerTimelineTimes: View {
             let midY = geo.size.height / 2
             let knobX = width * CGFloat(model.progressFraction)
             let halfCur = curW / 2
-            let centerX = min(max(knobX, halfCur), max(halfCur, width - halfCur))
+            let scanLevel = model.isScrubbing ? model.skipGesture.scanLevel : 0
+            let scanBackward = scanLevel < 0
+            let glyphWidth: CGFloat = abs(scanLevel) >= 2 ? 60 : 30
+            let glyphShown = scanLevel != 0 || (!model.isScrubbing
+                && (model.skipGesture.hintVisible || (model.isPaused && model.intendsPause) || model.isSeeking))
+            let glyphReach: CGFloat = glyphShown ? glyphWidth + 10 : 0
+            let leftInset = halfCur + (scanBackward ? glyphReach : 0)
+            let rightInset = halfCur + (scanLevel > 0 ? glyphReach : 0)
+            let centerX = min(max(knobX, leftInset), max(leftInset, width - rightInset))
             let currentRightEdge = centerX + halfCur
             let remainingLeftEdge = width - remW
-            let glyphShown = !model.isScrubbing
-                && (model.skipGesture.hintVisible || (model.isPaused && model.intendsPause) || model.isSeeking)
-            let glyphReach: CGFloat = glyphShown ? 40 : 0
-            let remainingHidden = currentRightEdge + glyphReach + fadeGap >= remainingLeftEdge
+            let trailingReach = scanBackward ? 0 : glyphReach
+            let remainingHidden = currentRightEdge + trailingReach + fadeGap >= remainingLeftEdge
             // "Ends at" gives way first: it sits nearer the playhead, and the
             // remaining time is the one figure the viewer is scrubbing against.
             let endsAtHidden = remainingHidden
-                || currentRightEdge + glyphReach + fadeGap >= remainingLeftEdge - Self.trailingGap - endsAtWidth
+                || currentRightEdge + trailingReach + fadeGap >= remainingLeftEdge - Self.trailingGap - endsAtWidth
 
             Text(curLabel)
                 .accessibilityIdentifier("player-timeline-current-time")
-                .accessibilityLabel(clock == nil ? Text("Elapsed time") : Text("Current time"))
+                .accessibilityLabel(showsClock ? Text("Current time") : Text("Elapsed time"))
                 .accessibilityValue(Text(verbatim: curLabel))
                 .monospacedDigit()
                 .font(.system(size: Self.fontSize, weight: .semibold))
                 .foregroundStyle(.white)
                 .fixedSize()
                 .shadow(radius: 3)
-                .overlay(alignment: .trailing) {
+                .overlay(alignment: scanBackward ? .leading : .trailing) {
                     statusGlyph
-                        .frame(width: 30, height: 30)
-                        .offset(x: 40)
-                        .opacity(model.isScrubbing ? 0 : 1)
+                        .frame(width: glyphWidth, height: 30)
+                        .offset(x: scanBackward ? -glyphReach : glyphReach)
+                        .opacity(model.isScrubbing && scanLevel == 0 ? 0 : 1)
                         .animation(
                             PlayerControls.transportFadeAnimation(scrubbing: model.isScrubbing),
                             value: model.isScrubbing
                         )
                 }
+                .environment(\.layoutDirection, .leftToRight)
                 .position(x: centerX, y: midY)
 
             HStack(spacing: Self.trailingGap) {
@@ -282,7 +316,7 @@ struct PlayerTimelineTimes: View {
                 }
                 Text(remLabel)
                     .accessibilityIdentifier("player-timeline-end-time")
-                    .accessibilityLabel(clock == nil ? Text("Remaining time") : Text("Estimated end time"))
+                    .accessibilityLabel(showsClock ? Text("Estimated end time") : Text("Remaining time"))
                     .accessibilityValue(Text(verbatim: remLabel))
                     .monospacedDigit()
                     .font(.system(size: Self.fontSize, weight: .semibold))
@@ -298,7 +332,21 @@ struct PlayerTimelineTimes: View {
     }
 
     @ViewBuilder private var statusGlyph: some View {
-        if model.skipGesture.hintVisible {
+        if model.isScrubbing, model.skipGesture.scanLevel != 0 {
+            let level = model.skipGesture.scanLevel
+            HStack(spacing: 8) {
+                if level <= -2 { Text(verbatim: String(abs(level))) }
+                Image(systemName: level < 0 ? "backward.circle" : "forward.circle")
+                if level >= 2 { Text(verbatim: String(level)) }
+            }
+            .font(.system(size: 24, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .fixedSize()
+            .environment(\.layoutDirection, .leftToRight)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("player-remote-scan-level")
+        } else if model.skipGesture.hintVisible {
             Image(systemName: model.skipGesture.hintForward
                 ? model.skipGesture.forwardInterval.forwardSymbol
                 : model.skipGesture.backwardInterval.backwardSymbol)

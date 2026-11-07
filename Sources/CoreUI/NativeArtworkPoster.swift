@@ -16,6 +16,8 @@ public struct NativeArtworkPoster<Artwork: View, Overlay: View>: View {
     private let placeholderTint: Color?
     private let providerKind: ProviderKind?
     private let mediaShareTransport: MediaShareTransportKind?
+    private let showsCaption: Bool
+    private let preservesArtworkTransparency: Bool
     @State private var resolution = ArtworkResolutionState()
     @Environment(\.plozzMetrics) private var metrics
 
@@ -29,6 +31,8 @@ public struct NativeArtworkPoster<Artwork: View, Overlay: View>: View {
         placeholderTint: Color? = nil,
         providerKind: ProviderKind? = nil,
         mediaShareTransport: MediaShareTransportKind? = nil,
+        showsCaption: Bool = true,
+        preservesArtworkTransparency: Bool = false,
         focus: PlozzCardFocus.Binding,
         action: @escaping () -> Void,
         @ViewBuilder artwork: () -> Artwork,
@@ -46,12 +50,15 @@ public struct NativeArtworkPoster<Artwork: View, Overlay: View>: View {
         self.placeholderTint = placeholderTint
         self.providerKind = providerKind
         self.mediaShareTransport = mediaShareTransport
+        self.showsCaption = showsCaption
+        self.preservesArtworkTransparency = preservesArtworkTransparency
     }
 
     public var body: some View {
         VStack(spacing: metrics.nativePosterCaptionSpacing) {
             NativeTVPoster(
-                image: resolution.image, treatment: .original, aspectRatio: aspectRatio,
+                image: resolution.image, preservesArtworkTransparency: preservesArtworkTransparency,
+                treatment: .original, aspectRatio: aspectRatio,
                 fallbackWidth: width, title: title, subtitle: subtitle,
                 overlay: ZStack {
                     if resolution.image == nil {
@@ -72,13 +79,15 @@ public struct NativeArtworkPoster<Artwork: View, Overlay: View>: View {
             )
             .focused(focus.focusState)
             .frame(width: width)
-            SystemPosterCaption(
-                title: title, subtitle: subtitle,
-                reservesSubtitleSpace: true, isFocused: focus.observation.isFocused,
-                providerKind: providerKind, mediaShareTransport: mediaShareTransport
-            )
-            .frame(width: width)
-            .accessibilityHidden(true)
+            if showsCaption {
+                SystemPosterCaption(
+                    title: title, subtitle: subtitle,
+                    reservesSubtitleSpace: true, isFocused: focus.observation.isFocused,
+                    providerKind: providerKind, mediaShareTransport: mediaShareTransport
+                )
+                .frame(width: width)
+                .accessibilityHidden(true)
+            }
         }
         .padding(.horizontal, metrics.borderlessCardSideMargin)
         .background {
@@ -102,6 +111,8 @@ public extension NativeArtworkPoster where Overlay == EmptyView {
         placeholderTint: Color? = nil,
         providerKind: ProviderKind? = nil,
         mediaShareTransport: MediaShareTransportKind? = nil,
+        showsCaption: Bool = true,
+        preservesArtworkTransparency: Bool = false,
         focus: PlozzCardFocus.Binding,
         action: @escaping () -> Void,
         @ViewBuilder artwork: () -> Artwork
@@ -111,6 +122,8 @@ public extension NativeArtworkPoster where Overlay == EmptyView {
             localizedTitle: localizedTitle, placeholderSymbol: placeholderSymbol,
             placeholderTint: placeholderTint,
             providerKind: providerKind, mediaShareTransport: mediaShareTransport,
+            showsCaption: showsCaption,
+            preservesArtworkTransparency: preservesArtworkTransparency,
             focus: focus, action: action, artwork: artwork, overlay: { EmptyView() }
         )
     }

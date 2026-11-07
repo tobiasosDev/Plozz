@@ -33,6 +33,7 @@ public struct HomeLibraryVisibility: Codable, Equatable, Sendable {
     /// Nil preserves an existing profile's legacy combined/grouped choices.
     public var rowCustomization: HomeRowCustomization?
     public var collectionSections: [CollectionSection]
+    public var dismissedEmptyHomeRows: Set<HomeRowID>
 
     public var intent: Self {
         var copy = self
@@ -57,6 +58,7 @@ public struct HomeLibraryVisibility: Codable, Equatable, Sendable {
 
     /// On by default for every layout, independently of the saved row arrangement.
     public var mergeNextUpIntoContinueWatching: Bool
+    public var hideWatchedRecentlyAdded: Bool
 
     public var mergesNextUpRows: Bool {
         mergeNextUpIntoContinueWatching && isGlobalRowEnabled(.continueWatching)
@@ -129,7 +131,9 @@ public struct HomeLibraryVisibility: Codable, Equatable, Sendable {
         continueWatchingAction: ContinueWatchingAction = .default,
         rowCustomization: HomeRowCustomization? = nil,
         mergeNextUpIntoContinueWatching: Bool = true,
-        collectionSections: [CollectionSection] = []
+        collectionSections: [CollectionSection] = [],
+        hideWatchedRecentlyAdded: Bool = false,
+        dismissedEmptyHomeRows: Set<HomeRowID> = []
     ) {
         self.mergeLibrariesOnHome = mergeLibrariesOnHome
         self.disabledKeys = disabledKeys
@@ -144,6 +148,8 @@ public struct HomeLibraryVisibility: Codable, Equatable, Sendable {
         self.rowCustomization = rowCustomization
         self.mergeNextUpIntoContinueWatching = mergeNextUpIntoContinueWatching
         self.collectionSections = collectionSections
+        self.hideWatchedRecentlyAdded = hideWatchedRecentlyAdded
+        self.dismissedEmptyHomeRows = dismissedEmptyHomeRows
     }
 
     /// Fresh profiles match their server; existing blobs retain legacy behavior.
@@ -378,6 +384,8 @@ public struct HomeLibraryVisibility: Codable, Equatable, Sendable {
         case rowCustomization
         case collectionSections
         case mergeNextUpIntoContinueWatching
+        case hideWatchedRecentlyAdded
+        case dismissedEmptyHomeRows
     }
 
     /// Decodes leniently so a pre-existing blob still loads: missing fields fall
@@ -422,6 +430,12 @@ public struct HomeLibraryVisibility: Codable, Equatable, Sendable {
         self.mergeNextUpIntoContinueWatching = try container.decodeIfPresent(
             Bool.self, forKey: .mergeNextUpIntoContinueWatching
         ) ?? true
+        self.hideWatchedRecentlyAdded = try container.decodeIfPresent(
+            Bool.self, forKey: .hideWatchedRecentlyAdded
+        ) ?? false
+        self.dismissedEmptyHomeRows = try container.decodeIfPresent(
+            Set<HomeRowID>.self, forKey: .dismissedEmptyHomeRows
+        ) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -439,6 +453,13 @@ public struct HomeLibraryVisibility: Codable, Equatable, Sendable {
         try container.encodeIfPresent(rowCustomization, forKey: .rowCustomization)
         if !collectionSections.isEmpty { try container.encode(collectionSections, forKey: .collectionSections) }
         try container.encode(mergeNextUpIntoContinueWatching, forKey: .mergeNextUpIntoContinueWatching)
+        try container.encode(hideWatchedRecentlyAdded, forKey: .hideWatchedRecentlyAdded)
+        if !dismissedEmptyHomeRows.isEmpty {
+            try container.encode(
+                dismissedEmptyHomeRows.sorted { $0.presentationID < $1.presentationID },
+                forKey: .dismissedEmptyHomeRows
+            )
+        }
     }
 }
 
@@ -455,7 +476,7 @@ public enum ContinueWatchingPlaybackDetails: String, CaseIterable, Codable, Send
 public enum ContinueWatchingAction: String, CaseIterable, Codable, Sendable {
     case play, openDetails
 
-    public static let `default`: Self = .play
+    public static let `default`: Self = .openDetails
 }
 
 /// A global (cross-server, cross-library) row on Home. The hero is handled

@@ -5,7 +5,7 @@ import CoreUI
 
 /// Settings → ‹Profile› → **Libraries**.
 ///
-/// The per-profile half of the "mirror model". *This Apple TV › Servers*
+/// The per-profile half of the "mirror model". *Everyone › Sources*
 /// manages the household's sign-ins (the global inventory); this screen is
 /// personal. Every signed-in server appears here in one list, each with a
 /// **master on/off toggle** for this profile. When a server is on, its card
@@ -23,6 +23,7 @@ import CoreUI
 public struct MyLibrariesDetailView: View {
     public let scope: ProfileLibrariesScope
     @Environment(\.managedProviderSetupRouter) private var providerSetupRouter
+    @Environment(SettingsSearchRequest.self) private var searchRequest: SettingsSearchRequest?
 
     public init(scope: ProfileLibrariesScope) { self.scope = scope }
 
@@ -40,6 +41,21 @@ public struct MyLibrariesDetailView: View {
 
     private var allGroups: [ServerAccountGroup] { serverGroups(from: scope.accounts) }
 
+    private func searchGroup(for target: String) -> ServerAccountGroup? {
+        let candidates = allGroups.filter {
+            target == "watcher-plex-user" ? $0.providerKind == .plex
+                : target == "watcher-server-user" ? $0.providerKind != .mediaShare : true
+        }
+        return candidates.first(where: isWatching) ?? candidates.first
+    }
+
+    private func searchFallbacks(for group: ServerAccountGroup) -> [String] {
+        guard !isWatching(group) else { return [] }
+        return ["profile-library-inclusion", "watcher-server-user", "watcher-plex-user"].filter {
+            searchGroup(for: $0)?.serverKey == group.serverKey
+        }
+    }
+
     private func isWatching(_ group: ServerAccountGroup) -> Bool {
         group.accounts.contains { scope.isAccountIncludedInActiveProfile($0.id) }
     }
@@ -47,7 +63,7 @@ public struct MyLibrariesDetailView: View {
     /// The server's master on/off for this profile: on ⇒ watch it (include a
     /// sign-in), off ⇒ stop watching (drop all its sign-ins from the profile).
     /// The server itself is never removed here — that's a household sign-out on
-    /// This Apple TV › Servers.
+    /// Everyone › Sources.
     private func toggleWatching(_ group: ServerAccountGroup) {
         let was = isWatching(group)
         was ? stopWatching(group) : startWatching(group)
@@ -73,6 +89,17 @@ public struct MyLibrariesDetailView: View {
                             // picker decides whose watchlist comes with it.
                             subtitle: "Only this profile is affected. Who you watch as sets whose watchlist it uses."
                         )
+                    }
+                    if searchRequest?.targetID == "watcher-plex-user",
+                       searchGroup(for: "watcher-plex-user") == nil {
+                        Text("Add a Plex server to choose a Plex user.")
+                            .focusable()
+                            .settingsSearchAnchor("watcher-plex-user")
+                    } else if searchRequest?.targetID == "watcher-server-user",
+                              searchGroup(for: "watcher-server-user") == nil {
+                        Text("Add a media server to choose who you watch as.")
+                            .focusable()
+                            .settingsSearchAnchor("watcher-server-user")
                     }
                     if allGroups.isEmpty {
                         emptyInventoryState
@@ -100,7 +127,7 @@ public struct MyLibrariesDetailView: View {
         #if os(tvOS)
         if inWorkspace {
             FocusableSettingsPanel(
-                footer: "Sign in to a server under Everyone › Servers, then choose what you watch here."
+                footer: "Add a source under Everyone › Sources."
             ) {
                 Text("No servers yet.").font(.headline)
             }
@@ -113,7 +140,7 @@ public struct MyLibrariesDetailView: View {
     }
 
     private var emptyInventoryPanel: some View {
-        SettingsPanel(footer: "Sign in to a server under Everyone › Servers, then choose what you watch here.") {
+        SettingsPanel(footer: "Add a source under Everyone › Sources.") {
             Text("No servers yet.").font(.headline)
         }
     }
@@ -151,6 +178,11 @@ public struct MyLibrariesDetailView: View {
                 }
                 .id(serverHeaderID(group))
                 .settingsWorkspaceEntry(group.serverKey == allGroups.first?.serverKey)
+                .settingsSearchAnchor(
+                    group.serverKey == allGroups.first?.serverKey
+                        ? "profile-source-inclusion" : "profile-source-\(group.serverKey)",
+                    fallbackFor: searchFallbacks(for: group)
+                )
 
                 if isWatching(group) {
                     // A media share has no watcher identity, so it skips "Watching
@@ -158,6 +190,10 @@ public struct MyLibrariesDetailView: View {
                     if group.providerKind != .mediaShare {
                         PlozzDivider()
                         watchingAs(group)
+                            .settingsSearchAnchor(
+                                group.serverKey == searchGroup(for: "watcher-server-user")?.serverKey
+                                    ? "watcher-server-user" : "watcher-server-\(group.serverKey)"
+                            )
                     }
 
                     PlozzDivider()
@@ -212,7 +248,14 @@ public struct MyLibrariesDetailView: View {
                 .font(.caption.weight(.semibold))
                 .plozzForeground(.secondary)
             if group.providerKind == .plex {
-                ForEach(group.accounts) { plexIdentityLink($0) }
+                ForEach(group.accounts) { account in
+                    plexIdentityLink(account)
+                        .settingsSearchAnchor(
+                            group.serverKey == searchGroup(for: "watcher-plex-user")?.serverKey
+                                && account.id == group.accounts.first?.id
+                                ? "watcher-plex-user" : "watcher-plex-\(account.id)"
+                        )
+                }
             } else {
                 jellyfinIdentity(group)
             }
@@ -315,11 +358,11 @@ public struct MyLibrariesDetailView: View {
         revision += 1
     }
 
-    // MARK: - Add a server
+    // MARK: - Add a source
 
-    /// Adding a server is a device-wide action (it affects every profile), so it
-    /// lives canonically on This Apple TV › Servers; this mirror of it is styled
-    /// identically to that page's "Add Server" row and says "this Apple TV" to
+    /// Adding a source is a device-wide action (it affects every profile), so it
+    /// lives canonically on Sources; this mirror of it is styled
+    /// identically to that page's add row and says "this Apple TV" to
     /// make the device scope obvious next to the per-profile toggles above.
     @ViewBuilder
     private var addServerSection: some View {
@@ -329,13 +372,14 @@ public struct MyLibrariesDetailView: View {
         if scope.presentation == .settings {
             SettingsPanel {
             Button(action: scope.onAddAccount) {
-                Label("Add Server to This Apple TV", systemImage: "plus.circle")
+                Label("Add Source to This Apple TV", systemImage: "plus.circle")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 14)
                     .padding(.horizontal, 14)
                     .contentShape(Rectangle())
             }
                 .buttonStyle(SettingsFocusButtonStyle(size: .prominent))
+                .accessibilityIdentifier("libraries-add-source")
             }
         }
     }
@@ -393,6 +437,10 @@ public struct MyLibrariesDetailView: View {
                     onToggle: { lib in
                         scope.homeVisibility.setEnabled(!scope.homeVisibility.isVisibleOnHome(lib), for: lib.key)
                     }
+                )
+                .settingsSearchAnchor(
+                    group.serverKey == searchGroup(for: "profile-library-inclusion")?.serverKey
+                        ? "profile-library-inclusion" : "profile-libraries-\(group.serverKey)"
                 )
             }
         }

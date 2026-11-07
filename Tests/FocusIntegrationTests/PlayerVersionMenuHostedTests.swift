@@ -8,6 +8,44 @@ import XCTest
 
 @MainActor
 final class PlayerVersionMenuHostedTests: XCTestCase {
+    func testOpaqueSourceNamesUseReadableFallbackInOptimizedBuild() {
+        let token = String(repeating: "Ab7_xQ4-", count: 20) + "." + String(repeating: "Cd8_Rs5-", count: 6)
+        for rawName in [token, "https://media.example/stream/\(token)"] {
+            XCTAssertNil(MediaSourceDisplayName.fileName(from: rawName))
+            let version = MediaVersion(
+                id: "source", name: "📁 Episode.S02E01.1080p.WEB-DL.mkv\n🌐 English",
+                fileName: rawName, height: 1080
+            )
+            XCTAssertEqual(
+                MediaVersion.PickerPresentation(version).releaseName, "Episode.S02E01.1080p.WEB-DL.mkv"
+            )
+            XCTAssertEqual(version.fileName, rawName)
+            XCTAssertEqual(version.playbackMediaSourceID, "source")
+        }
+        XCTAssertEqual(
+            MediaSourceDisplayName.fileName(
+                from: "https://media.example/\(token)?filename=Episode.S02E01.1080p.mkv"
+            ),
+            "Episode.S02E01.1080p.mkv"
+        )
+        let unknown = MediaVersion(id: "unknown", name: token, fileName: token, height: 1080)
+        XCTAssertNil(MediaVersion.PickerPresentation(unknown).releaseName)
+        XCTAssertEqual(unknown.displayLabel, "1080p")
+    }
+
+    func testVersionFilenameQueriesRejectControlCharactersInOptimizedBuild() {
+        XCTAssertEqual(
+            MediaSourceDisplayName.fileName(from: "filename=Movie.Extended-GROUP.mkv"),
+            "Movie.Extended-GROUP.mkv"
+        )
+        for encodedControl in ["%00", "%09", "%0A", "%0D", "%7F", "%C2%85", "%E2%80%8B"] {
+            XCTAssertNil(
+                MediaSourceDisplayName.fileName(from: "filename=Movie\(encodedControl)Name.mkv"),
+                encodedControl
+            )
+        }
+    }
+
     func testReturningFromScrolledVersionsRestoresVisibleRootAndNativeFocus() async throws {
         try await waitUntil {
             UIApplication.shared.connectedScenes.contains { $0.activationState == .foregroundActive }
@@ -146,6 +184,10 @@ final class PlayerVersionMenuHostedTests: XCTestCase {
             versions: [version, .init(id: "other", height: 1080)], selectedVersionID: version.id,
             actions: [], onSelectSource: { _ in }, onSelectVersion: { _ in }, onPerformAction: { _ in }
         )
+        XCTAssertEqual(MediaSourceDisplayName.fileName(from: version.fileName),
+                       "Movie.Extended.2160p.REMUX.HEVC.TrueHD-GROUP.mkv")
+        XCTAssertEqual(MediaVersion.PickerPresentation(version).releaseName,
+                       "Movie.Extended.2160p.REMUX.HEVC.TrueHD-GROUP.mkv")
         window.rootViewController = UIHostingController(rootView:
             panel.environment(\.locale, Locale(identifier: "en_US"))
                 .frame(maxWidth: .infinity, maxHeight: .infinity).background(.black)

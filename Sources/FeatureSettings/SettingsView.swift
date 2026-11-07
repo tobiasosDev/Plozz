@@ -364,7 +364,7 @@ public struct SettingsView: View {
     public var body: some View {
         SettingsWorkspace(navigation: navigation) {
             SettingsRootLayout {
-                rootList
+                settingsRoot
             } preview: {
                 SettingsRootPreview(
                     navigation: navigation,
@@ -376,6 +376,7 @@ public struct SettingsView: View {
             destination(for: route)
         }
         .padding(.horizontal, PlozzTheme.Metrics.screenPadding)
+        .environment(themeMusic)
         .task { await reloadLibraries() }
         .onAppear { MainThreadStallProbe.context = "settings" }
         .onChange(of: activeProfile.id) { _, _ in
@@ -398,15 +399,20 @@ public struct SettingsView: View {
         }
     }
 
-    /// The root's list column: the profile's own settings, then the
-    /// household's, each row its own card.
+    /// The root's list column: search, then the profile's own settings, then
+    /// the household's, each row its own card.
     ///
     /// No "Settings" title above the cards: the navigation already names the
     /// page, and with a title in this list, re-entering Settings from the
     /// profile picker's cog left focus on the top bar instead of Playback
     /// (testTopBarProfilePickerCogReturnsToActiveProfileSettings).
-    private var rootList: some View {
-        ScrollView {
+    private var settingsRoot: some View {
+        // Room for the focused card's outset; `SettingsRootLayout` keeps the
+        // trailing one outside the scroll view.
+        SettingsSearchTelevisionView(
+            isKids: activeProfile.isKids,
+            leadingInsetOnly: SettingsRowCardMetrics.focusOutset
+        ) {
             VStack(alignment: .leading, spacing: 28) {
                 // The active profile's own container comes FIRST. Almost
                 // everything anyone opens Settings to change is in here —
@@ -446,14 +452,7 @@ public struct SettingsView: View {
                     aboutAndSignOut
                 }
             }
-            // Room for the focused card's outset; `SettingsRootLayout` keeps
-            // the trailing one outside the scroll view.
-            .padding(.leading, SettingsRowCardMetrics.focusOutset)
-            .padding(.top, SettingsFormMetrics.pageTopInset)
-            .padding(.bottom, SettingsFormMetrics.pageBottomInset)
         }
-        .scrollClipDisabled()
-        .scrollsTopNavigation(onReturnToTop: { navigation.select(.playback) })
     }
 
     // MARK: - Profile container (header + all settings this profile owns)
@@ -598,8 +597,8 @@ public struct SettingsView: View {
 
             Group {
                 // Shared server sign-ins (the household's full inventory). The
-                // list screen opens with a prominent Add Server button.
-                sectionRow("Servers", icon: "externaldrive.connected.to.line.below",
+                // list screen opens with a prominent Add Source button.
+                sectionRow(SettingsCopy.sources, icon: "externaldrive.connected.to.line.below",
                        value: householdServersSummary,
                        route: .servers)
 
@@ -845,14 +844,107 @@ public struct SettingsView: View {
     }
 
     @ViewBuilder
+    private func searchDestination(_ entry: SettingsSearchEntry) -> some View {
+        let page = entry.destinationPage(on: .television)
+        switch page {
+        case .theme, .cards:
+            AppearanceDetailView(
+                librariesScope: context.librariesScope, settingsNavigation: navigation,
+                theme: theme, nightShift: nightShift, spoilers: spoilers,
+                searchPageID: page == .theme ? "theme" : "cards"
+            )
+        case .playback: authorizedDestination(for: .playback)
+        case .playbackAdvanced: PlaybackAdvancedSettingsView(playback: playback)
+        case .externalPlayer: ExternalPlayerSettingsView(custom: entry.id == "external-template")
+        case .skipMarkers:
+            SkipMarkerSettingsView(model: playback, initialKind: entry.skipKind, initialCategory: entry.contentCategory)
+        case .subtitles: authorizedDestination(for: .subtitles)
+        case .subtitleStyle: authorizedDestination(for: .subtitleStyle(liveTV: false))
+        case .liveSubtitleStyle:
+            authorizedDestination(for: subtitleStyle.usesSeparateLiveTVStyle ? .subtitleStyle(liveTV: true) : .subtitles)
+        case .cardLabels:
+            CardCaptionCustomizationView(
+                cards: cardStyle, visibility: homeVisibility, initialView: entry.cardCaptionView
+            )
+        case .musicPlayer:
+            AppearanceDetailView(
+                librariesScope: context.librariesScope, settingsNavigation: navigation,
+                theme: theme, nightShift: nightShift, spoilers: spoilers, searchPageID: "music-player"
+            )
+        case .artwork:
+            if entry.anchorID.hasPrefix("artwork-view-") {
+                ArtworkCustomizationView(
+                    cards: cardStyle,
+                    continueWatchingShowsSeriesArtwork: homeVisibility.continueWatchingShowsSeriesArtwork,
+                    continueWatchingLayout: homeVisibility.continueWatchingLayout
+                )
+            } else {
+                authorizedDestination(for: .artwork)
+            }
+        case .circadian: authorizedDestination(for: .nightShift)
+        case .allScreens: authorizedDestination(for: .allScreens)
+        case .navigation: authorizedDestination(for: .navigationLayout)
+        case .heroTrailers:
+            TrailersAndMusicSettingsView(background: heroBackground, themeMusic: themeMusic)
+        case .home, .hero, .heroContent, .heroRatings, .heroDiscovery,
+             .heroLibraries, .heroCollections, .homeRows, .homeRowStyle, .homeFiltering, .homeLabels, .continueWatching:
+            HomeRowsSettingsView(
+                libraries: librariesStore.state.value ?? [], accounts: homeRowAccounts, visibility: homeVisibility,
+                spoilerSettings: spoilers.settings, searchPage: page
+            )
+            .id(ObjectIdentifier(homeVisibility))
+        case .detail: authorizedDestination(for: .detailPage)
+        case .libraries: authorizedDestination(for: .customizeLibraries)
+        case .liveTV, .liveTVSources: authorizedDestination(for: .liveTV)
+        case .liveTVGuide, .liveTVVisibility:
+            LiveTVSettingsView(
+                store: LiveTVViewSettingsStore(namespace: liveTVPreferencesNamespace),
+                preferencesStore: LiveTVPreferencesStore(namespace: liveTVPreferencesNamespace),
+                searchPage: page
+            )
+        case .language: authorizedDestination(for: .language)
+        case .trackers: authorizedDestination(for: .integrations)
+        case .topShelf: authorizedDestination(for: .topShelf)
+        case .profiles: authorizedDestination(for: .profile)
+        case .profileAppearance: authorizedDestination(for: .profileAppearance(profileID: activeProfile.id))
+        case .profileSettings: authorizedDestination(for: .profileSettings(profileID: activeProfile.id))
+        case .accountLibraries: authorizedDestination(for: .myLibraries)
+        case .seerr: authorizedDestination(for: .seerr)
+        case .sync: authorizedDestination(for: .syncSetup)
+        case .metadata: authorizedDestination(for: .metadata)
+        case .metadataDiagnostics: authorizedDestination(for: .metadataDiagnostics)
+        case .diagnostics: authorizedDestination(for: .help)
+        case .releaseNotes: authorizedDestination(for: .releaseNotes)
+        case .downloads, .streamingAdvanced, .detailRatingSources:
+            ContentUnavailableView("Setting unavailable", systemImage: "magnifyingglass")
+        }
+    }
+
+    @ViewBuilder
     private func authorizedDestination(for route: SettingsRoute) -> some View {
         switch route {
+        case .search:
+            settingsRoot
+        case .searchResult(let id):
+            if let entry = SettingsSearchCatalog.entry(id: id),
+               entry.isAvailable(on: .television, isKids: activeProfile.isKids) {
+                let targetID = entry.page == .liveSubtitleStyle && !subtitleStyle.usesSeparateLiveTVStyle
+                    ? "live-subtitle-style" : entry.anchorID
+                SettingsSearchLanding(targetID: targetID) {
+                    AnyView(searchDestination(entry))
+                }
+                .id("\(id)-\(targetID)")
+            } else {
+                ContentUnavailableView("Setting unavailable", systemImage: "magnifyingglass")
+            }
         case .language:
             ScrollView {
                 VStack(alignment: .leading, spacing: SettingsFormMetrics.controlSpacing) {
                     SettingsPageHeader("Language")
                     SettingsControlGroup { AppLanguagePicker(model: appLanguage) }
+                        .settingsSearchAnchor("language")
                 }
+
                 .padding(.horizontal, SettingsFormMetrics.pageInset)
                 .padding(.bottom, SettingsFormMetrics.pageBottomInset)
             }
@@ -862,6 +954,8 @@ public struct SettingsView: View {
                 librariesScope: context.librariesScope, settingsNavigation: navigation,
                 theme: theme, nightShift: nightShift, spoilers: spoilers, section: .screensNavigation
             )
+        case .allScreens:
+            AllScreensDetailView(spoilers: spoilers)
         case .about:
             ScrollView {
                 VStack(alignment: .leading, spacing: SettingsFormMetrics.controlSpacing) {
@@ -1070,7 +1164,7 @@ public struct SettingsView: View {
                         ))
                         .toggleStyle(SettingsSwitchToggleStyle())
                         .settingsWorkspaceEntry()
-                        .modifier(SyncRecoveryDisabled(provider: syncStatusSummary))
+                        .modifier(SyncRecoveryDisabled(provider: syncStatusSummary)).settingsSearchAnchor("icloud-sync")
 
                         if syncEnabled, let syncStatusSummary {
                             HStack(spacing: 24) {
@@ -1181,11 +1275,11 @@ public struct SettingsView: View {
 
     // MARK: - Helpers
 
-    /// Global summary for the This Apple TV › Servers row: how many distinct
+    /// Global summary for the Sources row: how many distinct
     /// servers the household is signed in to (device scope, not profile).
     private var householdServersSummary: Text {
-        if accounts.isEmpty { return Text("Add a server") }
-        // Row already says "Servers", so show a bare count (no repeated noun).
+        if accounts.isEmpty { return Text(SettingsCopy.addSource) }
+        // Row already says "Sources", so show a bare count (no repeated noun).
         // `.formatted()` so the digits follow the user's locale.
         return Text(verbatim: Set(accounts.map { $0.server.id }).count.formatted())
     }

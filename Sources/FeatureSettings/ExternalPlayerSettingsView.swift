@@ -7,6 +7,7 @@ public struct PlaybackAdvancedSettingsView: View {
     @Bindable var playback: PlaybackSettingsModel
     @Bindable var model: ExternalPlayerSettingsModel
     @State private var showsExternalPlayer = false
+    @Environment(SettingsSearchRequest.self) private var searchRequest: SettingsSearchRequest?
 
     public init(playback: PlaybackSettingsModel, model: ExternalPlayerSettingsModel = .shared) {
         self.playback = playback
@@ -15,16 +16,32 @@ public struct PlaybackAdvancedSettingsView: View {
 
     public var body: some View {
         #if os(tvOS)
-        SettingsSplitLayout(title: "Advanced", rows: Self.rows(playback: playback, model: model))
+        if let target = searchRequest?.targetID, ["dolby-fel", "spatial-layout"].contains(target) {
+            SettingsFormLayout(
+                title: Text("Advanced"),
+                rows: Self.rows(playback: playback, model: model).filter {
+                    $0.id == (target == "dolby-fel" ? "dolby-vision-fel" : "spatial-audio-layout")
+                }, showsBack: true
+            )
+        } else {
+            SettingsSplitLayout(title: "Advanced", rows: Self.rows(playback: playback, model: model))
+        }
         #else
         List {
             SettingsSectionGroup {
                 Button { showsExternalPlayer = true } label: {
                     SettingsDisclosureLabel { Text("External player") }
                 }
+                .settingsActionRow()
+                .accessibilityIdentifier("playback-external-player")
             }
             SettingsSectionGroup {
                 DolbyVisionFELControl(isOn: $playback.settings.dolbyVisionFELEnabled)
+            }
+            if #available(iOS 26.0, *) {
+                SettingsSectionGroup {
+                    SpatialAudioLayoutControl()
+                }
             }
         }
         .settingsPageSurface()
@@ -61,8 +78,8 @@ private struct DolbyVisionFELControl: View {
     @Binding var isOn: Bool
 
     private var helperText: LocalizedStringResource {
-        #if os(tvOS)
-        if #available(tvOS 26.0, *) {
+        #if os(tvOS) || os(iOS)
+        if #available(tvOS 26.0, iOS 26.0, *) {
             return "May impact performance."
         }
         #endif
@@ -72,7 +89,7 @@ private struct DolbyVisionFELControl: View {
     var body: some View {
         SettingsControlRows {
             Toggle("Dolby Vision FEL (experimental)", isOn: $isOn)
-                .accessibilityIdentifier("playback-dolby-vision-fel")
+                .accessibilityIdentifier("playback-dolby-vision-fel").settingsSearchAnchor("dolby-fel")
             Text(helperText)
                 .settingsHelperText()
                 .fixedSize(horizontal: false, vertical: true)
@@ -84,7 +101,13 @@ struct ExternalPlayerSettingsRows {
     static func advanced(model: ExternalPlayerSettingsModel = .shared) -> [SettingsSplitRow] {
         [
             .page(id: "external-player", title: "External player") {
-                [
+                external(model: model)
+            }
+        ]
+    }
+
+    static func external(model: ExternalPlayerSettingsModel) -> [SettingsSplitRow] {
+        [
                     SettingsSplitRow(id: "default-player", title: "Default player") {
                         ExternalPlayerChoices(model: model)
                     },
@@ -94,19 +117,30 @@ struct ExternalPlayerSettingsRows {
                     SettingsSplitRow(id: "custom-player", title: "Custom player") {
                         CustomExternalPlayerControls(model: model)
                     }.page()
-                ]
-            }
         ]
     }
 }
 
-#if os(iOS)
-private struct ExternalPlayerSettingsView: View {
+public struct ExternalPlayerSettingsView: View {
     @Bindable var model: ExternalPlayerSettingsModel
+    private let custom: Bool
     @State private var showsAbout = false
     @State private var showsCustomPlayer = false
 
-    var body: some View {
+    public init(model: ExternalPlayerSettingsModel = .shared, custom: Bool = false) {
+        self.model = model
+        self.custom = custom
+    }
+
+    public var body: some View {
+        if custom { customContent }
+        else { root }
+    }
+
+    private var root: some View {
+        #if os(tvOS)
+        SettingsSplitLayout(title: "External player", rows: ExternalPlayerSettingsRows.external(model: model))
+        #else
         List {
             SettingsSectionGroup("Default player") {
                 ExternalPlayerChoices(model: model)
@@ -115,11 +149,13 @@ private struct ExternalPlayerSettingsView: View {
                 Button { showsAbout = true } label: {
                     SettingsDisclosureLabel { Text("About external playback") }
                 }
+                .settingsActionRow()
             }
             SettingsSectionGroup {
                 Button { showsCustomPlayer = true } label: {
                     SettingsDisclosureLabel { Text("Custom player") }
                 }
+                .settingsActionRow()
             }
         }
         .settingsPageSurface()
@@ -132,17 +168,28 @@ private struct ExternalPlayerSettingsView: View {
             .navigationTitle("About external playback")
         }
         .navigationDestination(isPresented: $showsCustomPlayer) {
-            List {
-                SettingsSectionGroup {
-                    CustomExternalPlayerControls(model: model)
-                }
-            }
-            .settingsPageSurface()
-            .navigationTitle("Custom player")
+            customContent
         }
+        #endif
+    }
+
+    private var customContent: some View {
+        #if os(tvOS)
+        SettingsFormLayout(
+            title: Text("Custom player"),
+            rows: [SettingsSplitRow(id: "custom-player", title: "Custom player") {
+                CustomExternalPlayerControls(model: model)
+            }], showsBack: true
+        )
+        #else
+        List {
+            SettingsSectionGroup { CustomExternalPlayerControls(model: model) }
+        }
+        .settingsPageSurface()
+        .navigationTitle("Custom player")
+        #endif
     }
 }
-#endif
 
 private struct ExternalPlayerChoices: View {
     @Environment(\.scenePhase) private var scenePhase
@@ -174,12 +221,26 @@ private struct ExternalPlayerChoices: View {
                 }
             }
             #else
-            Picker("Default player", selection: $model.settings.player) {
+            SettingsControlMenu {
                 ForEach(choices, id: \.self) { player in
-                    title(player).tag(player).disabled(!isAvailable(player))
+                    Button {
+                        model.settings.player = player
+                    } label: {
+                        if model.settings.player == player {
+                            Label { title(player) } icon: { Image(systemName: "checkmark") }
+                        } else {
+                            title(player)
+                        }
+                    }
+                    .disabled(!isAvailable(player))
+                    .accessibilityIdentifier("external-player-\(player.rawValue)")
                 }
+            } label: {
+                SettingsMenuLabel("Default player", value: title(model.settings.player))
             }
-            .accessibilityIdentifier("external-player-selection")
+            .accessibilityLabel("Default player")
+            .accessibilityValue(title(model.settings.player))
+            .accessibilityIdentifier("external-player-selection").settingsSearchAnchor("external-player")
             #endif
             if model.settings.player == .vlc || model.settings.player == .custom {
                 Text("This player doesn't return watch progress to Plozz.")
@@ -237,12 +298,12 @@ private struct CustomExternalPlayerControls: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .accessibilityLabel("Player URL template")
-                .accessibilityIdentifier("external-player-custom-template")
+                .accessibilityIdentifier("external-player-custom-template").settingsSearchAnchor("external-template")
             Text("Don't include passwords or access tokens in this template.")
                 .settingsHelperText()
             if let error { Text(error.message).foregroundStyle(.red) }
             if saved { Text("Custom player selected").settingsHelperText() }
-            Button("Save and use custom player") {
+            Button {
                 do {
                     try ExternalPlayerURL.validateCustomTemplate(template)
                     model.settings = .init(player: .custom, customURLTemplate: template)
@@ -253,6 +314,8 @@ private struct CustomExternalPlayerControls: View {
                 } catch {
                     self.error = .invalidTemplate
                 }
+            } label: {
+                Text("Save and use custom player").settingsControlTarget()
             }
             .accessibilityIdentifier("external-player-custom-save")
         }
