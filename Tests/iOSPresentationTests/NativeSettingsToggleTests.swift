@@ -1200,7 +1200,6 @@ final class NativeSettingsToggleTests: XCTestCase {
             defaults.removePersistentDomain(forName: suite)
         }
         let external = ExternalPlayerSettingsModel(defaults: defaults)
-        PlaybackSettingsStore(defaults: defaults).save(PlaybackSettings(dolbyVisionFELEnabled: false))
         for width: CGFloat in [390, 834] {
             for scheme: ColorScheme in [.light, .dark] {
                 window.frame = CGRect(x: 0, y: 0, width: width, height: 900)

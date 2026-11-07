@@ -62,19 +62,4 @@ final class DolbyVisionFELSettingsTests: XCTestCase {
         )
         XCTAssertNil(saved["dolbyVisionFELEnabled"])
     }
-
-    @MainActor
-    func testProfileSavedByTheExperimentAdoptsLosslessProfile7() throws {
-        let suite = "DolbyVisionFELSettingsTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let key = SettingsKey.scoped("com.plozz.playbackSettings", namespace: "guest")
-        defaults.set(Data(
-            #"{"dolbyVisionFELEnabled":false,"rememberAudioTrackPerSeries":false}"#.utf8
-        ), forKey: key)
-
-        let settings = PlaybackSettingsStore(defaults: defaults, namespace: "guest").load()
-        XCTAssertTrue(settings.dolbyVisionFELEnabled)
-        XCTAssertFalse(settings.rememberAudioTrackPerSeries)
-    }
 }

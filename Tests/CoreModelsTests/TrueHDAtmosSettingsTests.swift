@@ -22,7 +22,7 @@ final class TrueHDAtmosSettingsTests: XCTestCase {
     func testBothRetiredChoicesAreIgnoredWithoutChangingOtherPlaybackPreferences() throws {
         for enabled in [false, true] {
             let payload = """
-            {"trueHDAtmosEnabled":\(enabled),"dolbyVisionLosslessFEL":false,"rememberAudioTrackPerSeries":false}
+            {"trueHDAtmosEnabled":\(enabled),"dolbyVisionFELEnabled":true,"rememberAudioTrackPerSeries":false}
             """
             let settings = try JSONDecoder().decode(PlaybackSettings.self, from: Data(payload.utf8))
             XCTAssertEqual(settings, PlaybackSettings(

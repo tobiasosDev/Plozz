@@ -94,7 +94,7 @@ final class PlexHybridDirectPlayTests: XCTestCase {
 
     func testDolbyVisionProfiles5And7And8ReachAetherAsTheOriginalFile() throws {
         // Profile 7 is the UHD Blu-ray dual-layer case (HDR10 base, compatibility ID 6).
-        // Aether, not a server transcode, keeps its enhancement layer.
+        // Aether, not a server transcode, decides how to present it.
         for (profile, compatibilityID) in [(5, 0), (7, 6), (8, 1)] {
             let json = """
             {"id":1,"container":"mkv","videoCodec":"hevc","audioCodec":"truehd","bitrate":68000,
