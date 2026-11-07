@@ -28,7 +28,7 @@ final class ShowcaseNavigationTests: XCTestCase {
         defer { app.terminate() }
         let hero = app.homeHero
         XCTAssertTrue(app.staticTexts["Production Home ready"].waitForExistence(timeout: 30))
-        func awaitFocus(_ element: XCUIElement) {
+        func awaitFocus(_ element: some RemoteFocusTarget) {
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate { _, _ in element.exists && element.hasFocus }, object: nil
             )], timeout: 5), .completed, app.debugDescription)

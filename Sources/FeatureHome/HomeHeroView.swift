@@ -916,16 +916,16 @@ struct HomeHeroView: View {
         .prefersDefaultFocus(true, in: focusScope)
         .navigationEntryFocus(.content)
         .id(Self.actionRowFocusID)
-        // Up opens the playing trailer full screen with the Pinned Sidebar; other
-        // layouts keep their native Up navigation. The UIKit pills still own
-        // Select and Left/Right; this only observes the move.
-        .trailerFullScreenOnMove(
-            controller: trailerController, itemID: item.id, role: .home,
-            title: item.title,
-            navigationStyle: navigationStyle,
+        // Up opens the playing trailer full screen with the Pinned Sidebar. Only
+        // that layout gets the move handler: on the UIKit pills it would also
+        // keep Up from reaching the top bar. The pills still own Select and
+        // Left/Right.
+        .modifier(HomeTrailerFullScreenGesture(
+            isActive: navigationStyle == .rail,
+            controller: trailerController, itemID: item.id, title: item.title,
             enabled: isFrontmost && !pausedForRows && showsTrailer,
             onMove: noteInteraction
-        )
+        ))
         .preloadDetailBackdropOnFocus(for: current, isFocused: heroFocused && isFrontmost)
         .onChange(of: pausedForRows) { _, isReceded in
             if isReceded { pauseWhileReceded() } else { resumeFromRecede() }
@@ -1713,6 +1713,27 @@ private extension Array where Element == String {
     func uniqued() -> [String] {
         var seen = Set<String>()
         return filter { seen.insert($0).inserted }
+    }
+}
+
+/// Upstream's Up-to-full-screen trailer, attached only where it can act.
+private struct HomeTrailerFullScreenGesture: ViewModifier {
+    let isActive: Bool
+    let controller: HeroTrailerController
+    let itemID: String
+    let title: String // l10n:content - provider-supplied media title
+    let enabled: Bool
+    let onMove: () -> Void
+
+    func body(content: Content) -> some View {
+        if isActive {
+            content.trailerFullScreenOnMove(
+                controller: controller, itemID: itemID, role: .home, title: title,
+                navigationStyle: .rail, enabled: enabled, onMove: onMove
+            )
+        } else {
+            content
+        }
     }
 }
 #endif

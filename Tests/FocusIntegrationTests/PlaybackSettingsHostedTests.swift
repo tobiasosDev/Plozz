@@ -340,7 +340,8 @@ final class PlaybackSettingsHostedTests: XCTestCase {
         if #available(tvOS 26.0, *) {
             XCTAssertFalse(text.contains("Disables spatial audio."), text)
             let page = try await allPageText(in: window, attachment: "Advanced-spatial-layout")
-            for label in ["Rendering layout", "9.1.6", "DTS:X heights require 7.1.4 or 9.1.6."] {
+            // Accessibility text splits "DTS:X" into "DTS: X"; match the rest.
+            for label in ["Rendering layout", "9.1.6", "heights require 7.1.4 or 9.1.6."] {
                 XCTAssertTrue(page.contains(label), page)
             }
         } else {
